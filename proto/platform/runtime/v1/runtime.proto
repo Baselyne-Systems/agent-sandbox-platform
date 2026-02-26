@@ -1,0 +1,154 @@
+syntax = "proto3";
+
+package platform.runtime.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// RuntimeService is the Control API — called by Workspace Service to manage
+// sandboxes on a specific host. Each Runtime instance runs on a single host.
+service RuntimeService {
+  // CreateSandbox provisions an isolated sandbox on this host.
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+
+  // DestroySandbox tears down a running sandbox.
+  rpc DestroySandbox(DestroySandboxRequest) returns (DestroySandboxResponse);
+
+  // GetSandboxStatus returns the current status of a sandbox.
+  rpc GetSandboxStatus(GetSandboxStatusRequest) returns (GetSandboxStatusResponse);
+
+  // StreamEvents returns a stream of sandbox lifecycle and action events.
+  rpc StreamEvents(StreamEventsRequest) returns (stream SandboxEvent);
+}
+
+// AgentAPIService is exposed inside the sandbox for agents to call.
+// This is the agent-facing API.
+service AgentAPIService {
+  // ExecuteTool requests execution of a tool. The runtime evaluates guardrails
+  // before executing and may require human approval.
+  rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+
+  // RequestHumanInput pauses agent execution pending human response.
+  rpc RequestHumanInput(RequestHumanInputRequest) returns (RequestHumanInputResponse);
+
+  // ReportProgress allows agents to report task progress.
+  rpc ReportProgress(ReportProgressRequest) returns (ReportProgressResponse);
+}
+
+message CreateSandboxRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  SandboxSpec spec = 3;
+  // Compiled guardrail rules to load into the evaluator.
+  bytes compiled_guardrails = 4;
+}
+
+message SandboxSpec {
+  int64 memory_mb = 1;
+  int32 cpu_millicores = 2;
+  int64 disk_mb = 3;
+  repeated string allowed_tools = 4;
+  map<string, string> env_vars = 5;
+}
+
+message CreateSandboxResponse {
+  string sandbox_id = 1;
+  string agent_api_endpoint = 2;
+}
+
+message DestroySandboxRequest {
+  string sandbox_id = 1;
+  string reason = 2;
+}
+
+message DestroySandboxResponse {}
+
+message GetSandboxStatusRequest {
+  string sandbox_id = 1;
+}
+
+message GetSandboxStatusResponse {
+  string sandbox_id = 1;
+  SandboxState state = 2;
+  int64 memory_used_mb = 3;
+  int64 cpu_used_millicores = 4;
+  int32 actions_executed = 5;
+  google.protobuf.Timestamp started_at = 6;
+}
+
+enum SandboxState {
+  SANDBOX_STATE_UNSPECIFIED = 0;
+  SANDBOX_STATE_STARTING = 1;
+  SANDBOX_STATE_RUNNING = 2;
+  SANDBOX_STATE_PAUSED = 3;
+  SANDBOX_STATE_STOPPED = 4;
+  SANDBOX_STATE_FAILED = 5;
+}
+
+message StreamEventsRequest {
+  string sandbox_id = 1;
+}
+
+message SandboxEvent {
+  string sandbox_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  oneof event {
+    ActionEvent action = 3;
+    LifecycleEvent lifecycle = 4;
+  }
+}
+
+message ActionEvent {
+  string action_id = 1;
+  string tool_name = 2;
+  ActionVerdict verdict = 3;
+  int64 evaluation_latency_us = 4;
+}
+
+enum ActionVerdict {
+  ACTION_VERDICT_UNSPECIFIED = 0;
+  ACTION_VERDICT_ALLOW = 1;
+  ACTION_VERDICT_DENY = 2;
+  ACTION_VERDICT_ESCALATE = 3;
+}
+
+message LifecycleEvent {
+  SandboxState new_state = 1;
+  string reason = 2;
+}
+
+// --- Agent API messages ---
+
+message ExecuteToolRequest {
+  string tool_name = 1;
+  google.protobuf.Struct parameters = 2;
+  string justification = 3;
+}
+
+message ExecuteToolResponse {
+  ActionVerdict verdict = 1;
+  google.protobuf.Struct result = 2;
+  string denial_reason = 3;
+  string escalation_id = 4;
+}
+
+message RequestHumanInputRequest {
+  string question = 1;
+  repeated string options = 2;
+  string context = 3;
+  int64 timeout_seconds = 4;
+}
+
+message RequestHumanInputResponse {
+  string response = 1;
+  string responder_id = 2;
+  bool timed_out = 3;
+}
+
+message ReportProgressRequest {
+  string message = 1;
+  float percent_complete = 2;
+  map<string, string> metadata = 3;
+}
+
+message ReportProgressResponse {}

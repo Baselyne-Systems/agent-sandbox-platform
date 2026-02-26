@@ -1,0 +1,78 @@
+syntax = "proto3";
+
+package platform.human.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// HumanInteractionService delivers agent requests to human operators
+// via Slack, email, or other channels.
+service HumanInteractionService {
+  rpc CreateRequest(CreateHumanRequestRequest) returns (CreateHumanRequestResponse);
+  rpc GetRequest(GetHumanRequestRequest) returns (GetHumanRequestResponse);
+  rpc RespondToRequest(RespondToHumanRequestRequest) returns (RespondToHumanRequestResponse);
+  rpc ListRequests(ListHumanRequestsRequest) returns (ListHumanRequestsResponse);
+}
+
+message HumanRequest {
+  string request_id = 1;
+  string workspace_id = 2;
+  string agent_id = 3;
+  string question = 4;
+  repeated string options = 5;
+  string context = 6;
+  HumanRequestStatus status = 7;
+  string response = 8;
+  string responder_id = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp responded_at = 11;
+  google.protobuf.Timestamp expires_at = 12;
+}
+
+enum HumanRequestStatus {
+  HUMAN_REQUEST_STATUS_UNSPECIFIED = 0;
+  HUMAN_REQUEST_STATUS_PENDING = 1;
+  HUMAN_REQUEST_STATUS_RESPONDED = 2;
+  HUMAN_REQUEST_STATUS_EXPIRED = 3;
+  HUMAN_REQUEST_STATUS_CANCELLED = 4;
+}
+
+message CreateHumanRequestRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string question = 3;
+  repeated string options = 4;
+  string context = 5;
+  int64 timeout_seconds = 6;
+}
+
+message CreateHumanRequestResponse {
+  HumanRequest request = 1;
+}
+
+message GetHumanRequestRequest {
+  string request_id = 1;
+}
+
+message GetHumanRequestResponse {
+  HumanRequest request = 1;
+}
+
+message RespondToHumanRequestRequest {
+  string request_id = 1;
+  string response = 2;
+  string responder_id = 3;
+}
+
+message RespondToHumanRequestResponse {}
+
+message ListHumanRequestsRequest {
+  string workspace_id = 1;
+  HumanRequestStatus status = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListHumanRequestsResponse {
+  repeated HumanRequest requests = 1;
+  string next_page_token = 2;
+}

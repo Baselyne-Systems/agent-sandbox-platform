@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package platform.guardrails.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// GuardrailsService manages guardrail rules and policies.
+service GuardrailsService {
+  // CreateRule creates a new guardrail rule.
+  rpc CreateRule(CreateRuleRequest) returns (CreateRuleResponse);
+
+  // GetRule retrieves a rule by ID.
+  rpc GetRule(GetRuleRequest) returns (GetRuleResponse);
+
+  // ListRules returns rules matching the given filter.
+  rpc ListRules(ListRulesRequest) returns (ListRulesResponse);
+
+  // UpdateRule updates an existing rule.
+  rpc UpdateRule(UpdateRuleRequest) returns (UpdateRuleResponse);
+
+  // DeleteRule removes a rule.
+  rpc DeleteRule(DeleteRuleRequest) returns (DeleteRuleResponse);
+
+  // CompilePolicy compiles a set of rules into a binary format for the
+  // runtime evaluator. Called before workspace creation.
+  rpc CompilePolicy(CompilePolicyRequest) returns (CompilePolicyResponse);
+}
+
+// GuardrailRule defines a single guardrail rule.
+message GuardrailRule {
+  string rule_id = 1;
+  string name = 2;
+  string description = 3;
+  RuleType type = 4;
+  // CEL expression or tool pattern that triggers this rule.
+  string condition = 5;
+  RuleAction action = 6;
+  int32 priority = 7;
+  bool enabled = 8;
+  map<string, string> labels = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+enum RuleType {
+  RULE_TYPE_UNSPECIFIED = 0;
+  // Matches specific tool calls.
+  RULE_TYPE_TOOL_FILTER = 1;
+  // Evaluates parameter values against a pattern.
+  RULE_TYPE_PARAMETER_CHECK = 2;
+  // Rate limiting or frequency-based rules.
+  RULE_TYPE_RATE_LIMIT = 3;
+  // Budget or cost-based rules.
+  RULE_TYPE_BUDGET_LIMIT = 4;
+}
+
+enum RuleAction {
+  RULE_ACTION_UNSPECIFIED = 0;
+  RULE_ACTION_ALLOW = 1;
+  RULE_ACTION_DENY = 2;
+  RULE_ACTION_ESCALATE = 3;
+  RULE_ACTION_LOG = 4;
+}
+
+message CreateRuleRequest {
+  string name = 1;
+  string description = 2;
+  RuleType type = 3;
+  string condition = 4;
+  RuleAction action = 5;
+  int32 priority = 6;
+  map<string, string> labels = 7;
+}
+
+message CreateRuleResponse {
+  GuardrailRule rule = 1;
+}
+
+message GetRuleRequest {
+  string rule_id = 1;
+}
+
+message GetRuleResponse {
+  GuardrailRule rule = 1;
+}
+
+message ListRulesRequest {
+  RuleType type = 1;
+  bool enabled_only = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListRulesResponse {
+  repeated GuardrailRule rules = 1;
+  string next_page_token = 2;
+}
+
+message UpdateRuleRequest {
+  GuardrailRule rule = 1;
+}
+
+message UpdateRuleResponse {
+  GuardrailRule rule = 1;
+}
+
+message DeleteRuleRequest {
+  string rule_id = 1;
+}
+
+message DeleteRuleResponse {}
+
+message CompilePolicyRequest {
+  repeated string rule_ids = 1;
+}
+
+message CompilePolicyResponse {
+  bytes compiled_policy = 1;
+  int32 rule_count = 2;
+}

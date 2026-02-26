@@ -1,0 +1,93 @@
+syntax = "proto3";
+
+package platform.workspace.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+
+// WorkspaceService manages workspace lifecycle in the control plane.
+service WorkspaceService {
+  // CreateWorkspace provisions a new workspace for an agent task.
+  rpc CreateWorkspace(CreateWorkspaceRequest) returns (CreateWorkspaceResponse);
+
+  // GetWorkspace retrieves workspace details.
+  rpc GetWorkspace(GetWorkspaceRequest) returns (GetWorkspaceResponse);
+
+  // ListWorkspaces returns workspaces matching the given filter.
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+
+  // TerminateWorkspace shuts down a running workspace.
+  rpc TerminateWorkspace(TerminateWorkspaceRequest) returns (TerminateWorkspaceResponse);
+}
+
+// Workspace represents an isolated execution environment for an agent.
+message Workspace {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string task_id = 3;
+  WorkspaceStatus status = 4;
+  WorkspaceSpec spec = 5;
+  string host_id = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+  google.protobuf.Timestamp expires_at = 9;
+}
+
+enum WorkspaceStatus {
+  WORKSPACE_STATUS_UNSPECIFIED = 0;
+  WORKSPACE_STATUS_PENDING = 1;
+  WORKSPACE_STATUS_CREATING = 2;
+  WORKSPACE_STATUS_RUNNING = 3;
+  WORKSPACE_STATUS_PAUSED = 4;
+  WORKSPACE_STATUS_TERMINATING = 5;
+  WORKSPACE_STATUS_TERMINATED = 6;
+  WORKSPACE_STATUS_FAILED = 7;
+}
+
+// WorkspaceSpec defines the desired configuration for a workspace.
+message WorkspaceSpec {
+  int64 memory_mb = 1;
+  int32 cpu_millicores = 2;
+  int64 disk_mb = 3;
+  google.protobuf.Duration max_duration = 4;
+  repeated string allowed_tools = 5;
+  string guardrail_policy_id = 6;
+  map<string, string> env_vars = 7;
+}
+
+message CreateWorkspaceRequest {
+  string agent_id = 1;
+  string task_id = 2;
+  WorkspaceSpec spec = 3;
+}
+
+message CreateWorkspaceResponse {
+  Workspace workspace = 1;
+}
+
+message GetWorkspaceRequest {
+  string workspace_id = 1;
+}
+
+message GetWorkspaceResponse {
+  Workspace workspace = 1;
+}
+
+message ListWorkspacesRequest {
+  string agent_id = 1;
+  WorkspaceStatus status = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListWorkspacesResponse {
+  repeated Workspace workspaces = 1;
+  string next_page_token = 2;
+}
+
+message TerminateWorkspaceRequest {
+  string workspace_id = 1;
+  string reason = 2;
+}
+
+message TerminateWorkspaceResponse {}

@@ -1,0 +1,85 @@
+syntax = "proto3";
+
+package platform.activity.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
+
+// ActivityService provides an append-only store for all agent actions.
+service ActivityService {
+  // RecordAction appends an action record to the activity store.
+  rpc RecordAction(RecordActionRequest) returns (RecordActionResponse);
+
+  // GetAction retrieves a single action record.
+  rpc GetAction(GetActionRequest) returns (GetActionResponse);
+
+  // QueryActions returns action records matching the given filter.
+  rpc QueryActions(QueryActionsRequest) returns (QueryActionsResponse);
+
+  // StreamActions returns a live stream of action records.
+  rpc StreamActions(StreamActionsRequest) returns (stream ActionRecord);
+}
+
+// ActionRecord is an immutable record of a single agent action.
+message ActionRecord {
+  string record_id = 1;
+  string workspace_id = 2;
+  string agent_id = 3;
+  string task_id = 4;
+  string tool_name = 5;
+  google.protobuf.Struct parameters = 6;
+  google.protobuf.Struct result = 7;
+  ActionOutcome outcome = 8;
+  string guardrail_rule_id = 9;
+  string denial_reason = 10;
+  int64 evaluation_latency_us = 11;
+  int64 execution_latency_us = 12;
+  google.protobuf.Timestamp recorded_at = 13;
+}
+
+enum ActionOutcome {
+  ACTION_OUTCOME_UNSPECIFIED = 0;
+  ACTION_OUTCOME_ALLOWED = 1;
+  ACTION_OUTCOME_DENIED = 2;
+  ACTION_OUTCOME_ESCALATED = 3;
+  ACTION_OUTCOME_ERROR = 4;
+}
+
+message RecordActionRequest {
+  ActionRecord record = 1;
+}
+
+message RecordActionResponse {
+  string record_id = 1;
+}
+
+message GetActionRequest {
+  string record_id = 1;
+}
+
+message GetActionResponse {
+  ActionRecord record = 1;
+}
+
+message QueryActionsRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string task_id = 3;
+  string tool_name = 4;
+  ActionOutcome outcome = 5;
+  google.protobuf.Timestamp start_time = 6;
+  google.protobuf.Timestamp end_time = 7;
+  int32 page_size = 8;
+  string page_token = 9;
+}
+
+message QueryActionsResponse {
+  repeated ActionRecord records = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message StreamActionsRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+}

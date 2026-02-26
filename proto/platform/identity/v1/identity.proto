@@ -1,0 +1,108 @@
+syntax = "proto3";
+
+package platform.identity.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// IdentityService manages agent identities and scoped credentials.
+service IdentityService {
+  // RegisterAgent creates a new agent identity in the platform.
+  rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse);
+
+  // GetAgent retrieves an agent by ID.
+  rpc GetAgent(GetAgentRequest) returns (GetAgentResponse);
+
+  // ListAgents returns agents matching the given filter.
+  rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
+
+  // DeactivateAgent marks an agent as inactive, revoking all credentials.
+  rpc DeactivateAgent(DeactivateAgentRequest) returns (DeactivateAgentResponse);
+
+  // MintCredential issues a scoped, time-limited credential for an agent.
+  rpc MintCredential(MintCredentialRequest) returns (MintCredentialResponse);
+
+  // RevokeCredential immediately invalidates a credential.
+  rpc RevokeCredential(RevokeCredentialRequest) returns (RevokeCredentialResponse);
+}
+
+// Agent represents an autonomous agent registered in the platform.
+message Agent {
+  string agent_id = 1;
+  string name = 2;
+  string description = 3;
+  string owner_id = 4;
+  AgentStatus status = 5;
+  map<string, string> labels = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+enum AgentStatus {
+  AGENT_STATUS_UNSPECIFIED = 0;
+  AGENT_STATUS_ACTIVE = 1;
+  AGENT_STATUS_INACTIVE = 2;
+  AGENT_STATUS_SUSPENDED = 3;
+}
+
+// ScopedCredential is a time-limited credential with explicit permission scopes.
+message ScopedCredential {
+  string credential_id = 1;
+  string agent_id = 2;
+  repeated string scopes = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  google.protobuf.Timestamp created_at = 5;
+}
+
+message RegisterAgentRequest {
+  string name = 1;
+  string description = 2;
+  string owner_id = 3;
+  map<string, string> labels = 4;
+}
+
+message RegisterAgentResponse {
+  Agent agent = 1;
+}
+
+message GetAgentRequest {
+  string agent_id = 1;
+}
+
+message GetAgentResponse {
+  Agent agent = 1;
+}
+
+message ListAgentsRequest {
+  string owner_id = 1;
+  AgentStatus status = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListAgentsResponse {
+  repeated Agent agents = 1;
+  string next_page_token = 2;
+}
+
+message DeactivateAgentRequest {
+  string agent_id = 1;
+}
+
+message DeactivateAgentResponse {}
+
+message MintCredentialRequest {
+  string agent_id = 1;
+  repeated string scopes = 2;
+  int64 ttl_seconds = 3;
+}
+
+message MintCredentialResponse {
+  ScopedCredential credential = 1;
+  string token = 2;
+}
+
+message RevokeCredentialRequest {
+  string credential_id = 1;
+}
+
+message RevokeCredentialResponse {}

@@ -1,0 +1,10 @@
+version: v2
+modules:
+  - path: platform
+    name: buf.build/baselyne/platform
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

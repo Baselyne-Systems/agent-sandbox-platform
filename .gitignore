@@ -1,0 +1,24 @@
+# Go
+control-plane/pkg/gen/
+
+# Rust
+runtime/target/
+runtime/crates/proto-gen/src/gen/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Docker
+deploy/docker-compose.override.yml

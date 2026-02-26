@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package platform.governance.v1;
+
+// DataGovernanceService handles data classification, DLP, and model routing.
+service DataGovernanceService {
+  rpc ClassifyData(ClassifyDataRequest) returns (ClassifyDataResponse);
+  rpc CheckPolicy(CheckPolicyRequest) returns (CheckPolicyResponse);
+}
+
+enum DataClassification {
+  DATA_CLASSIFICATION_UNSPECIFIED = 0;
+  DATA_CLASSIFICATION_PUBLIC = 1;
+  DATA_CLASSIFICATION_INTERNAL = 2;
+  DATA_CLASSIFICATION_CONFIDENTIAL = 3;
+  DATA_CLASSIFICATION_RESTRICTED = 4;
+}
+
+message ClassifyDataRequest {
+  bytes content = 1;
+  string content_type = 2;
+}
+
+message ClassifyDataResponse {
+  DataClassification classification = 1;
+  repeated string detected_patterns = 2;
+}
+
+message CheckPolicyRequest {
+  string agent_id = 1;
+  string destination = 2;
+  DataClassification data_classification = 3;
+}
+
+message CheckPolicyResponse {
+  bool allowed = 1;
+  string reason = 2;
+}
