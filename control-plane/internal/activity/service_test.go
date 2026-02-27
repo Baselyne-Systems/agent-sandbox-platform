@@ -163,6 +163,79 @@ func TestQueryActions_WithFilters(t *testing.T) {
 	}
 }
 
+func TestRecordAction_PublishesToBroker(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	subID, ch := svc.Broker().Subscribe()
+	defer svc.Broker().Unsubscribe(subID)
+
+	rec := validRecord()
+	id, err := svc.RecordAction(ctx, rec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	select {
+	case got := <-ch:
+		if got.ID != id {
+			t.Errorf("expected record ID %q, got %q", id, got.ID)
+		}
+		if got.ToolName != "shell" {
+			t.Errorf("expected tool 'shell', got %q", got.ToolName)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for broker event")
+	}
+}
+
+func TestBroker_MultipleSubscribers(t *testing.T) {
+	broker := NewBroker()
+
+	id1, ch1 := broker.Subscribe()
+	id2, ch2 := broker.Subscribe()
+	defer broker.Unsubscribe(id1)
+	defer broker.Unsubscribe(id2)
+
+	rec := &models.ActionRecord{
+		ID:          "rec-1",
+		WorkspaceID: "ws-1",
+		AgentID:     "agent-1",
+		ToolName:    "shell",
+		Outcome:     models.ActionOutcomeAllowed,
+	}
+	broker.Publish(rec)
+
+	select {
+	case got := <-ch1:
+		if got.ID != "rec-1" {
+			t.Errorf("subscriber 1: expected ID 'rec-1', got %q", got.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscriber 1: timed out")
+	}
+
+	select {
+	case got := <-ch2:
+		if got.ID != "rec-1" {
+			t.Errorf("subscriber 2: expected ID 'rec-1', got %q", got.ID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("subscriber 2: timed out")
+	}
+}
+
+func TestBroker_UnsubscribeClosesChannel(t *testing.T) {
+	broker := NewBroker()
+	id, ch := broker.Subscribe()
+	broker.Unsubscribe(id)
+
+	_, ok := <-ch
+	if ok {
+		t.Error("expected channel to be closed after unsubscribe")
+	}
+}
+
 func TestQueryActions_Pagination(t *testing.T) {
 	repo := newMockRepo()
 	svc := NewService(repo)

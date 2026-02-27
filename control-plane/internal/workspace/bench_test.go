@@ -9,7 +9,7 @@ import (
 )
 
 func BenchmarkCreateWorkspace(b *testing.B) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 
 	for b.Loop() {
@@ -21,7 +21,7 @@ func BenchmarkCreateWorkspace(b *testing.B) {
 }
 
 func BenchmarkGetWorkspace(b *testing.B) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
 
@@ -36,7 +36,7 @@ func BenchmarkGetWorkspace(b *testing.B) {
 func BenchmarkListWorkspaces_Scaling(b *testing.B) {
 	for _, n := range []int{100, 1000, 10000} {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
-			svc := NewService(newMockRepo())
+			svc := newTestService(newMockRepo())
 			ctx := context.Background()
 
 			for i := 0; i < n; i++ {
@@ -59,7 +59,7 @@ func BenchmarkTerminateWorkspace(b *testing.B) {
 
 	for b.Loop() {
 		b.StopTimer()
-		svc := NewService(newMockRepo())
+		svc := newTestService(newMockRepo())
 		ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
 		b.StartTimer()
 
@@ -71,7 +71,7 @@ func BenchmarkTerminateWorkspace(b *testing.B) {
 }
 
 func BenchmarkCreateWorkspace_WithSpec(b *testing.B) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 	spec := &models.WorkspaceSpec{
 		MemoryMb:          2048,

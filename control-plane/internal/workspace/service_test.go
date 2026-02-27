@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	runtimepb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/runtime/v1"
+	"google.golang.org/grpc"
 )
 
 // mockRepo is a hand-written in-memory Repository for testing.
@@ -82,6 +84,25 @@ func (m *mockRepo) ListWorkspaces(_ context.Context, agentID string, status mode
 	return result, nil
 }
 
+func (m *mockRepo) UpdateWorkspaceStatus(_ context.Context, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error {
+	ws, ok := m.workspaces[id]
+	if !ok {
+		return ErrWorkspaceNotFound
+	}
+	ws.Status = status
+	if hostID != "" {
+		ws.HostID = hostID
+	}
+	if hostAddress != "" {
+		ws.HostAddress = hostAddress
+	}
+	if sandboxID != "" {
+		ws.SandboxID = sandboxID
+	}
+	ws.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *mockRepo) TerminateWorkspace(_ context.Context, id string, reason string) error {
 	ws, ok := m.workspaces[id]
 	if !ok {
@@ -115,10 +136,76 @@ func copyMap(m map[string]string) map[string]string {
 	return cp
 }
 
+// --- Mock orchestration dependencies ---
+
+type mockComputePlacer struct {
+	hostID      string
+	hostAddress string
+	err         error
+}
+
+func (m *mockComputePlacer) PlaceWorkspace(_ context.Context, _ int64, _ int32, _ int64) (string, string, error) {
+	return m.hostID, m.hostAddress, m.err
+}
+
+type mockPolicyCompiler struct {
+	compiled []byte
+	count    int
+	err      error
+}
+
+func (m *mockPolicyCompiler) CompilePolicy(_ context.Context, _ []string) ([]byte, int, error) {
+	return m.compiled, m.count, m.err
+}
+
+// mockRuntimeServiceClient implements runtimepb.RuntimeServiceClient for testing.
+type mockRuntimeServiceClient struct {
+	createResp   *runtimepb.CreateSandboxResponse
+	createErr    error
+	destroyResp  *runtimepb.DestroySandboxResponse
+	destroyErr   error
+	destroyCalls int
+}
+
+func (m *mockRuntimeServiceClient) CreateSandbox(_ context.Context, _ *runtimepb.CreateSandboxRequest, _ ...grpc.CallOption) (*runtimepb.CreateSandboxResponse, error) {
+	return m.createResp, m.createErr
+}
+
+func (m *mockRuntimeServiceClient) DestroySandbox(_ context.Context, _ *runtimepb.DestroySandboxRequest, _ ...grpc.CallOption) (*runtimepb.DestroySandboxResponse, error) {
+	m.destroyCalls++
+	return m.destroyResp, m.destroyErr
+}
+
+func (m *mockRuntimeServiceClient) GetSandboxStatus(_ context.Context, _ *runtimepb.GetSandboxStatusRequest, _ ...grpc.CallOption) (*runtimepb.GetSandboxStatusResponse, error) {
+	return nil, nil
+}
+
+func (m *mockRuntimeServiceClient) StreamEvents(_ context.Context, _ *runtimepb.StreamEventsRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[runtimepb.SandboxEvent], error) {
+	return nil, nil
+}
+
+// newTestService creates a Service with only the repo (no orchestration).
+func newTestService(repo Repository) *Service {
+	return NewService(ServiceConfig{Repo: repo})
+}
+
+// newOrchestratedService creates a Service with full orchestration mocks.
+func newOrchestratedService(repo Repository, compute ComputePlacer, guardrails PolicyCompiler, runtimeClient *mockRuntimeServiceClient) *Service {
+	dialer := func(_ context.Context, _ string) (runtimepb.RuntimeServiceClient, error) {
+		return runtimeClient, nil
+	}
+	return NewService(ServiceConfig{
+		Repo:        repo,
+		Compute:     compute,
+		Guardrails:  guardrails,
+		DialRuntime: dialer,
+	})
+}
+
 // --- CreateWorkspace tests ---
 
 func TestCreateWorkspace_Success(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	spec := &models.WorkspaceSpec{
 		MemoryMb:      1024,
 		CpuMillicores: 1000,
@@ -143,7 +230,7 @@ func TestCreateWorkspace_Success(t *testing.T) {
 }
 
 func TestCreateWorkspace_Validation(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	_, err := svc.CreateWorkspace(context.Background(), "", "task-1", nil)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty agentID, got: %v", err)
@@ -151,7 +238,7 @@ func TestCreateWorkspace_Validation(t *testing.T) {
 }
 
 func TestCreateWorkspace_DefaultSpec(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -171,7 +258,7 @@ func TestCreateWorkspace_DefaultSpec(t *testing.T) {
 }
 
 func TestCreateWorkspace_NilCollections(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -184,10 +271,118 @@ func TestCreateWorkspace_NilCollections(t *testing.T) {
 	}
 }
 
+// --- Orchestrated CreateWorkspace tests ---
+
+func TestCreateWorkspace_WithOrchestration(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
+	guardrails := &mockPolicyCompiler{compiled: []byte(`{"rules":[]}`), count: 0}
+	runtimeClient := &mockRuntimeServiceClient{
+		createResp: &runtimepb.CreateSandboxResponse{
+			SandboxId:        "sandbox-abc",
+			AgentApiEndpoint: "localhost:50052",
+		},
+	}
+
+	svc := newOrchestratedService(repo, compute, guardrails, runtimeClient)
+	ctx := context.Background()
+
+	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", &models.WorkspaceSpec{
+		MemoryMb:      1024,
+		CpuMillicores: 1000,
+		DiskMb:        2048,
+		AllowedTools:  []string{"read_file"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if ws.Status != models.WorkspaceStatusRunning {
+		t.Errorf("expected status running, got %q", ws.Status)
+	}
+	if ws.HostID != "host-1" {
+		t.Errorf("expected host_id 'host-1', got %q", ws.HostID)
+	}
+	if ws.SandboxID != "sandbox-abc" {
+		t.Errorf("expected sandbox_id 'sandbox-abc', got %q", ws.SandboxID)
+	}
+
+	// Verify the workspace is also updated in the repo.
+	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	if got.Status != models.WorkspaceStatusRunning {
+		t.Errorf("expected repo status running, got %q", got.Status)
+	}
+	if got.SandboxID != "sandbox-abc" {
+		t.Errorf("expected repo sandbox_id 'sandbox-abc', got %q", got.SandboxID)
+	}
+}
+
+func TestCreateWorkspace_PlacementFailure(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{err: errors.New("no capacity")}
+	runtimeClient := &mockRuntimeServiceClient{}
+
+	svc := newOrchestratedService(repo, compute, nil, runtimeClient)
+	ctx := context.Background()
+
+	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error (should not propagate): %v", err)
+	}
+	if ws.Status != models.WorkspaceStatusFailed {
+		t.Errorf("expected status failed after placement failure, got %q", ws.Status)
+	}
+}
+
+func TestCreateWorkspace_RuntimeFailure(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
+	runtimeClient := &mockRuntimeServiceClient{createErr: errors.New("connection refused")}
+
+	svc := newOrchestratedService(repo, compute, nil, runtimeClient)
+	ctx := context.Background()
+
+	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.Status != models.WorkspaceStatusFailed {
+		t.Errorf("expected status failed after runtime failure, got %q", ws.Status)
+	}
+}
+
+func TestCreateWorkspace_WithGuardrails(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
+	guardrails := &mockPolicyCompiler{
+		compiled: []byte(`{"rules":[{"id":"r1","name":"deny-exec","rule_type":"tool_filter","condition":"exec","action":"deny","priority":10,"enabled":true}]}`),
+		count:    1,
+	}
+	runtimeClient := &mockRuntimeServiceClient{
+		createResp: &runtimepb.CreateSandboxResponse{
+			SandboxId:        "sandbox-def",
+			AgentApiEndpoint: "localhost:50052",
+		},
+	}
+
+	svc := newOrchestratedService(repo, compute, guardrails, runtimeClient)
+	ctx := context.Background()
+
+	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", &models.WorkspaceSpec{
+		GuardrailPolicyID: "rule-1,rule-2",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.Status != models.WorkspaceStatusRunning {
+		t.Errorf("expected status running, got %q", ws.Status)
+	}
+}
+
 // --- GetWorkspace tests ---
 
 func TestGetWorkspace_Found(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	created, _ := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", nil)
 	got, err := svc.GetWorkspace(context.Background(), created.ID)
 	if err != nil {
@@ -199,7 +394,7 @@ func TestGetWorkspace_Found(t *testing.T) {
 }
 
 func TestGetWorkspace_NotFound(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	_, err := svc.GetWorkspace(context.Background(), "nonexistent-id")
 	if !errors.Is(err, ErrWorkspaceNotFound) {
 		t.Errorf("expected ErrWorkspaceNotFound, got: %v", err)
@@ -207,7 +402,7 @@ func TestGetWorkspace_NotFound(t *testing.T) {
 }
 
 func TestGetWorkspace_EmptyID(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	_, err := svc.GetWorkspace(context.Background(), "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty ID, got: %v", err)
@@ -217,7 +412,7 @@ func TestGetWorkspace_EmptyID(t *testing.T) {
 // --- ListWorkspaces tests ---
 
 func TestListWorkspaces_WithFilters(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 
 	svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
@@ -244,7 +439,7 @@ func TestListWorkspaces_WithFilters(t *testing.T) {
 }
 
 func TestListWorkspaces_Pagination(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
@@ -275,7 +470,7 @@ func TestListWorkspaces_Pagination(t *testing.T) {
 }
 
 func TestListWorkspaces_DefaultPageSize(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 	svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
 
@@ -292,7 +487,7 @@ func TestListWorkspaces_DefaultPageSize(t *testing.T) {
 // --- TerminateWorkspace tests ---
 
 func TestTerminateWorkspace_Success(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
 
@@ -307,7 +502,7 @@ func TestTerminateWorkspace_Success(t *testing.T) {
 }
 
 func TestTerminateWorkspace_NotFound(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	err := svc.TerminateWorkspace(context.Background(), "nonexistent", "reason")
 	if !errors.Is(err, ErrWorkspaceNotFound) {
 		t.Errorf("expected ErrWorkspaceNotFound, got: %v", err)
@@ -315,7 +510,7 @@ func TestTerminateWorkspace_NotFound(t *testing.T) {
 }
 
 func TestTerminateWorkspace_AlreadyTerminal(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
 
@@ -328,9 +523,41 @@ func TestTerminateWorkspace_AlreadyTerminal(t *testing.T) {
 }
 
 func TestTerminateWorkspace_EmptyID(t *testing.T) {
-	svc := NewService(newMockRepo())
+	svc := newTestService(newMockRepo())
 	err := svc.TerminateWorkspace(context.Background(), "", "reason")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty ID, got: %v", err)
+	}
+}
+
+func TestTerminateWorkspace_WithSandboxTeardown(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
+	runtimeClient := &mockRuntimeServiceClient{
+		createResp: &runtimepb.CreateSandboxResponse{
+			SandboxId:        "sandbox-xyz",
+			AgentApiEndpoint: "localhost:50052",
+		},
+		destroyResp: &runtimepb.DestroySandboxResponse{},
+	}
+
+	svc := newOrchestratedService(repo, compute, nil, runtimeClient)
+	ctx := context.Background()
+
+	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	if ws.Status != models.WorkspaceStatusRunning {
+		t.Fatalf("expected running, got %q", ws.Status)
+	}
+
+	if err := svc.TerminateWorkspace(ctx, ws.ID, "done"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	if got.Status != models.WorkspaceStatusTerminated {
+		t.Errorf("expected status terminated, got %q", got.Status)
+	}
+	if runtimeClient.destroyCalls != 1 {
+		t.Errorf("expected 1 destroy call, got %d", runtimeClient.destroyCalls)
 	}
 }

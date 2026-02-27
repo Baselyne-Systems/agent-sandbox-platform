@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -12,9 +13,13 @@ import (
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/database"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/middleware"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/workspace"
+	computepb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/compute/v1"
+	guardrailspb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/guardrails/v1"
+	runtimepb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/runtime/v1"
 	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/workspace/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -39,7 +44,48 @@ func main() {
 	}
 
 	repo := workspace.NewPostgresRepository(db)
-	svc := workspace.NewService(repo)
+
+	// Optional: wire compute placer if COMPUTE_ENDPOINT is set.
+	var compute workspace.ComputePlacer
+	if ep := os.Getenv("COMPUTE_ENDPOINT"); ep != "" {
+		logger.Info("connecting to compute plane", zap.String("endpoint", ep))
+		conn, err := grpc.NewClient(ep, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Fatalf("failed to connect to compute plane: %v", err)
+		}
+		defer conn.Close()
+		compute = &computeAdapter{client: computepb.NewComputePlaneServiceClient(conn)}
+	}
+
+	// Optional: wire guardrails policy compiler if GUARDRAILS_ENDPOINT is set.
+	var guardrails workspace.PolicyCompiler
+	if ep := os.Getenv("GUARDRAILS_ENDPOINT"); ep != "" {
+		logger.Info("connecting to guardrails service", zap.String("endpoint", ep))
+		conn, err := grpc.NewClient(ep, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Fatalf("failed to connect to guardrails service: %v", err)
+		}
+		defer conn.Close()
+		guardrails = &guardrailsAdapter{client: guardrailspb.NewGuardrailsServiceClient(conn)}
+	}
+
+	// Runtime dialer: creates a gRPC connection to a runtime host on demand.
+	var dialRuntime workspace.RuntimeDialer
+	dialRuntime = func(_ context.Context, address string) (runtimepb.RuntimeServiceClient, error) {
+		conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			return nil, fmt.Errorf("dial runtime at %s: %w", address, err)
+		}
+		return runtimepb.NewRuntimeServiceClient(conn), nil
+	}
+
+	svc := workspace.NewService(workspace.ServiceConfig{
+		Repo:        repo,
+		Compute:     compute,
+		Guardrails:  guardrails,
+		DialRuntime: dialRuntime,
+		Logger:      logger,
+	})
 	handler := workspace.NewHandler(svc)
 
 	srv := grpc.NewServer(
@@ -72,4 +118,38 @@ func newLogger(level string) (*zap.Logger, error) {
 	}
 	cfg.Level = lvl
 	return cfg.Build()
+}
+
+// --- Adapter clients wrapping generated gRPC clients ---
+
+// computeAdapter adapts ComputePlaneServiceClient to the ComputePlacer interface.
+type computeAdapter struct {
+	client computepb.ComputePlaneServiceClient
+}
+
+func (a *computeAdapter) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (string, string, error) {
+	resp, err := a.client.PlaceWorkspace(ctx, &computepb.PlaceWorkspaceRequest{
+		MemoryMb:      memoryMb,
+		CpuMillicores: cpuMillicores,
+		DiskMb:        diskMb,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return resp.GetHostId(), resp.GetRuntimeEndpoint(), nil
+}
+
+// guardrailsAdapter adapts GuardrailsServiceClient to the PolicyCompiler interface.
+type guardrailsAdapter struct {
+	client guardrailspb.GuardrailsServiceClient
+}
+
+func (a *guardrailsAdapter) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error) {
+	resp, err := a.client.CompilePolicy(ctx, &guardrailspb.CompilePolicyRequest{
+		RuleIds: ruleIDs,
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	return resp.GetCompiledPolicy(), int(resp.GetRuleCount()), nil
 }

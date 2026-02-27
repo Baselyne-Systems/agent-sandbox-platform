@@ -113,8 +113,37 @@ func (h *Handler) QueryActions(ctx context.Context, req *pb.QueryActionsRequest)
 	}, nil
 }
 
-func (h *Handler) StreamActions(_ *pb.StreamActionsRequest, _ grpc.ServerStreamingServer[pb.ActionRecord]) error {
-	return status.Error(codes.Unimplemented, "StreamActions requires pub/sub infrastructure")
+func (h *Handler) StreamActions(req *pb.StreamActionsRequest, stream grpc.ServerStreamingServer[pb.ActionRecord]) error {
+	workspaceFilter := req.GetWorkspaceId()
+	agentFilter := req.GetAgentId()
+
+	subID, ch := h.svc.Broker().Subscribe()
+	defer h.svc.Broker().Unsubscribe(subID)
+
+	for {
+		select {
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case record, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			// Apply filters.
+			if workspaceFilter != "" && record.WorkspaceID != workspaceFilter {
+				continue
+			}
+			if agentFilter != "" && record.AgentID != agentFilter {
+				continue
+			}
+			pbRecord, err := recordToProto(record)
+			if err != nil {
+				return status.Errorf(codes.Internal, "convert record: %v", err)
+			}
+			if err := stream.Send(pbRecord); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 // --- converters ---

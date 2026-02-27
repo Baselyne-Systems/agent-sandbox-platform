@@ -20,11 +20,17 @@ const (
 
 // Service implements activity store business logic.
 type Service struct {
-	repo Repository
+	repo   Repository
+	broker *Broker
 }
 
 func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+	return &Service{repo: repo, broker: NewBroker()}
+}
+
+// Broker returns the service's action record broker for streaming.
+func (s *Service) Broker() *Broker {
+	return s.broker
 }
 
 func (s *Service) RecordAction(ctx context.Context, record *models.ActionRecord) (string, error) {
@@ -43,6 +49,10 @@ func (s *Service) RecordAction(ctx context.Context, record *models.ActionRecord)
 	if err := s.repo.InsertAction(ctx, record); err != nil {
 		return "", err
 	}
+
+	// Publish to streaming subscribers (fire-and-forget, non-blocking).
+	s.broker.Publish(record)
+
 	return record.ID, nil
 }
 

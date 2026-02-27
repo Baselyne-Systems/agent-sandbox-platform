@@ -152,7 +152,9 @@ type Workspace struct {
 	TaskID    string
 	Status    WorkspaceStatus
 	Spec      WorkspaceSpec
-	HostID    string
+	HostID      string
+	HostAddress string
+	SandboxID   string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ExpiresAt *time.Time

@@ -310,3 +310,65 @@ func TestInteg_TerminateWorkspace_NotFound(t *testing.T) {
 		t.Errorf("error = %v, want ErrWorkspaceNotFound", err)
 	}
 }
+
+func TestInteg_UpdateWorkspaceStatus_RoundTrip(t *testing.T) {
+	repo, _ := setup(t)
+	ctx := context.Background()
+
+	ws := &models.Workspace{
+		AgentID: "agent-update",
+		Status:  models.WorkspaceStatusPending,
+		Spec: models.WorkspaceSpec{
+			AllowedTools: []string{},
+			EnvVars:      map[string]string{},
+		},
+	}
+	if err := repo.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatalf("CreateWorkspace: %v", err)
+	}
+
+	// Update to creating
+	if err := repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusCreating, "", "", ""); err != nil {
+		t.Fatalf("UpdateWorkspaceStatus creating: %v", err)
+	}
+
+	got, err := repo.GetWorkspace(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("GetWorkspace: %v", err)
+	}
+	if got.Status != models.WorkspaceStatusCreating {
+		t.Errorf("status = %q, want creating", got.Status)
+	}
+
+	// Update to running with host and sandbox info
+	if err := repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusRunning, "host-abc", "runtime.host1:50052", "sandbox-xyz"); err != nil {
+		t.Fatalf("UpdateWorkspaceStatus running: %v", err)
+	}
+
+	got, err = repo.GetWorkspace(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("GetWorkspace: %v", err)
+	}
+	if got.Status != models.WorkspaceStatusRunning {
+		t.Errorf("status = %q, want running", got.Status)
+	}
+	if got.HostID != "host-abc" {
+		t.Errorf("host_id = %q, want 'host-abc'", got.HostID)
+	}
+	if got.HostAddress != "runtime.host1:50052" {
+		t.Errorf("host_address = %q, want 'runtime.host1:50052'", got.HostAddress)
+	}
+	if got.SandboxID != "sandbox-xyz" {
+		t.Errorf("sandbox_id = %q, want 'sandbox-xyz'", got.SandboxID)
+	}
+}
+
+func TestInteg_UpdateWorkspaceStatus_NotFound(t *testing.T) {
+	repo, _ := setup(t)
+	ctx := context.Background()
+
+	err := repo.UpdateWorkspaceStatus(ctx, "00000000-0000-0000-0000-000000000000", models.WorkspaceStatusRunning, "h", "a", "s")
+	if err != ErrWorkspaceNotFound {
+		t.Errorf("error = %v, want ErrWorkspaceNotFound", err)
+	}
+}
