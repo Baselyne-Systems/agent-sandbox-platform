@@ -10,9 +10,12 @@ import (
 
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/config"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/database"
+	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/economics"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/middleware"
+	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/economics/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -35,9 +38,15 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	repo := economics.NewPostgresRepository(db)
+	svc := economics.NewService(repo)
+	handler := economics.NewHandler(svc)
+
 	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
 	)
+	pb.RegisterEconomicsServiceServer(srv, handler)
+	reflection.Register(srv)
 
 	logger.Info("Economics Service starting", zap.String("port", cfg.GRPCPort))
 

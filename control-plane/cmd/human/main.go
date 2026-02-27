@@ -10,9 +10,12 @@ import (
 
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/config"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/database"
+	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/human"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/middleware"
+	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/human/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -35,9 +38,15 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	repo := human.NewPostgresRepository(db)
+	svc := human.NewService(repo)
+	handler := human.NewHandler(svc)
+
 	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
 	)
+	pb.RegisterHumanInteractionServiceServer(srv, handler)
+	reflection.Register(srv)
 
 	logger.Info("Human Interaction Service starting", zap.String("port", cfg.GRPCPort))
 

@@ -11,8 +11,11 @@ import (
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/config"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/database"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/middleware"
+	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/workspace"
+	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/workspace/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -35,9 +38,15 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	repo := workspace.NewPostgresRepository(db)
+	svc := workspace.NewService(repo)
+	handler := workspace.NewHandler(svc)
+
 	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
 	)
+	pb.RegisterWorkspaceServiceServer(srv, handler)
+	reflection.Register(srv)
 
 	logger.Info("Workspace Service starting", zap.String("port", cfg.GRPCPort))
 

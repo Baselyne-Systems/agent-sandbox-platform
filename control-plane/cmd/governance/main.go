@@ -9,10 +9,12 @@ import (
 	"syscall"
 
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/config"
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/database"
+	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/governance"
 	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/middleware"
+	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/governance/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -24,20 +26,19 @@ func main() {
 	}
 	defer logger.Sync()
 
-	db, err := database.NewConnection(cfg.DatabaseURL)
-	if err != nil {
-		log.Fatalf("failed to connect to database: %v", err)
-	}
-	defer db.Close()
-
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cfg.GRPCPort))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	svc := governance.NewService()
+	handler := governance.NewHandler(svc)
+
 	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
 	)
+	pb.RegisterDataGovernanceServiceServer(srv, handler)
+	reflection.Register(srv)
 
 	logger.Info("Data Governance Service starting", zap.String("port", cfg.GRPCPort))
 

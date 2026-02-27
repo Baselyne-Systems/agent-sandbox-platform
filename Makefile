@@ -1,4 +1,4 @@
-.PHONY: proto build build-go build-rust test test-go test-rust dev clean
+.PHONY: proto build build-go build-rust test test-go test-rust test-integration dev clean
 
 # Generate protobuf code for Go (Rust is generated at build time via build.rs)
 proto:
@@ -21,6 +21,13 @@ test-go:
 
 test-rust:
 	cd runtime && cargo test
+
+# Integration tests (requires Docker)
+test-integration:
+	cd control-plane && go test -tags integration -count=1 -v ./internal/...
+
+test-integration-%:
+	cd control-plane && go test -tags integration -count=1 -v ./internal/$*/...
 
 # Start local dev dependencies
 dev:
