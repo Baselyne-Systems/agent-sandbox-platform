@@ -27,4 +27,9 @@ pub mod platform {
             include!("gen/platform.workspace.v1.rs");
         }
     }
+    pub mod human {
+        pub mod v1 {
+            include!("gen/platform.human.v1.rs");
+        }
+    }
 }

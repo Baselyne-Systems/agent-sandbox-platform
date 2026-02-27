@@ -1,4 +1,6 @@
-use anyhow::Result;
+use std::collections::HashMap;
+
+use anyhow::{anyhow, Result};
 use serde_json::Value;
 use tracing::info;
 
@@ -20,10 +22,9 @@ pub struct ToolResult {
     pub output: Value,
 }
 
-/// Intercepts and executes tool calls on behalf of agents. In a production
-/// system this would enforce sandboxing, capture I/O, and route to the actual
-/// tool implementation.
-#[derive(Debug)]
+/// Intercepts and executes tool calls on behalf of agents. Enforces allowed-tool
+/// lists and passes environment variables to tool backends.
+#[derive(Debug, Clone)]
 pub struct ToolInterceptor;
 
 impl ToolInterceptor {
@@ -32,15 +33,32 @@ impl ToolInterceptor {
         Self
     }
 
-    /// Intercept a tool request, execute it (stub), and return the result.
+    /// Intercept a tool request, check allowed tools, and execute (stub).
     ///
-    /// Stub implementation: always returns success with an empty object output.
-    pub fn intercept(&self, request: ToolRequest) -> Result<ToolResult> {
+    /// Returns an error if the tool is not in the allowed list.
+    /// `env_vars` are passed through for future tool backends that need them.
+    pub fn intercept(
+        &self,
+        request: ToolRequest,
+        allowed_tools: &[String],
+        _env_vars: &HashMap<String, String>,
+    ) -> Result<ToolResult> {
+        // Enforce allowed tools list (empty list means all tools allowed)
+        if !allowed_tools.is_empty()
+            && !allowed_tools.iter().any(|t| t == &request.tool_name)
+        {
+            return Err(anyhow!(
+                "tool '{}' is not in the allowed tools list",
+                request.tool_name
+            ));
+        }
+
         info!(
             tool_name = %request.tool_name,
             "intercepting tool call — stub execution"
         );
 
+        // Stub execution — actual tool backends are a future phase.
         Ok(ToolResult {
             success: true,
             output: serde_json::json!({
@@ -63,15 +81,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stub_interceptor_returns_success() {
+    fn interceptor_allows_listed_tool() {
         let interceptor = ToolInterceptor::new();
         let request = ToolRequest {
             tool_name: "read_file".to_string(),
             parameters: serde_json::json!({"path": "/etc/hosts"}),
         };
 
-        let result = interceptor.intercept(request).unwrap();
+        let result = interceptor
+            .intercept(
+                request,
+                &vec!["read_file".to_string(), "write_file".to_string()],
+                &HashMap::new(),
+            )
+            .unwrap();
         assert!(result.success);
         assert_eq!(result.output["status"], "ok");
+    }
+
+    #[test]
+    fn interceptor_denies_unlisted_tool() {
+        let interceptor = ToolInterceptor::new();
+        let request = ToolRequest {
+            tool_name: "exec".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        let result = interceptor.intercept(
+            request,
+            &vec!["read_file".to_string()],
+            &HashMap::new(),
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not in the allowed tools list"));
+    }
+
+    #[test]
+    fn interceptor_allows_all_when_empty_list() {
+        let interceptor = ToolInterceptor::new();
+        let request = ToolRequest {
+            tool_name: "anything".to_string(),
+            parameters: serde_json::json!({}),
+        };
+
+        let result = interceptor
+            .intercept(request, &vec![], &HashMap::new())
+            .unwrap();
+        assert!(result.success);
     }
 }

@@ -2,6 +2,7 @@ package guardrails
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -278,10 +279,16 @@ func TestListRules_Pagination(t *testing.T) {
 }
 
 func TestCompilePolicy(t *testing.T) {
-	svc := NewService(newMockRepo())
+	repo := newMockRepo()
+	svc := NewService(repo)
 	ctx := context.Background()
 
-	compiled, count, err := svc.CompilePolicy(ctx, []string{"id-1", "id-2", "id-3"})
+	// Create rules first so CompilePolicy can fetch them
+	r1, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil)
+	r2, _ := svc.CreateRule(ctx, "log-read", "Log reads", models.RuleTypeToolFilter, "read_file", models.RuleActionLog, 20, nil)
+	r3, _ := svc.CreateRule(ctx, "check-path", "Check path", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil)
+
+	compiled, count, err := svc.CompilePolicy(ctx, []string{r1.ID, r2.ID, r3.ID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -291,6 +298,27 @@ func TestCompilePolicy(t *testing.T) {
 	if len(compiled) == 0 {
 		t.Error("expected non-empty compiled policy")
 	}
+
+	// Verify the output is a valid compiledPolicy JSON
+	var policy compiledPolicy
+	if err := json.Unmarshal(compiled, &policy); err != nil {
+		t.Fatalf("failed to unmarshal compiled policy: %v", err)
+	}
+	if len(policy.Rules) != 3 {
+		t.Errorf("expected 3 rules in policy, got %d", len(policy.Rules))
+	}
+	if policy.Rules[0].Name != "deny-exec" {
+		t.Errorf("expected first rule name 'deny-exec', got %q", policy.Rules[0].Name)
+	}
+	if policy.Rules[0].RuleType != "tool_filter" {
+		t.Errorf("expected rule_type 'tool_filter', got %q", policy.Rules[0].RuleType)
+	}
+	if policy.Rules[0].Action != "deny" {
+		t.Errorf("expected action 'deny', got %q", policy.Rules[0].Action)
+	}
+	if !policy.Rules[0].Enabled {
+		t.Error("expected rule to be enabled")
+	}
 }
 
 func TestCompilePolicy_Empty(t *testing.T) {
@@ -298,5 +326,13 @@ func TestCompilePolicy_Empty(t *testing.T) {
 	_, _, err := svc.CompilePolicy(context.Background(), nil)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty rule IDs, got: %v", err)
+	}
+}
+
+func TestCompilePolicy_NotFoundRule(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, _, err := svc.CompilePolicy(context.Background(), []string{"nonexistent-id"})
+	if !errors.Is(err, ErrRuleNotFound) {
+		t.Errorf("expected ErrRuleNotFound for nonexistent rule, got: %v", err)
 	}
 }

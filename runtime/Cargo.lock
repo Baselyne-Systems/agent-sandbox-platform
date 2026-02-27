@@ -252,6 +252,7 @@ dependencies = [
 name = "guardrails-eval"
 version = "0.1.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "thiserror",
@@ -1040,6 +1041,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

@@ -147,18 +147,55 @@ func (s *Service) ListRules(ctx context.Context, ruleType models.RuleType, enabl
 	return rules, nextToken, nil
 }
 
-// CompilePolicy is a stub that packages rule IDs as JSON bytes.
-// Real compilation happens in the Rust runtime.
+// compiledRule matches the Rust evaluator's CompiledRule struct for JSON deserialization.
+type compiledRule struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	RuleType string `json:"rule_type"`
+	Condition string `json:"condition"`
+	Action   string `json:"action"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// compiledPolicy matches the Rust evaluator's CompiledPolicy struct.
+type compiledPolicy struct {
+	Rules []compiledRule `json:"rules"`
+}
+
+// CompilePolicy fetches each rule by ID and produces a structured CompiledPolicy
+// that the Rust runtime evaluator can deserialize and evaluate.
 func (s *Service) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error) {
 	if len(ruleIDs) == 0 {
 		return nil, 0, ErrInvalidInput
 	}
 
-	compiled, err := json.Marshal(ruleIDs)
+	var rules []compiledRule
+	for _, id := range ruleIDs {
+		rule, err := s.repo.GetRule(ctx, id)
+		if err != nil {
+			return nil, 0, err
+		}
+		if rule == nil {
+			return nil, 0, ErrRuleNotFound
+		}
+		rules = append(rules, compiledRule{
+			ID:       rule.ID,
+			Name:     rule.Name,
+			RuleType: string(rule.Type),
+			Condition: rule.Condition,
+			Action:   string(rule.Action),
+			Priority: rule.Priority,
+			Enabled:  rule.Enabled,
+		})
+	}
+
+	policy := compiledPolicy{Rules: rules}
+	compiled, err := json.Marshal(policy)
 	if err != nil {
 		return nil, 0, err
 	}
-	return compiled, len(ruleIDs), nil
+	return compiled, len(rules), nil
 }
 
 func encodePageToken(id string) string {

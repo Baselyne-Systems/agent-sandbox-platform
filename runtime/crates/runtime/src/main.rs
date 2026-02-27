@@ -9,12 +9,14 @@ use anyhow::Result;
 use tonic::transport::Server;
 use tracing::info;
 
+use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::runtime::v1::agent_api_service_server::AgentApiServiceServer;
 use proto_gen::platform::runtime::v1::runtime_service_server::RuntimeServiceServer;
 
 use crate::agent_api::AgentApiServiceImpl;
 use crate::sandbox::SandboxManager;
 use crate::server::RuntimeServiceImpl;
+use crate::tools::ToolInterceptor;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -33,9 +35,24 @@ async fn main() -> Result<()> {
 
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
 
+    // Optional HIS endpoint for human interaction forwarding.
+    let his_client = match std::env::var("HIS_ENDPOINT") {
+        Ok(endpoint) => {
+            info!(endpoint = %endpoint, "connecting to HIS");
+            let client = HumanInteractionServiceClient::connect(endpoint).await?;
+            Some(client)
+        }
+        Err(_) => {
+            info!("HIS_ENDPOINT not set — RequestHumanInput will return unavailable");
+            None
+        }
+    };
+
     let sandbox_manager = SandboxManager::new();
+    let tool_interceptor = ToolInterceptor::new();
     let runtime_service = RuntimeServiceImpl::new(sandbox_manager.clone());
-    let agent_api_service = AgentApiServiceImpl::new(sandbox_manager);
+    let agent_api_service =
+        AgentApiServiceImpl::new(sandbox_manager, tool_interceptor, his_client);
 
     info!("Runtime starting on :{port}");
 

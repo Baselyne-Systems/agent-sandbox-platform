@@ -1,10 +1,14 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
+use tokio::sync::broadcast;
 use tracing::info;
 use uuid::Uuid;
+
+use guardrails_eval::Evaluator;
 
 /// Status of a sandbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,24 +19,76 @@ pub enum SandboxStatus {
     Failed,
 }
 
-/// A handle to a managed sandbox instance.
+/// Events emitted by a sandbox for streaming via RuntimeService.StreamEvents.
 #[derive(Debug, Clone)]
-pub struct SandboxHandle {
+pub enum SandboxEvent {
+    Action {
+        action_id: String,
+        tool_name: String,
+        verdict: String,
+        evaluation_latency_us: i64,
+    },
+    Lifecycle {
+        new_state: String,
+        reason: String,
+    },
+    Progress {
+        message: String,
+        percent_complete: f32,
+    },
+}
+
+/// Parameters for creating a new sandbox.
+pub struct CreateSandboxParams {
+    pub workspace_id: String,
+    pub agent_id: String,
+    pub allowed_tools: Vec<String>,
+    pub env_vars: HashMap<String, String>,
+    pub compiled_guardrails: Vec<u8>,
+}
+
+/// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
+pub struct SandboxState {
     /// Unique identifier for this sandbox.
     pub id: String,
+    /// The workspace this sandbox belongs to.
+    pub workspace_id: String,
+    /// The agent running in this sandbox.
+    pub agent_id: String,
     /// Current status.
-    pub status: SandboxStatus,
+    pub status: Mutex<SandboxStatus>,
+    /// The guardrails evaluator loaded with the sandbox's compiled policy.
+    pub evaluator: Evaluator,
+    /// Tools the agent is allowed to invoke.
+    pub allowed_tools: Vec<String>,
+    /// Environment variables injected into the sandbox.
+    pub env_vars: HashMap<String, String>,
+    /// Counter of actions executed in this sandbox.
+    pub actions_executed: AtomicU32,
+    /// Broadcast sender for sandbox events (subscribe for StreamEvents).
+    pub event_tx: broadcast::Sender<SandboxEvent>,
     /// When the sandbox was created.
     pub created_at: SystemTime,
 }
 
+impl std::fmt::Debug for SandboxState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SandboxState")
+            .field("id", &self.id)
+            .field("workspace_id", &self.workspace_id)
+            .field("agent_id", &self.agent_id)
+            .field("status", &self.status)
+            .field("allowed_tools", &self.allowed_tools)
+            .field("actions_executed", &self.actions_executed.load(Ordering::Relaxed))
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
 /// Manages the lifecycle of sandboxes on this host.
-///
-/// Uses an in-memory HashMap behind `Arc<Mutex<>>` for now. A production
-/// implementation would integrate with the container/microVM runtime.
 #[derive(Debug, Clone)]
 pub struct SandboxManager {
-    sandboxes: Arc<Mutex<HashMap<String, SandboxHandle>>>,
+    sandboxes: Arc<Mutex<HashMap<String, Arc<SandboxState>>>>,
 }
 
 impl SandboxManager {
@@ -43,29 +99,47 @@ impl SandboxManager {
         }
     }
 
-    /// Provision a new sandbox for the given workspace.
-    pub fn create(&self, workspace_id: String, spec: String) -> Result<SandboxHandle> {
+    /// Provision a new sandbox with full state.
+    pub fn create(&self, params: CreateSandboxParams) -> Result<Arc<SandboxState>> {
+        let evaluator = Evaluator::load(&params.compiled_guardrails)
+            .map_err(|e| anyhow!("failed to load guardrails: {e}"))?;
+
         let id = Uuid::new_v4().to_string();
-        let handle = SandboxHandle {
+        let (event_tx, _) = broadcast::channel(256);
+
+        let state = Arc::new(SandboxState {
             id: id.clone(),
-            status: SandboxStatus::Running,
+            workspace_id: params.workspace_id.clone(),
+            agent_id: params.agent_id.clone(),
+            status: Mutex::new(SandboxStatus::Running),
+            evaluator,
+            allowed_tools: params.allowed_tools,
+            env_vars: params.env_vars,
+            actions_executed: AtomicU32::new(0),
+            event_tx: event_tx.clone(),
             created_at: SystemTime::now(),
-        };
+        });
 
         info!(
             sandbox_id = %id,
-            workspace_id = %workspace_id,
-            spec = %spec,
+            workspace_id = %params.workspace_id,
+            agent_id = %params.agent_id,
             "sandbox provisioned"
         );
+
+        // Send lifecycle started event (ignore error if no receivers)
+        let _ = event_tx.send(SandboxEvent::Lifecycle {
+            new_state: "running".into(),
+            reason: "sandbox created".into(),
+        });
 
         let mut sandboxes = self
             .sandboxes
             .lock()
             .map_err(|e| anyhow!("lock poisoned: {e}"))?;
-        sandboxes.insert(id, handle.clone());
+        sandboxes.insert(id, state.clone());
 
-        Ok(handle)
+        Ok(state)
     }
 
     /// Destroy (tear down) a sandbox by ID.
@@ -75,7 +149,16 @@ impl SandboxManager {
             .lock()
             .map_err(|e| anyhow!("lock poisoned: {e}"))?;
 
-        if sandboxes.remove(sandbox_id).is_some() {
+        if let Some(state) = sandboxes.remove(sandbox_id) {
+            // Update status
+            if let Ok(mut status) = state.status.lock() {
+                *status = SandboxStatus::Stopped;
+            }
+            // Send lifecycle stopped event
+            let _ = state.event_tx.send(SandboxEvent::Lifecycle {
+                new_state: "stopped".into(),
+                reason: "sandbox destroyed".into(),
+            });
             info!(sandbox_id = %sandbox_id, "sandbox destroyed");
             Ok(())
         } else {
@@ -83,8 +166,8 @@ impl SandboxManager {
         }
     }
 
-    /// Retrieve the current status of a sandbox.
-    pub fn get_status(&self, sandbox_id: &str) -> Result<SandboxHandle> {
+    /// Retrieve sandbox state by ID.
+    pub fn get_sandbox(&self, sandbox_id: &str) -> Result<Arc<SandboxState>> {
         let sandboxes = self
             .sandboxes
             .lock()
@@ -94,6 +177,17 @@ impl SandboxManager {
             .get(sandbox_id)
             .cloned()
             .ok_or_else(|| anyhow!("sandbox not found: {sandbox_id}"))
+    }
+
+    /// Look up a sandbox ID from gRPC request metadata.
+    pub fn lookup_by_metadata<T>(&self, request: &tonic::Request<T>) -> Result<Arc<SandboxState>> {
+        let sandbox_id = request
+            .metadata()
+            .get("x-sandbox-id")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| anyhow!("missing x-sandbox-id metadata"))?;
+
+        self.get_sandbox(sandbox_id)
     }
 }
 
@@ -107,24 +201,83 @@ impl Default for SandboxManager {
 mod tests {
     use super::*;
 
+    fn empty_policy_bytes() -> Vec<u8> {
+        serde_json::to_vec(&guardrails_eval::CompiledPolicy { rules: vec![] }).unwrap()
+    }
+
+    fn test_params(workspace_id: &str, agent_id: &str) -> CreateSandboxParams {
+        CreateSandboxParams {
+            workspace_id: workspace_id.to_string(),
+            agent_id: agent_id.to_string(),
+            allowed_tools: vec!["read_file".to_string(), "write_file".to_string()],
+            env_vars: HashMap::from([("ENV".to_string(), "test".to_string())]),
+            compiled_guardrails: empty_policy_bytes(),
+        }
+    }
+
     #[test]
     fn create_and_destroy_sandbox() {
         let mgr = SandboxManager::new();
-        let handle = mgr
-            .create("ws-001".to_string(), "256MB/500mc".to_string())
-            .unwrap();
-        assert_eq!(handle.status, SandboxStatus::Running);
+        let state = mgr.create(test_params("ws-001", "agent-001")).unwrap();
+        assert_eq!(*state.status.lock().unwrap(), SandboxStatus::Running);
+        assert_eq!(state.workspace_id, "ws-001");
+        assert_eq!(state.agent_id, "agent-001");
+        assert_eq!(state.allowed_tools, vec!["read_file", "write_file"]);
 
-        let status = mgr.get_status(&handle.id).unwrap();
-        assert_eq!(status.id, handle.id);
+        let fetched = mgr.get_sandbox(&state.id).unwrap();
+        assert_eq!(fetched.id, state.id);
 
-        mgr.destroy(&handle.id).unwrap();
-        assert!(mgr.get_status(&handle.id).is_err());
+        mgr.destroy(&state.id).unwrap();
+        assert!(mgr.get_sandbox(&state.id).is_err());
     }
 
     #[test]
     fn destroy_nonexistent_returns_error() {
         let mgr = SandboxManager::new();
         assert!(mgr.destroy("no-such-sandbox").is_err());
+    }
+
+    #[test]
+    fn sandbox_has_event_channel() {
+        let mgr = SandboxManager::new();
+        let state = mgr.create(test_params("ws-002", "agent-002")).unwrap();
+
+        // Subscribe and verify we can receive events
+        let mut rx = state.event_tx.subscribe();
+        let _ = state.event_tx.send(SandboxEvent::Progress {
+            message: "test".into(),
+            percent_complete: 50.0,
+        });
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            SandboxEvent::Progress { message, .. } => assert_eq!(message, "test"),
+            _ => panic!("unexpected event type"),
+        }
+    }
+
+    #[test]
+    fn actions_executed_counter() {
+        let mgr = SandboxManager::new();
+        let state = mgr.create(test_params("ws-003", "agent-003")).unwrap();
+
+        assert_eq!(state.actions_executed.load(Ordering::Relaxed), 0);
+        state.actions_executed.fetch_add(1, Ordering::Relaxed);
+        assert_eq!(state.actions_executed.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn destroy_sends_stopped_event() {
+        let mgr = SandboxManager::new();
+        let state = mgr.create(test_params("ws-004", "agent-004")).unwrap();
+
+        let mut rx = state.event_tx.subscribe();
+        mgr.destroy(&state.id).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            SandboxEvent::Lifecycle { new_state, .. } => assert_eq!(new_state, "stopped"),
+            _ => panic!("expected lifecycle event"),
+        }
     }
 }
