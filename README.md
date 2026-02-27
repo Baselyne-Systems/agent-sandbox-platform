@@ -15,44 +15,40 @@ Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It
 
 ## Architecture Overview
 
-```
-                     ┌──────────────────────────────────────────────────┐
-                     │               Control Plane (Go)                │
-                     │                                                  │
- ┌──────────┐       │  ┌──────────┐  ┌───────────┐  ┌───────────────┐ │
- │ Client /  │ gRPC  │  │ Identity │  │ Workspace │  │     Task      │ │
- │ Operator  │──────▶│  │ Service  │  │  Service  │◀─│    Service    │ │
- └──────────┘       │  └──────────┘  └─────┬─────┘  └───────────────┘ │
-                     │                      │                           │
-                     │  ┌──────────┐  ┌─────▼──────┐  ┌─────────────┐ │
-                     │  │Guardrails│  │  Compute   │  │   Human     │ │
-                     │  │ Service  │  │   Plane    │  │ Interaction │ │
-                     │  └──────────┘  └────────────┘  └─────────────┘ │
-                     │                                                  │
-                     │  ┌──────────┐  ┌────────────┐  ┌─────────────┐ │
-                     │  │Economics │  │  Activity  │  │    Data     │ │
-                     │  │ Service  │  │   Store    │  │ Governance  │ │
-                     │  └──────────┘  └────────────┘  └─────────────┘ │
-                     │                                                  │
-                     │                 ┌────────────┐                   │
-                     │                 │ PostgreSQL │                   │
-                     │                 └────────────┘                   │
-                     └────────────────────────┬────────────────────────┘
-                                              │ gRPC
-                     ┌────────────────────────▼────────────────────────┐
-                     │          Data Plane (Rust, per host)            │
-                     │                                                  │
-                     │  ┌──────────────────────────────────────────┐   │
-                     │  │            Sandbox Runtime               │   │
-                     │  │                                          │   │
-                     │  │  ┌────────────────┐  ┌────────────────┐  │   │
-                     │  │  │   Guardrails   │  │     Tool       │  │   │
-                     │  │  │   Evaluator    │  │  Interceptor   │  │   │
-                     │  │  └────────────────┘  └────────────────┘  │   │
-                     │  │                                          │   │
-                     │  │  Agent API: ExecuteTool, RequestHumanInput│   │
-                     │  └──────────────────────────────────────────┘   │
-                     └─────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    Client["Client / Operator"]
+
+    subgraph CP["Control Plane (Go)"]
+        Identity["Identity Service"]
+        Workspace["Workspace Service"]
+        Task["Task Service"]
+        Guardrails["Guardrails Service"]
+        Compute["Compute Plane"]
+        Human["Human Interaction"]
+        Economics["Economics Service"]
+        Activity["Activity Store"]
+        Governance["Data Governance"]
+        PG[("PostgreSQL")]
+
+        Task -->|provisions| Workspace
+        Workspace -->|placement| Compute
+        Workspace -->|compile policy| Guardrails
+    end
+
+    subgraph DP["Data Plane (Rust, per host)"]
+        subgraph SR["Sandbox Runtime"]
+            Evaluator["Guardrails Evaluator"]
+            Interceptor["Tool Interceptor"]
+            AgentAPI["Agent API: ExecuteTool, RequestHumanInput"]
+        end
+    end
+
+    Client -->|gRPC| CP
+    CP -->|gRPC| DP
+    SR -->|async| Activity
+    SR -->|async| Economics
+    SR -->|forward| Human
 ```
 
 ### Services
@@ -73,24 +69,36 @@ Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It
 ### Core Flows
 
 **1. Action Evaluation (Hot Path, <50ms)**
-```
-Agent → ExecuteTool → Budget Check → Guardrails Eval → Tool Execution
-                                                          ↓
-                                          Activity Record (async)
-                                          Usage Record (async)
+```mermaid
+flowchart LR
+    A[Agent] -->|ExecuteTool| B[Budget Check]
+    B --> C[Guardrails Eval]
+    C --> D[Tool Execution]
+    D -.->|async| E[Activity Record]
+    D -.->|async| F[Usage Record]
 ```
 
 **2. Human Interaction (Non-Blocking)**
-```
-Agent → RequestHumanInput → HIS creates request → Agent polls CheckHumanRequest
-                                                          ↓
-                              Human → RespondToRequest → Agent gets response
+```mermaid
+sequenceDiagram
+    Agent->>Runtime: RequestHumanInput
+    Runtime->>HIS: CreateRequest
+    HIS-->>Runtime: request_id
+    Runtime-->>Agent: request_id
+    Note over Agent: continues working
+    Agent->>Runtime: CheckHumanRequest
+    Runtime-->>Agent: status: pending
+    Human->>HIS: RespondToRequest
+    Agent->>Runtime: CheckHumanRequest
+    Runtime-->>Agent: response + responder_id
 ```
 
 **3. Workspace Orchestration**
-```
-CreateTask → Compute PlaceWorkspace → Guardrails CompilePolicy → Runtime CreateSandbox
-               (atomic reservation)     (rules → binary)          (deploy evaluator)
+```mermaid
+flowchart LR
+    A[CreateTask] --> B["Compute PlaceWorkspace<br/>(atomic reservation)"]
+    B --> C["Guardrails CompilePolicy<br/>(rules → binary)"]
+    C --> D["Runtime CreateSandbox<br/>(deploy evaluator)"]
 ```
 
 ## Quick Start

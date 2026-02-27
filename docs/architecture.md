@@ -53,13 +53,16 @@ The top-level entry point for agent work. A task represents a goal assigned to a
 - Automatic workspace termination on task completion/cancellation
 
 **Valid Status Transitions:**
-```
-pending ──→ running ──→ completed
-   │           │──→ waiting_on_human ──→ running
-   │           │──→ failed
-   │           └──→ cancelled
-   │──→ cancelled
-   └──→ failed
+```mermaid
+stateDiagram-v2
+    pending --> running
+    pending --> cancelled
+    pending --> failed
+    running --> completed
+    running --> waiting_on_human
+    running --> failed
+    running --> cancelled
+    waiting_on_human --> running
 ```
 
 ### Compute Plane Service
@@ -156,24 +159,25 @@ A Rust binary that runs on each host in the fleet. It exposes two gRPC services:
 
 This is the most performance-critical flow — executed on every tool call an agent makes. Target latency: <50ms for guardrails evaluation.
 
-```
-                          Sandbox Runtime (Rust)
-                         ┌─────────────────────────────────────────────┐
-                         │                                             │
-Agent ──ExecuteTool──▶   │  1. Lookup sandbox from x-sandbox-id header │
-                         │  2. Parse parameters (proto Struct → JSON)  │
-                         │  3. Budget check (Economics CheckBudget)    │
-                         │     └─ Deny if exhausted, warn on RPC fail │
-                         │  4. Guardrails eval (RwLock read)           │
-                         │     └─ Allow / Deny(reason) / Escalate(id) │
-                         │  5. Tool execution (if allowed)             │
-                         │  6. Increment action counter (atomic)       │
-                         │  7. Emit action event (broadcast channel)   │
-                         │  8. Record action → Activity Store (async)  │
-                         │  9. Record usage → Economics (async)        │
-                         │                                             │
-          ◀──Response──  │  Return: verdict, result, denial_reason     │
-                         └─────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Runtime as Sandbox Runtime (Rust)
+    participant Economics
+    participant Activity as Activity Store
+
+    Agent->>Runtime: ExecuteTool (x-sandbox-id)
+    Note over Runtime: 1. Lookup sandbox from header
+    Note over Runtime: 2. Parse parameters (Struct → JSON)
+    Runtime->>Economics: 3. CheckBudget
+    Economics-->>Runtime: allowed / denied
+    Note over Runtime: 4. Guardrails eval (RwLock read)<br/>Allow / Deny(reason) / Escalate(id)
+    Note over Runtime: 5. Tool execution (if allowed)
+    Note over Runtime: 6. Increment action counter (atomic)
+    Note over Runtime: 7. Emit action event (broadcast)
+    Runtime-->>Agent: verdict, result, denial_reason
+    Runtime-)Activity: 8. Record action (fire-and-forget)
+    Runtime-)Economics: 9. Record usage (fire-and-forget)
 ```
 
 Steps 8 and 9 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent.
@@ -182,54 +186,59 @@ Steps 8 and 9 are fire-and-forget (`tokio::spawn`) — they don't block the resp
 
 Agents can request human input without blocking. The pattern is: submit a request, get back a `request_id`, then poll for the response.
 
-```
-Agent                          Runtime                    HIS
-  │                              │                          │
-  │──RequestHumanInput──────────▶│                          │
-  │                              │──CreateRequest──────────▶│
-  │                              │◀─────────request_id──────│
-  │◀──{request_id}───────────────│                          │
-  │                              │                          │
-  │  (agent continues working)   │                          │
-  │                              │                          │
-  │──CheckHumanRequest──────────▶│                          │
-  │                              │──GetRequest─────────────▶│
-  │                              │◀────{status: pending}────│
-  │◀──{status: pending}─────────│                          │
-  │                              │                          │
-  │                              │          Human responds: │
-  │                              │      ┌───────────────────│
-  │                              │      │  RespondToRequest │
-  │                              │      └──────────────────▶│
-  │                              │                          │
-  │──CheckHumanRequest──────────▶│                          │
-  │                              │──GetRequest─────────────▶│
-  │                              │◀──{status: responded}────│
-  │◀──{response, responder_id}──│                          │
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant Runtime
+    participant HIS
+
+    Agent->>Runtime: RequestHumanInput
+    Runtime->>HIS: CreateRequest
+    HIS-->>Runtime: request_id
+    Runtime-->>Agent: request_id
+
+    Note over Agent: agent continues working
+
+    Agent->>Runtime: CheckHumanRequest
+    Runtime->>HIS: GetRequest
+    HIS-->>Runtime: status: pending
+    Runtime-->>Agent: status: pending
+
+    Human->>HIS: RespondToRequest
+
+    Agent->>Runtime: CheckHumanRequest
+    Runtime->>HIS: GetRequest
+    HIS-->>Runtime: status: responded
+    Runtime-->>Agent: response, responder_id
 ```
 
 ### Flow 3: Workspace Orchestration
 
 When a task starts, the Workspace Service coordinates three services to provision a sandboxed environment:
 
-```
-Task Service                 Workspace Service
-     │                              │
-     │──ProvisionWorkspace─────────▶│
-     │                              │── 1. Create workspace (status: pending)
-     │                              │── 2. Update status → creating
-     │                              │
-     │                              │──PlaceWorkspace──────────▶ Compute Plane
-     │                              │◀──{host_id, address}──────  (atomic best-fit)
-     │                              │
-     │                              │──CompilePolicy───────────▶ Guardrails Service
-     │                              │◀──{compiled_bytes}────────  (rules → binary)
-     │                              │
-     │                              │──CreateSandbox───────────▶ Runtime (on host)
-     │                              │◀──{sandbox_id, endpoint}──  (evaluator loaded)
-     │                              │
-     │                              │── 3. Update status → running
-     │◀──{workspace_id}────────────│     (host, sandbox stored)
+```mermaid
+sequenceDiagram
+    participant Task as Task Service
+    participant WS as Workspace Service
+    participant Compute as Compute Plane
+    participant Guard as Guardrails Service
+    participant RT as Runtime (on host)
+
+    Task->>WS: ProvisionWorkspace
+    Note over WS: 1. Create workspace (pending)
+    Note over WS: 2. Update status → creating
+
+    WS->>Compute: PlaceWorkspace
+    Compute-->>WS: host_id, address (atomic best-fit)
+
+    WS->>Guard: CompilePolicy
+    Guard-->>WS: compiled_bytes (rules → binary)
+
+    WS->>RT: CreateSandbox
+    RT-->>WS: sandbox_id, endpoint (evaluator loaded)
+
+    Note over WS: 3. Update status → running
+    WS-->>Task: workspace_id
 ```
 
 If any step fails, the workspace is marked as `failed` rather than throwing — the caller can inspect the workspace status to understand what went wrong.
@@ -238,39 +247,63 @@ If any step fails, the workspace is marked as `failed` rather than throwing — 
 
 ## Data Model
 
-```
-Agent (identity)
-  ├── has many: ScopedCredentials (token_hash, scopes, TTL)
-  ├── has many: Tasks
-  ├── has one: Budget (limit, used, period)
-  └── has many: UsageRecords
+```mermaid
+erDiagram
+    Agent ||--o{ ScopedCredential : "has many"
+    Agent ||--o{ Task : "has many"
+    Agent ||--o| Budget : "has one"
+    Agent ||--o{ UsageRecord : "has many"
 
-Task
-  ├── belongs to: Agent
-  ├── has one: Workspace
-  └── config: WorkspaceConfig, HumanInteractionConfig, BudgetConfig
+    Task }o--|| Agent : "belongs to"
+    Task ||--o| Workspace : "has one"
 
-Workspace
-  ├── belongs to: Agent, Task
-  ├── runs on: Host (via Compute placement)
-  ├── has one: Sandbox (in Runtime)
-  ├── has many: WorkspaceSnapshots
-  └── spec: memory, cpu, disk, allowed_tools, guardrail_policy_id
+    Workspace }o--|| Agent : "belongs to"
+    Workspace }o--|| Task : "belongs to"
+    Workspace }o--|| Host : "runs on"
+    Workspace ||--o{ WorkspaceSnapshot : "has many"
 
-Host (compute)
-  ├── has many: Workspaces (via placement)
-  └── resources: total vs available (memory, cpu, disk)
+    Host ||--o{ Workspace : "hosts"
 
-GuardrailRule
-  └── compiled into: CompiledPolicy (binary, loaded by Rust evaluator)
+    GuardrailRule }o--|| CompiledPolicy : "compiled into"
 
-ActionRecord (activity store)
-  ├── belongs to: Workspace, Agent, Task
-  └── immutable: tool_name, parameters, result, verdict, latency
+    ActionRecord }o--|| Workspace : "belongs to"
+    ActionRecord }o--|| Agent : "belongs to"
+    ActionRecord }o--|| Task : "belongs to"
 
-HumanRequest
-  ├── belongs to: Workspace, Agent
-  └── lifecycle: pending → responded/expired/cancelled
+    HumanRequest }o--|| Workspace : "belongs to"
+    HumanRequest }o--|| Agent : "belongs to"
+
+    Agent {
+        string agent_id PK
+        string name
+        string owner_id
+        string trust_level
+        string status
+    }
+    Task {
+        string task_id PK
+        string agent_id FK
+        string goal
+        string status
+    }
+    Workspace {
+        string workspace_id PK
+        string agent_id FK
+        string task_id FK
+        string host_id FK
+        string status
+    }
+    Host {
+        string host_id PK
+        string address
+        string status
+    }
+    ActionRecord {
+        string record_id PK
+        string tool_name
+        string outcome
+        timestamp recorded_at
+    }
 ```
 
 ---
