@@ -17,38 +17,52 @@ Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It
 
 ```mermaid
 graph TB
-    Client["Client / Operator"]
+    Operator["Operator / Client"]
+    Agent["AI Agent"]
 
     subgraph CP["Control Plane (Go)"]
         Identity["Identity Service"]
-        Workspace["Workspace Service"]
         Task["Task Service"]
+        Workspace["Workspace Service"]
         Guardrails["Guardrails Service"]
         Compute["Compute Plane"]
-        Human["Human Interaction"]
+        Human["Human Interaction Service"]
         Economics["Economics Service"]
         Activity["Activity Store"]
         Governance["Data Governance"]
         PG[("PostgreSQL")]
-
-        Task -->|provisions| Workspace
-        Workspace -->|placement| Compute
-        Workspace -->|compile policy| Guardrails
     end
 
     subgraph DP["Data Plane (Rust, per host)"]
-        subgraph SR["Sandbox Runtime"]
+        subgraph Sandbox["Sandbox Runtime"]
             Evaluator["Guardrails Evaluator"]
             Interceptor["Tool Interceptor"]
-            AgentAPI["Agent API: ExecuteTool, RequestHumanInput"]
         end
     end
 
-    Client -->|gRPC| CP
-    CP -->|gRPC| DP
-    SR -->|async| Activity
-    SR -->|async| Economics
-    SR -->|forward| Human
+    %% Operator management (setup)
+    Operator -->|"register agents, mint credentials"| Identity
+    Operator -->|"create rules, compile policies"| Guardrails
+    Operator -->|"set budgets"| Economics
+    Operator -->|"respond to requests"| Human
+
+    %% Orchestration chain (task start)
+    Operator -->|"create + start task"| Task
+    Task -->|"provision workspace"| Workspace
+    Workspace -->|"place (atomic reserve)"| Compute
+    Workspace -->|"compile policy → bytes"| Guardrails
+    Workspace -->|"create sandbox + deploy evaluator"| Sandbox
+
+    %% Agent hot path (every tool call)
+    Agent -->|"ExecuteTool / RequestHumanInput"| Sandbox
+    Sandbox -->|"CheckBudget (before exec)"| Economics
+    Sandbox -->|"forward human requests"| Human
+    Sandbox -.->|"record action (async)"| Activity
+    Sandbox -.->|"record usage (async)"| Economics
+
+    %% Shared persistence
+    Identity & Task & Workspace & Guardrails & Compute ~~~ PG
+    Human & Economics & Activity ~~~ PG
 ```
 
 ### Services
