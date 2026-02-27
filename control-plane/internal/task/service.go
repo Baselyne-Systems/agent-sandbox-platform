@@ -13,6 +13,19 @@ var (
 	ErrInvalidTransition  = errors.New("invalid status transition")
 )
 
+// WorkspaceProvisioner provisions and terminates workspaces for tasks.
+// Implemented as an adapter over the Workspace Service gRPC client.
+type WorkspaceProvisioner interface {
+	ProvisionWorkspace(ctx context.Context, task *models.Task) (workspaceID string, err error)
+	TerminateWorkspace(ctx context.Context, workspaceID string, reason string) error
+}
+
+// ServiceConfig holds dependencies for the task Service.
+type ServiceConfig struct {
+	Repo        Repository
+	Provisioner WorkspaceProvisioner // optional; nil disables workspace orchestration
+}
+
 const (
 	defaultPageSize = 50
 	maxPageSize     = 100
@@ -27,11 +40,15 @@ var validTransitions = map[models.TaskStatus][]models.TaskStatus{
 
 // Service implements task business logic.
 type Service struct {
-	repo Repository
+	repo        Repository
+	provisioner WorkspaceProvisioner
 }
 
-func NewService(repo Repository) *Service {
-	return &Service{repo: repo}
+func NewService(cfg ServiceConfig) *Service {
+	return &Service{
+		repo:        cfg.Repo,
+		provisioner: cfg.Provisioner,
+	}
 }
 
 func (s *Service) CreateTask(ctx context.Context, agentID, goal string, wsConfig *models.TaskWorkspaceConfig, guardrailPolicyID string, hiConfig *models.TaskHumanInteractionConfig, budgetConfig *models.TaskBudgetConfig, maxDurationWithoutCheckin int64, input, labels map[string]string) (*models.Task, error) {
@@ -110,6 +127,14 @@ func (s *Service) ListTasks(ctx context.Context, agentID string, status models.T
 	return tasks, nextToken, nil
 }
 
+func isTerminalStatus(status models.TaskStatus) bool {
+	switch status {
+	case models.TaskStatusCompleted, models.TaskStatusFailed, models.TaskStatusCancelled:
+		return true
+	}
+	return false
+}
+
 func (s *Service) UpdateTaskStatus(ctx context.Context, id string, newStatus models.TaskStatus, reason string) (*models.Task, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
@@ -139,8 +164,27 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, id string, newStatus mod
 		return nil, ErrInvalidTransition
 	}
 
+	// Provision workspace on Pending → Running.
+	if task.Status == models.TaskStatusPending && newStatus == models.TaskStatusRunning && s.provisioner != nil {
+		wsID, provErr := s.provisioner.ProvisionWorkspace(ctx, task)
+		if provErr != nil {
+			// Workspace provisioning failed — transition task to Failed instead.
+			_ = s.repo.UpdateTaskStatus(ctx, id, models.TaskStatusFailed)
+			return s.repo.GetTask(ctx, id)
+		}
+		if err := s.repo.SetWorkspaceID(ctx, id, wsID); err != nil {
+			return nil, err
+		}
+		task.WorkspaceID = wsID
+	}
+
 	if err := s.repo.UpdateTaskStatus(ctx, id, newStatus); err != nil {
 		return nil, err
+	}
+
+	// Terminate workspace on terminal states (best-effort).
+	if isTerminalStatus(newStatus) && task.WorkspaceID != "" && s.provisioner != nil {
+		_ = s.provisioner.TerminateWorkspace(ctx, task.WorkspaceID, reason)
 	}
 
 	// Re-fetch to return updated state.
@@ -163,7 +207,14 @@ func (s *Service) CancelTask(ctx context.Context, id, reason string) error {
 	// Can only cancel pending, running, or waiting_on_human tasks.
 	switch task.Status {
 	case models.TaskStatusPending, models.TaskStatusRunning, models.TaskStatusWaitingOnHuman:
-		return s.repo.UpdateTaskStatus(ctx, id, models.TaskStatusCancelled)
+		if err := s.repo.UpdateTaskStatus(ctx, id, models.TaskStatusCancelled); err != nil {
+			return err
+		}
+		// Terminate workspace if one exists (best-effort).
+		if task.WorkspaceID != "" && s.provisioner != nil {
+			_ = s.provisioner.TerminateWorkspace(ctx, task.WorkspaceID, reason)
+		}
+		return nil
 	default:
 		return ErrInvalidTransition
 	}

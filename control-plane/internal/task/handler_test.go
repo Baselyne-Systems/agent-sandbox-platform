@@ -11,7 +11,7 @@ import (
 )
 
 func newTestHandler() *Handler {
-	return NewHandler(NewService(newMockRepo()))
+	return NewHandler(NewService(ServiceConfig{Repo: newMockRepo()}))
 }
 
 func createTestTask(t *testing.T, h *Handler) *pb.Task {
