@@ -104,6 +104,33 @@ func (s *Service) SetBudget(ctx context.Context, agentID string, limit float64, 
 	return budget, nil
 }
 
+// CostReport holds the result of a cost report query.
+type CostReport struct {
+	TotalCost  float64
+	RecordCount int
+	ByResourceType []ResourceCost
+}
+
+// GetCostReport returns aggregated cost data for the given time window,
+// optionally filtered by agent.
+func (s *Service) GetCostReport(ctx context.Context, agentID string, start, end time.Time) (*CostReport, error) {
+	if !start.Before(end) {
+		return nil, ErrInvalidInput
+	}
+
+	costs, err := s.repo.GetCostReport(ctx, agentID, start, end)
+	if err != nil {
+		return nil, err
+	}
+
+	report := &CostReport{ByResourceType: costs}
+	for _, c := range costs {
+		report.TotalCost += c.TotalCost
+		report.RecordCount += c.RecordCount
+	}
+	return report, nil
+}
+
 // CheckBudget reads the agent's budget and returns whether the estimated
 // cost fits within the remaining headroom.
 func (s *Service) CheckBudget(ctx context.Context, agentID string, estimatedCost float64) (bool, float64, error) {

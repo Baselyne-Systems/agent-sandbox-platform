@@ -26,6 +26,12 @@ service IdentityService {
 
   // UpdateTrustLevel changes an agent's trust level with justification.
   rpc UpdateTrustLevel(UpdateTrustLevelRequest) returns (UpdateTrustLevelResponse);
+
+  // SuspendAgent temporarily suspends an agent, preventing tool execution.
+  rpc SuspendAgent(SuspendAgentRequest) returns (SuspendAgentResponse);
+
+  // ReactivateAgent restores a suspended or inactive agent back to active status.
+  rpc ReactivateAgent(ReactivateAgentRequest) returns (ReactivateAgentResponse);
 }
 
 // Agent represents an autonomous agent registered in the platform.
@@ -130,5 +136,23 @@ message UpdateTrustLevelRequest {
 }
 
 message UpdateTrustLevelResponse {
+  Agent agent = 1;
+}
+
+message SuspendAgentRequest {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+message SuspendAgentResponse {
+  Agent agent = 1;
+}
+
+message ReactivateAgentRequest {
+  string agent_id = 1;
+  string reason = 2;
+}
+
+message ReactivateAgentResponse {
   Agent agent = 1;
 }

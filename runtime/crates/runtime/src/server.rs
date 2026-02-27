@@ -12,6 +12,7 @@ use proto_gen::platform::runtime::v1::{
     CreateSandboxRequest, CreateSandboxResponse, DestroySandboxRequest, DestroySandboxResponse,
     GetSandboxStatusRequest, GetSandboxStatusResponse, SandboxEvent as ProtoSandboxEvent,
     SandboxState as ProtoSandboxState, StreamEventsRequest,
+    UpdateSandboxGuardrailsRequest, UpdateSandboxGuardrailsResponse,
 };
 use proto_gen::platform::runtime::v1::{ActionEvent, ActionVerdict, LifecycleEvent};
 
@@ -22,11 +23,15 @@ use crate::sandbox::{CreateSandboxParams, SandboxEvent, SandboxManager, SandboxS
 #[derive(Debug)]
 pub struct RuntimeServiceImpl {
     sandbox_manager: SandboxManager,
+    advertise_endpoint: String,
 }
 
 impl RuntimeServiceImpl {
-    pub fn new(sandbox_manager: SandboxManager) -> Self {
-        Self { sandbox_manager }
+    pub fn new(sandbox_manager: SandboxManager, advertise_endpoint: String) -> Self {
+        Self {
+            sandbox_manager,
+            advertise_endpoint,
+        }
     }
 }
 
@@ -65,7 +70,7 @@ impl RuntimeService for RuntimeServiceImpl {
             .create(params)
             .map_err(|e| Status::internal(e.to_string()))?;
 
-        let agent_api_endpoint = "localhost:50052".to_string();
+        let agent_api_endpoint = self.advertise_endpoint.clone();
 
         info!(
             sandbox_id = %state.id,
@@ -232,5 +237,19 @@ impl RuntimeService for RuntimeServiceImpl {
         });
 
         Ok(Response::new(Box::pin(output)))
+    }
+
+    async fn update_sandbox_guardrails(
+        &self,
+        request: Request<UpdateSandboxGuardrailsRequest>,
+    ) -> Result<Response<UpdateSandboxGuardrailsResponse>, Status> {
+        let req = request.into_inner();
+        info!(sandbox_id = %req.sandbox_id, "updating sandbox guardrails");
+
+        self.sandbox_manager
+            .update_guardrails(&req.sandbox_id, &req.compiled_guardrails)
+            .map_err(|e| Status::internal(e.to_string()))?;
+
+        Ok(Response::new(UpdateSandboxGuardrailsResponse {}))
     }
 }

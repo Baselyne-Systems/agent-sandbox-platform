@@ -218,6 +218,10 @@ func (m *mockRuntimeServiceClient) StreamEvents(_ context.Context, _ *runtimepb.
 	return nil, nil
 }
 
+func (m *mockRuntimeServiceClient) UpdateSandboxGuardrails(_ context.Context, _ *runtimepb.UpdateSandboxGuardrailsRequest, _ ...grpc.CallOption) (*runtimepb.UpdateSandboxGuardrailsResponse, error) {
+	return &runtimepb.UpdateSandboxGuardrailsResponse{}, nil
+}
+
 // newTestService creates a Service with only the repo (no orchestration).
 func newTestService(repo Repository) *Service {
 	return NewService(ServiceConfig{Repo: repo})

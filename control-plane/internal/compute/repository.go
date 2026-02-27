@@ -14,8 +14,8 @@ type Repository interface {
 	GetHost(ctx context.Context, id string) (*models.Host, error)
 	ListHosts(ctx context.Context, status models.HostStatus) ([]models.Host, error)
 	SetHostStatus(ctx context.Context, id string, status models.HostStatus) error
-	FindHostForPlacement(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (*models.Host, error)
-	DecrementAvailableResources(ctx context.Context, hostID string, memoryMb int64, cpuMillicores int32, diskMb int64) error
+	PlaceAndDecrement(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (*models.Host, error)
+	UpdateHeartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32) (*models.Host, error)
 }
 
 // PostgresRepository implements Repository using PostgreSQL.
@@ -110,20 +110,29 @@ func (r *PostgresRepository) SetHostStatus(ctx context.Context, id string, statu
 	return nil
 }
 
-func (r *PostgresRepository) FindHostForPlacement(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (*models.Host, error) {
+func (r *PostgresRepository) PlaceAndDecrement(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (*models.Host, error) {
 	var h models.Host
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, address, status, total_memory_mb, total_cpu_millicores, total_disk_mb,
-			available_memory_mb, available_cpu_millicores, available_disk_mb,
-			active_sandboxes, last_heartbeat
-		 FROM hosts
-		 WHERE status = 'ready'
-		   AND available_memory_mb >= $1
-		   AND available_cpu_millicores >= $2
-		   AND available_disk_mb >= $3
-		 ORDER BY available_memory_mb ASC
-		 LIMIT 1`,
-		memoryMb, cpuMillicores, diskMb,
+		`UPDATE hosts SET
+		   available_memory_mb = available_memory_mb - $1,
+		   available_cpu_millicores = available_cpu_millicores - $2,
+		   available_disk_mb = available_disk_mb - $3,
+		   active_sandboxes = active_sandboxes + 1,
+		   last_heartbeat = $4
+		 WHERE id = (
+		   SELECT id FROM hosts
+		   WHERE status = 'ready'
+		     AND available_memory_mb >= $1
+		     AND available_cpu_millicores >= $2
+		     AND available_disk_mb >= $3
+		   ORDER BY available_memory_mb ASC
+		   LIMIT 1
+		   FOR UPDATE SKIP LOCKED
+		 )
+		 RETURNING id, address, status, total_memory_mb, total_cpu_millicores, total_disk_mb,
+		           available_memory_mb, available_cpu_millicores, available_disk_mb,
+		           active_sandboxes, last_heartbeat`,
+		memoryMb, cpuMillicores, diskMb, time.Now(),
 	).Scan(&h.ID, &h.Address, &h.Status,
 		&h.TotalResources.MemoryMb, &h.TotalResources.CpuMillicores, &h.TotalResources.DiskMb,
 		&h.AvailableResources.MemoryMb, &h.AvailableResources.CpuMillicores, &h.AvailableResources.DiskMb,
@@ -137,15 +146,29 @@ func (r *PostgresRepository) FindHostForPlacement(ctx context.Context, memoryMb 
 	return &h, nil
 }
 
-func (r *PostgresRepository) DecrementAvailableResources(ctx context.Context, hostID string, memoryMb int64, cpuMillicores int32, diskMb int64) error {
-	_, err := r.db.ExecContext(ctx,
+func (r *PostgresRepository) UpdateHeartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32) (*models.Host, error) {
+	var h models.Host
+	err := r.db.QueryRowContext(ctx,
 		`UPDATE hosts SET
-		   available_memory_mb = available_memory_mb - $1,
-		   available_cpu_millicores = available_cpu_millicores - $2,
-		   available_disk_mb = available_disk_mb - $3,
-		   active_sandboxes = active_sandboxes + 1,
-		   last_heartbeat = $4
-		 WHERE id = $5`,
-		memoryMb, cpuMillicores, diskMb, time.Now(), hostID)
-	return err
+		   available_memory_mb = $1,
+		   available_cpu_millicores = $2,
+		   available_disk_mb = $3,
+		   active_sandboxes = $4,
+		   last_heartbeat = now()
+		 WHERE id = $5
+		 RETURNING id, address, status, total_memory_mb, total_cpu_millicores, total_disk_mb,
+		           available_memory_mb, available_cpu_millicores, available_disk_mb,
+		           active_sandboxes, last_heartbeat`,
+		resources.MemoryMb, resources.CpuMillicores, resources.DiskMb, activeSandboxes, hostID,
+	).Scan(&h.ID, &h.Address, &h.Status,
+		&h.TotalResources.MemoryMb, &h.TotalResources.CpuMillicores, &h.TotalResources.DiskMb,
+		&h.AvailableResources.MemoryMb, &h.AvailableResources.CpuMillicores, &h.AvailableResources.DiskMb,
+		&h.ActiveSandboxes, &h.LastHeartbeat)
+	if err == sql.ErrNoRows {
+		return nil, ErrHostNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &h, nil
 }

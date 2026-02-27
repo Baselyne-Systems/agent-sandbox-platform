@@ -67,6 +67,31 @@ func (h *Handler) CheckBudget(ctx context.Context, req *pb.CheckBudgetRequest) (
 	}, nil
 }
 
+func (h *Handler) GetCostReport(ctx context.Context, req *pb.GetCostReportRequest) (*pb.GetCostReportResponse, error) {
+	start := req.GetStartTime().AsTime()
+	end := req.GetEndTime().AsTime()
+
+	report, err := h.svc.GetCostReport(ctx, req.GetAgentId(), start, end)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	breakdowns := make([]*pb.CostBreakdown, len(report.ByResourceType))
+	for i, c := range report.ByResourceType {
+		breakdowns[i] = &pb.CostBreakdown{
+			ResourceType: c.ResourceType,
+			TotalCost:    c.TotalCost,
+			RecordCount:  int32(c.RecordCount),
+		}
+	}
+
+	return &pb.GetCostReportResponse{
+		TotalCost:      report.TotalCost,
+		RecordCount:    int32(report.RecordCount),
+		ByResourceType: breakdowns,
+	}, nil
+}
+
 // --- converters ---
 
 func budgetToProto(b *models.Budget) *pb.Budget {

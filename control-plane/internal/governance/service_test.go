@@ -171,6 +171,86 @@ func TestCheckPolicy_EmptyFields(t *testing.T) {
 	}
 }
 
+// --- InspectEgress tests ---
+
+func TestInspectEgress_RestrictedContentBlocked(t *testing.T) {
+	svc := NewService()
+	allowed, reason, classification, patterns, err := svc.InspectEgress("agent-1", "internal-api", []byte("SSN: 123-45-6789"), "text/plain")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Error("expected restricted content to be blocked")
+	}
+	if classification != ClassificationRestricted {
+		t.Errorf("expected restricted, got %d", classification)
+	}
+	if !contains(patterns, "ssn") {
+		t.Errorf("expected ssn pattern, got %v", patterns)
+	}
+	if reason == "" {
+		t.Error("expected reason")
+	}
+}
+
+func TestInspectEgress_PublicContentAllowed(t *testing.T) {
+	svc := NewService()
+	allowed, _, classification, _, err := svc.InspectEgress("agent-1", "any-dest", []byte("Hello, world!"), "text/plain")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Error("expected public content to be allowed")
+	}
+	if classification != ClassificationPublic {
+		t.Errorf("expected public, got %d", classification)
+	}
+}
+
+func TestInspectEgress_ConfidentialApprovedDest(t *testing.T) {
+	svc := NewService()
+	allowed, _, classification, patterns, err := svc.InspectEgress("agent-1", "secure-storage", []byte("AKIAIOSFODNN7EXAMPLE"), "text/plain")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !allowed {
+		t.Error("expected confidential content allowed to approved destination")
+	}
+	if classification != ClassificationConfidential {
+		t.Errorf("expected confidential, got %d", classification)
+	}
+	if !contains(patterns, "aws_key") {
+		t.Errorf("expected aws_key pattern, got %v", patterns)
+	}
+}
+
+func TestInspectEgress_ConfidentialUnapprovedDest(t *testing.T) {
+	svc := NewService()
+	allowed, _, _, _, err := svc.InspectEgress("agent-1", "external-api", []byte("AKIAIOSFODNN7EXAMPLE"), "text/plain")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if allowed {
+		t.Error("expected confidential content denied to unapproved destination")
+	}
+}
+
+func TestInspectEgress_EmptyFields(t *testing.T) {
+	svc := NewService()
+	_, _, _, _, err := svc.InspectEgress("", "dest", []byte("test"), "text/plain")
+	if err == nil {
+		t.Error("expected error for empty agent_id")
+	}
+	_, _, _, _, err = svc.InspectEgress("agent-1", "", []byte("test"), "text/plain")
+	if err == nil {
+		t.Error("expected error for empty destination")
+	}
+	_, _, _, _, err = svc.InspectEgress("agent-1", "dest", nil, "text/plain")
+	if err == nil {
+		t.Error("expected error for empty content")
+	}
+}
+
 func contains(ss []string, target string) bool {
 	for _, s := range ss {
 		if s == target {

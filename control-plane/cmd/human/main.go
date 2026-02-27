@@ -1,20 +1,25 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/config"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/database"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/human"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/identity"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/human/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -42,11 +47,29 @@ func main() {
 	svc := human.NewService(repo)
 	handler := human.NewHandler(svc)
 
+	authCfg := middleware.AuthConfig{
+		Credentials:   &middleware.PostgresCredentialLookup{DB: db},
+		TokenHashFunc: identity.HashToken,
+	}
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
+		grpc.ChainUnaryInterceptor(
+			middleware.UnaryLoggingInterceptor(logger),
+			middleware.UnaryAuthInterceptor(authCfg),
+		),
 	)
 	pb.RegisterHumanInteractionServiceServer(srv, handler)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(srv, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(srv)
+
+	// Start timeout enforcement worker.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	worker := human.NewTimeoutWorker(repo, human.TimeoutWorkerConfig{
+		Interval: 30 * time.Second,
+		Logger:   logger,
+	})
+	go worker.Run(workerCtx)
 
 	logger.Info("Human Interaction Service starting", zap.String("port", cfg.GRPCPort))
 
@@ -60,6 +83,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	workerCancel()
 	logger.Info("shutting down Human Interaction Service")
 	srv.GracefulStop()
 }

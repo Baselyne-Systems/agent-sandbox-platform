@@ -21,6 +21,9 @@ type Repository interface {
 	GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error)
 	UpsertTimeoutPolicy(ctx context.Context, policy *models.TimeoutPolicy) error
 	GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error)
+
+	// ExpirePendingRequests marks all pending requests past their deadline as expired.
+	ExpirePendingRequests(ctx context.Context) (int, error)
 }
 
 // PostgresRepository implements Repository backed by PostgreSQL.
@@ -236,4 +239,18 @@ func (r *PostgresRepository) GetTimeoutPolicy(ctx context.Context, scope, scopeI
 		return nil, fmt.Errorf("unmarshal escalation_targets: %w", err)
 	}
 	return &policy, nil
+}
+
+func (r *PostgresRepository) ExpirePendingRequests(ctx context.Context) (int, error) {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE human_requests SET status = 'expired'
+		 WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < now()`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
 }

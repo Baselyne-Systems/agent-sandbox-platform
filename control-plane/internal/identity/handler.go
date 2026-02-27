@@ -95,6 +95,22 @@ func (h *Handler) UpdateTrustLevel(ctx context.Context, req *pb.UpdateTrustLevel
 	return &pb.UpdateTrustLevelResponse{Agent: agentToProto(agent)}, nil
 }
 
+func (h *Handler) SuspendAgent(ctx context.Context, req *pb.SuspendAgentRequest) (*pb.SuspendAgentResponse, error) {
+	agent, err := h.svc.SuspendAgent(ctx, req.GetAgentId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.SuspendAgentResponse{Agent: agentToProto(agent)}, nil
+}
+
+func (h *Handler) ReactivateAgent(ctx context.Context, req *pb.ReactivateAgentRequest) (*pb.ReactivateAgentResponse, error) {
+	agent, err := h.svc.ReactivateAgent(ctx, req.GetAgentId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.ReactivateAgentResponse{Agent: agentToProto(agent)}, nil
+}
+
 // --- converters ---
 
 func agentToProto(a *models.Agent) *pb.Agent {
@@ -182,6 +198,8 @@ func toGRPCError(err error) error {
 	case errors.Is(err, ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, ErrAgentInactive):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrInvalidStatusTransition):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrInvalidTrustLevel):
 		return status.Error(codes.InvalidArgument, err.Error())

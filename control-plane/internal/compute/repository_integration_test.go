@@ -166,7 +166,7 @@ func TestInteg_SetHostStatus_RowsAffected(t *testing.T) {
 	}
 }
 
-func TestInteg_FindHostForPlacement_FirstFit(t *testing.T) {
+func TestInteg_PlaceAndDecrement_FirstFit(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
@@ -175,68 +175,47 @@ func TestInteg_FindHostForPlacement_FirstFit(t *testing.T) {
 	createHost(t, repo, "medium", models.HostStatusReady, 4096, 4000, 20000)
 	createHost(t, repo, "large", models.HostStatusReady, 8192, 8000, 40000)
 
-	// Request that fits medium+
-	got, err := repo.FindHostForPlacement(ctx, 3000, 3000, 15000)
+	// Request that fits medium+ — atomically selects and decrements
+	got, err := repo.PlaceAndDecrement(ctx, 3000, 3000, 15000)
 	if err != nil {
-		t.Fatalf("FindHostForPlacement: %v", err)
+		t.Fatalf("PlaceAndDecrement: %v", err)
 	}
 	if got.Address != "medium" {
 		t.Errorf("placed on %q, want %q (smallest sufficient)", got.Address, "medium")
 	}
+	// Verify resources were decremented
+	if got.AvailableResources.MemoryMb != 1096 {
+		t.Errorf("AvailableMemory = %d, want 1096", got.AvailableResources.MemoryMb)
+	}
+	if got.ActiveSandboxes != 1 {
+		t.Errorf("ActiveSandboxes = %d, want 1", got.ActiveSandboxes)
+	}
 }
 
-func TestInteg_FindHostForPlacement_NoCapacity(t *testing.T) {
+func TestInteg_PlaceAndDecrement_NoCapacity(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
 	createHost(t, repo, "tiny", models.HostStatusReady, 512, 500, 1024)
 
-	_, err := repo.FindHostForPlacement(ctx, 8192, 4000, 50000)
+	_, err := repo.PlaceAndDecrement(ctx, 8192, 4000, 50000)
 	if err != ErrNoCapacity {
 		t.Errorf("error = %v, want ErrNoCapacity", err)
 	}
 }
 
-func TestInteg_FindHostForPlacement_SkipsDraining(t *testing.T) {
+func TestInteg_PlaceAndDecrement_SkipsDraining(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
 	createHost(t, repo, "draining-host", models.HostStatusDraining, 16384, 16000, 100000)
 	createHost(t, repo, "ready-host", models.HostStatusReady, 4096, 4000, 20000)
 
-	got, err := repo.FindHostForPlacement(ctx, 2048, 2000, 10000)
+	got, err := repo.PlaceAndDecrement(ctx, 2048, 2000, 10000)
 	if err != nil {
-		t.Fatalf("FindHostForPlacement: %v", err)
+		t.Fatalf("PlaceAndDecrement: %v", err)
 	}
 	if got.Address != "ready-host" {
 		t.Errorf("placed on %q, want %q (should skip draining)", got.Address, "ready-host")
-	}
-}
-
-func TestInteg_DecrementResources(t *testing.T) {
-	repo, _ := setup(t)
-	ctx := context.Background()
-
-	host := createHost(t, repo, "decrement-host", models.HostStatusReady, 8192, 8000, 40000)
-
-	if err := repo.DecrementAvailableResources(ctx, host.ID, 1024, 1000, 5000); err != nil {
-		t.Fatalf("DecrementAvailableResources: %v", err)
-	}
-
-	got, err := repo.GetHost(ctx, host.ID)
-	if err != nil {
-		t.Fatalf("GetHost: %v", err)
-	}
-	if got.AvailableResources.MemoryMb != 7168 {
-		t.Errorf("AvailableMemory = %d, want 7168", got.AvailableResources.MemoryMb)
-	}
-	if got.AvailableResources.CpuMillicores != 7000 {
-		t.Errorf("AvailableCpu = %d, want 7000", got.AvailableResources.CpuMillicores)
-	}
-	if got.AvailableResources.DiskMb != 35000 {
-		t.Errorf("AvailableDisk = %d, want 35000", got.AvailableResources.DiskMb)
-	}
-	if got.ActiveSandboxes != 1 {
-		t.Errorf("ActiveSandboxes = %d, want 1", got.ActiveSandboxes)
 	}
 }

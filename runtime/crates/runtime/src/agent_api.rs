@@ -11,14 +11,17 @@ use guardrails_eval::{EvalContext, Verdict};
 
 use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
 use proto_gen::platform::activity::v1::{ActionOutcome, ActionRecord, RecordActionRequest};
+use proto_gen::platform::economics::v1::economics_service_client::EconomicsServiceClient;
+use proto_gen::platform::economics::v1::{CheckBudgetRequest, RecordUsageRequest, UsageRecord};
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::human::v1::{
     CreateHumanRequestRequest, GetHumanRequestRequest, HumanRequestStatus,
 };
 use proto_gen::platform::runtime::v1::agent_api_service_server::AgentApiService;
 use proto_gen::platform::runtime::v1::{
-    ActionVerdict, ExecuteToolRequest, ExecuteToolResponse, ReportProgressRequest,
-    ReportProgressResponse, RequestHumanInputRequest, RequestHumanInputResponse,
+    ActionVerdict, CheckHumanRequestRequest, CheckHumanRequestResponse, ExecuteToolRequest,
+    ExecuteToolResponse, ReportProgressRequest, ReportProgressResponse,
+    RequestHumanInputRequest, RequestHumanInputResponse,
 };
 
 use crate::sandbox::{SandboxEvent, SandboxManager};
@@ -31,6 +34,7 @@ pub struct AgentApiServiceImpl {
     tool_interceptor: ToolInterceptor,
     his_client: Option<TokioMutex<HumanInteractionServiceClient<tonic::transport::Channel>>>,
     activity_client: Option<Arc<TokioMutex<ActivityServiceClient<tonic::transport::Channel>>>>,
+    economics_client: Option<Arc<TokioMutex<EconomicsServiceClient<tonic::transport::Channel>>>>,
 }
 
 impl std::fmt::Debug for AgentApiServiceImpl {
@@ -40,6 +44,7 @@ impl std::fmt::Debug for AgentApiServiceImpl {
             .field("tool_interceptor", &self.tool_interceptor)
             .field("his_configured", &self.his_client.is_some())
             .field("activity_configured", &self.activity_client.is_some())
+            .field("economics_configured", &self.economics_client.is_some())
             .finish()
     }
 }
@@ -50,12 +55,14 @@ impl AgentApiServiceImpl {
         tool_interceptor: ToolInterceptor,
         his_client: Option<HumanInteractionServiceClient<tonic::transport::Channel>>,
         activity_client: Option<ActivityServiceClient<tonic::transport::Channel>>,
+        economics_client: Option<EconomicsServiceClient<tonic::transport::Channel>>,
     ) -> Self {
         Self {
             sandbox_manager,
             tool_interceptor,
             his_client: his_client.map(TokioMutex::new),
             activity_client: activity_client.map(|c| Arc::new(TokioMutex::new(c))),
+            economics_client: economics_client.map(|c| Arc::new(TokioMutex::new(c))),
         }
     }
 }
@@ -91,21 +98,59 @@ impl AgentApiService for AgentApiServiceImpl {
             })
             .unwrap_or(serde_json::Value::Null);
 
-        // 3. Build evaluation context with real agent_id from sandbox state
+        // 3. Budget check — deny if agent has exhausted budget, warn-and-allow on RPC failure
+        if let Some(economics_mutex) = &self.economics_client {
+            let check_result = {
+                let mut client = economics_mutex.lock().await;
+                client
+                    .check_budget(CheckBudgetRequest {
+                        agent_id: sandbox.agent_id.clone(),
+                        estimated_cost: 0.0,
+                    })
+                    .await
+            };
+            match check_result {
+                Ok(resp) => {
+                    if !resp.into_inner().allowed {
+                        warn!(
+                            agent_id = %sandbox.agent_id,
+                            tool_name = %req.tool_name,
+                            "budget exhausted — denying tool execution"
+                        );
+                        return Ok(Response::new(ExecuteToolResponse {
+                            verdict: ActionVerdict::Deny as i32,
+                            result: None,
+                            denial_reason: "budget exhausted".to_string(),
+                            escalation_id: String::new(),
+                        }));
+                    }
+                }
+                Err(e) => {
+                    warn!(error = %e, "budget check failed — allowing execution");
+                }
+            }
+        }
+
+        // 4. Build evaluation context with real agent_id from sandbox state
         let eval_ctx = EvalContext {
             tool_name: req.tool_name.clone(),
             parameters: parameters.clone(),
             agent_id: sandbox.agent_id.clone(),
         };
 
-        // 4. Evaluate guardrails using the sandbox's evaluator
+        // 5. Evaluate guardrails using the sandbox's evaluator (read lock for hot-reload support)
         let eval_start = Instant::now();
-        let verdict = sandbox.evaluator.evaluate(&eval_ctx);
+        let evaluator = sandbox
+            .evaluator
+            .read()
+            .map_err(|e| Status::internal(format!("evaluator lock poisoned: {e}")))?;
+        let verdict = evaluator.evaluate(&eval_ctx);
+        drop(evaluator); // release read lock before tool execution
         let eval_latency_us = eval_start.elapsed().as_micros() as i64;
 
         let (action_verdict, denial_reason, escalation_id, tool_result) = match &verdict {
             Verdict::Allow => {
-                // 5. Execute tool through interceptor
+                // 6. Execute tool through interceptor
                 let tool_req = ToolRequest {
                     tool_name: req.tool_name.clone(),
                     parameters,
@@ -133,10 +178,10 @@ impl AgentApiService for AgentApiServiceImpl {
             }
         };
 
-        // 6. Increment actions counter
+        // 7. Increment actions counter
         sandbox.actions_executed.fetch_add(1, Ordering::Relaxed);
 
-        // 7. Emit action event on sandbox event channel
+        // 8. Emit action event on sandbox event channel
         let verdict_str = match &verdict {
             Verdict::Allow => "allow",
             Verdict::Deny(_) => "deny",
@@ -156,7 +201,7 @@ impl AgentApiService for AgentApiServiceImpl {
             "tool execution evaluated"
         );
 
-        // 8. Fire-and-forget: persist action record to Activity Store
+        // 9. Fire-and-forget: persist action record to Activity Store
         if let Some(activity_mutex) = &self.activity_client {
             let outcome = match &verdict {
                 Verdict::Allow => ActionOutcome::Allowed as i32,
@@ -189,6 +234,37 @@ impl AgentApiService for AgentApiServiceImpl {
                     tracing::warn!(error = %e, "failed to persist action record to Activity Store");
                 }
             });
+        }
+
+        // 10. Fire-and-forget: record tool usage to Economics Service
+        if let Some(economics_mutex) = &self.economics_client {
+            if matches!(verdict, Verdict::Allow) {
+                let economics_mutex = economics_mutex.clone();
+                let agent_id = sandbox.agent_id.clone();
+                let workspace_id = sandbox.workspace_id.clone();
+                let tool_name = req.tool_name.clone();
+                tokio::spawn(async move {
+                    let mut client = economics_mutex.lock().await;
+                    let record = UsageRecord {
+                        record_id: String::new(),
+                        agent_id,
+                        workspace_id,
+                        resource_type: format!("tool:{tool_name}"),
+                        quantity: 1.0,
+                        unit: "invocations".to_string(),
+                        cost: 0.0,
+                        recorded_at: None,
+                    };
+                    if let Err(e) = client
+                        .record_usage(RecordUsageRequest {
+                            record: Some(record),
+                        })
+                        .await
+                    {
+                        tracing::warn!(error = %e, "failed to record usage to Economics Service");
+                    }
+                });
+            }
         }
 
         Ok(Response::new(ExecuteToolResponse {
@@ -227,7 +303,7 @@ impl AgentApiService for AgentApiServiceImpl {
             300 // default 5 minutes
         };
 
-        // Create the human request via HIS
+        // Create the human request via HIS — return immediately (non-blocking).
         let create_req = CreateHumanRequestRequest {
             workspace_id: sandbox.workspace_id.clone(),
             agent_id: sandbox.agent_id.clone(),
@@ -252,60 +328,58 @@ impl AgentApiService for AgentApiServiceImpl {
             .into_inner()
             .request
             .ok_or_else(|| Status::internal("HIS returned empty request"))?;
-        let request_id = human_request.request_id.clone();
 
-        // Poll for response with exponential backoff
-        let deadline = tokio::time::Instant::now()
-            + tokio::time::Duration::from_secs(timeout_seconds as u64);
-        let mut backoff = tokio::time::Duration::from_millis(500);
-        let max_backoff = tokio::time::Duration::from_secs(5);
+        // Return immediately with the request_id so the agent can poll via check_human_request.
+        Ok(Response::new(RequestHumanInputResponse {
+            request_id: human_request.request_id,
+            response: String::new(),
+            responder_id: String::new(),
+            timed_out: false,
+        }))
+    }
 
-        loop {
-            if tokio::time::Instant::now() >= deadline {
-                return Ok(Response::new(RequestHumanInputResponse {
-                    response: String::new(),
-                    responder_id: String::new(),
-                    timed_out: true,
-                }));
-            }
+    async fn check_human_request(
+        &self,
+        request: Request<CheckHumanRequestRequest>,
+    ) -> Result<Response<CheckHumanRequestResponse>, Status> {
+        let his_mutex = self
+            .his_client
+            .as_ref()
+            .ok_or_else(|| Status::unavailable("HIS not configured"))?;
 
-            tokio::time::sleep(backoff).await;
-            backoff = std::cmp::min(backoff * 2, max_backoff);
+        let req = request.into_inner();
+        info!(request_id = %req.request_id, "checking human request status");
 
-            let get_resp = {
-                let mut client = his_mutex.lock().await;
-                client
-                    .get_request(GetHumanRequestRequest {
-                        request_id: request_id.clone(),
-                    })
-                    .await
-                    .map_err(|e| Status::internal(format!("HIS get_request failed: {e}")))?
-            };
+        let get_resp = {
+            let mut client = his_mutex.lock().await;
+            client
+                .get_request(GetHumanRequestRequest {
+                    request_id: req.request_id,
+                })
+                .await
+                .map_err(|e| Status::internal(format!("HIS get_request failed: {e}")))?
+        };
 
-            if let Some(hr) = get_resp.into_inner().request {
-                let status = HumanRequestStatus::try_from(hr.status)
-                    .unwrap_or(HumanRequestStatus::Unspecified);
-                match status {
-                    HumanRequestStatus::Responded => {
-                        return Ok(Response::new(RequestHumanInputResponse {
-                            response: hr.response,
-                            responder_id: hr.responder_id,
-                            timed_out: false,
-                        }));
-                    }
-                    HumanRequestStatus::Expired | HumanRequestStatus::Cancelled => {
-                        return Ok(Response::new(RequestHumanInputResponse {
-                            response: String::new(),
-                            responder_id: String::new(),
-                            timed_out: true,
-                        }));
-                    }
-                    _ => {
-                        // Still pending, continue polling
-                    }
-                }
-            }
-        }
+        let hr = get_resp
+            .into_inner()
+            .request
+            .ok_or_else(|| Status::not_found("human request not found"))?;
+
+        let status_str = match HumanRequestStatus::try_from(hr.status)
+            .unwrap_or(HumanRequestStatus::Unspecified)
+        {
+            HumanRequestStatus::Pending => "pending",
+            HumanRequestStatus::Responded => "responded",
+            HumanRequestStatus::Expired => "expired",
+            HumanRequestStatus::Cancelled => "expired",
+            _ => "pending",
+        };
+
+        Ok(Response::new(CheckHumanRequestResponse {
+            status: status_str.to_string(),
+            response: hr.response,
+            responder_id: hr.responder_id,
+        }))
     }
 
     async fn report_progress(

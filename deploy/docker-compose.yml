@@ -1,3 +1,22 @@
+x-go-service: &go-service
+  build:
+    context: ..
+    dockerfile: deploy/docker/Dockerfile.control-plane
+  environment: &go-env
+    DATABASE_URL: postgres://postgres:postgres@postgres:5432/sandbox?sslmode=disable
+    GRPC_PORT: "50051"
+    LOG_LEVEL: info
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "grpc_health_probe", "-addr=:50051"]
+    interval: 10s
+    timeout: 5s
+    retries: 5
+  networks:
+    - bulkhead
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -15,6 +34,147 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - bulkhead
+
+  identity:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: identity
+    ports:
+      - "50060:50051"
+
+  workspace:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: workspace
+    environment:
+      <<: *go-env
+      IDENTITY_ENDPOINT: identity:50051
+      COMPUTE_ENDPOINT: compute:50051
+      GUARDRAILS_ENDPOINT: guardrails:50051
+    ports:
+      - "50061:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      identity:
+        condition: service_healthy
+      compute:
+        condition: service_healthy
+      guardrails:
+        condition: service_healthy
+
+  guardrails:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: guardrails
+    ports:
+      - "50062:50051"
+
+  human:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: human
+    ports:
+      - "50063:50051"
+
+  governance:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: governance
+    ports:
+      - "50064:50051"
+
+  activity:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: activity
+    ports:
+      - "50065:50051"
+
+  economics:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: economics
+    ports:
+      - "50066:50051"
+
+  compute:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: compute
+    ports:
+      - "50067:50051"
+
+  task:
+    <<: *go-service
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.control-plane
+      args:
+        SERVICE: task
+    environment:
+      <<: *go-env
+      WORKSPACE_ENDPOINT: workspace:50051
+    ports:
+      - "50068:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      workspace:
+        condition: service_healthy
+
+  runtime:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile.runtime
+    environment:
+      GRPC_PORT: "50052"
+      ADVERTISE_ADDRESS: runtime
+      HIS_ENDPOINT: http://human:50051
+      ACTIVITY_ENDPOINT: http://activity:50051
+      ECONOMICS_ENDPOINT: http://economics:50051
+      RUST_LOG: info
+    ports:
+      - "50052:50052"
+    depends_on:
+      human:
+        condition: service_healthy
+      activity:
+        condition: service_healthy
+      economics:
+        condition: service_healthy
+    networks:
+      - bulkhead
 
 volumes:
   pgdata:
+
+networks:
+  bulkhead:
+    driver: bridge

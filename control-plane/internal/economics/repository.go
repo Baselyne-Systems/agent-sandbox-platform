@@ -3,9 +3,18 @@ package economics
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// ResourceCost holds aggregated cost data for a single resource type.
+type ResourceCost struct {
+	ResourceType string
+	TotalCost    float64
+	RecordCount  int
+}
 
 // Repository defines data access for the economics service.
 type Repository interface {
@@ -13,6 +22,7 @@ type Repository interface {
 	GetBudget(ctx context.Context, agentID string) (*models.Budget, error)
 	UpsertBudget(ctx context.Context, budget *models.Budget) error
 	AddUsedAmount(ctx context.Context, agentID string, amount float64) error
+	GetCostReport(ctx context.Context, agentID string, start, end time.Time) ([]ResourceCost, error)
 }
 
 // PostgresRepository implements Repository using PostgreSQL.
@@ -80,4 +90,33 @@ func (r *PostgresRepository) AddUsedAmount(ctx context.Context, agentID string, 
 		return ErrBudgetNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) GetCostReport(ctx context.Context, agentID string, start, end time.Time) ([]ResourceCost, error) {
+	query := `SELECT resource_type, SUM(cost), COUNT(*)
+		FROM usage_records
+		WHERE recorded_at >= $1 AND recorded_at <= $2`
+	args := []any{start, end}
+
+	if agentID != "" {
+		query += fmt.Sprintf(" AND agent_id = $%d", len(args)+1)
+		args = append(args, agentID)
+	}
+	query += " GROUP BY resource_type ORDER BY resource_type"
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var costs []ResourceCost
+	for rows.Next() {
+		var c ResourceCost
+		if err := rows.Scan(&c.ResourceType, &c.TotalCost, &c.RecordCount); err != nil {
+			return nil, err
+		}
+		costs = append(costs, c)
+	}
+	return costs, rows.Err()
 }

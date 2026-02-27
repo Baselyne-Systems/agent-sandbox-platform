@@ -62,14 +62,23 @@ func (s *Service) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillico
 		return "", "", ErrInvalidInput
 	}
 
-	host, err := s.repo.FindHostForPlacement(ctx, memoryMb, cpuMillicores, diskMb)
+	host, err := s.repo.PlaceAndDecrement(ctx, memoryMb, cpuMillicores, diskMb)
 	if err != nil {
 		return "", "", err
 	}
 
-	if err := s.repo.DecrementAvailableResources(ctx, host.ID, memoryMb, cpuMillicores, diskMb); err != nil {
-		return "", "", err
-	}
-
 	return host.ID, host.Address, nil
+}
+
+func (s *Service) Heartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32) (*models.Host, error) {
+	if hostID == "" {
+		return nil, ErrInvalidInput
+	}
+	if resources.MemoryMb < 0 || resources.CpuMillicores < 0 || resources.DiskMb < 0 {
+		return nil, ErrInvalidInput
+	}
+	if activeSandboxes < 0 {
+		return nil, ErrInvalidInput
+	}
+	return s.repo.UpdateHeartbeat(ctx, hostID, resources, activeSandboxes)
 }

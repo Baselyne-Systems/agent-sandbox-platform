@@ -66,7 +66,7 @@ func (m *mockRepo) SetHostStatus(_ context.Context, id string, status models.Hos
 	return nil
 }
 
-func (m *mockRepo) FindHostForPlacement(_ context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (*models.Host, error) {
+func (m *mockRepo) PlaceAndDecrement(_ context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (*models.Host, error) {
 	var candidates []*models.Host
 	for _, h := range m.hosts {
 		if h.Status != models.HostStatusReady {
@@ -75,31 +75,36 @@ func (m *mockRepo) FindHostForPlacement(_ context.Context, memoryMb int64, cpuMi
 		if h.AvailableResources.MemoryMb >= memoryMb &&
 			h.AvailableResources.CpuMillicores >= cpuMillicores &&
 			h.AvailableResources.DiskMb >= diskMb {
-			cp := *h
-			candidates = append(candidates, &cp)
+			candidates = append(candidates, h)
 		}
 	}
 	if len(candidates) == 0 {
 		return nil, ErrNoCapacity
 	}
-	// First-fit: sort by available memory ascending, pick smallest.
+	// Best-fit: sort by available memory ascending, pick smallest.
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].AvailableResources.MemoryMb < candidates[j].AvailableResources.MemoryMb
 	})
-	return candidates[0], nil
-}
-
-func (m *mockRepo) DecrementAvailableResources(_ context.Context, hostID string, memoryMb int64, cpuMillicores int32, diskMb int64) error {
-	h, ok := m.hosts[hostID]
-	if !ok {
-		return ErrHostNotFound
-	}
+	h := candidates[0]
 	h.AvailableResources.MemoryMb -= memoryMb
 	h.AvailableResources.CpuMillicores -= cpuMillicores
 	h.AvailableResources.DiskMb -= diskMb
 	h.ActiveSandboxes++
 	h.LastHeartbeat = time.Now()
-	return nil
+	cp := *h
+	return &cp, nil
+}
+
+func (m *mockRepo) UpdateHeartbeat(_ context.Context, hostID string, resources models.HostResources, activeSandboxes int32) (*models.Host, error) {
+	h, ok := m.hosts[hostID]
+	if !ok {
+		return nil, ErrHostNotFound
+	}
+	h.AvailableResources = resources
+	h.ActiveSandboxes = activeSandboxes
+	h.LastHeartbeat = time.Now()
+	cp := *h
+	return &cp, nil
 }
 
 // --- RegisterHost tests ---
@@ -283,5 +288,65 @@ func TestPlaceWorkspace_SkipsDraining(t *testing.T) {
 	}
 	if address != "ready:9090" {
 		t.Errorf("expected to skip draining host, got %q", address)
+	}
+}
+
+// --- Heartbeat tests ---
+
+func TestHeartbeat_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	host, _ := svc.RegisterHost(ctx, "host1:9090", models.HostResources{MemoryMb: 4096, CpuMillicores: 4000, DiskMb: 10240})
+
+	updated, err := svc.Heartbeat(ctx, host.ID, models.HostResources{
+		MemoryMb: 3000, CpuMillicores: 3500, DiskMb: 9000,
+	}, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.AvailableResources.MemoryMb != 3000 {
+		t.Errorf("expected memory 3000, got %d", updated.AvailableResources.MemoryMb)
+	}
+	if updated.ActiveSandboxes != 2 {
+		t.Errorf("expected active sandboxes 2, got %d", updated.ActiveSandboxes)
+	}
+}
+
+func TestHeartbeat_UnknownHost(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.Heartbeat(context.Background(), "nonexistent", models.HostResources{
+		MemoryMb: 1024, CpuMillicores: 1000, DiskMb: 1024,
+	}, 0)
+	if !errors.Is(err, ErrHostNotFound) {
+		t.Errorf("expected ErrHostNotFound, got: %v", err)
+	}
+}
+
+func TestHeartbeat_EmptyID(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.Heartbeat(context.Background(), "", models.HostResources{
+		MemoryMb: 1024, CpuMillicores: 1000, DiskMb: 1024,
+	}, 0)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput, got: %v", err)
+	}
+}
+
+func TestHeartbeat_ReturnsCurrentStatus(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	host, _ := svc.RegisterHost(ctx, "host1:9090", models.HostResources{MemoryMb: 4096, CpuMillicores: 4000, DiskMb: 10240})
+
+	// Deregister sets status to offline.
+	svc.DeregisterHost(ctx, host.ID)
+
+	updated, err := svc.Heartbeat(ctx, host.ID, models.HostResources{
+		MemoryMb: 4096, CpuMillicores: 4000, DiskMb: 10240,
+	}, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.Status != models.HostStatusOffline {
+		t.Errorf("expected status offline, got %q", updated.Status)
 	}
 }

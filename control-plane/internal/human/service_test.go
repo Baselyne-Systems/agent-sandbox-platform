@@ -165,6 +165,18 @@ func (m *mockRepo) GetTimeoutPolicy(_ context.Context, scope, scopeID string) (*
 	return &cp, nil
 }
 
+func (m *mockRepo) ExpirePendingRequests(_ context.Context) (int, error) {
+	count := 0
+	now := time.Now()
+	for _, r := range m.requests {
+		if r.Status == models.HumanRequestStatusPending && r.ExpiresAt != nil && r.ExpiresAt.Before(now) {
+			r.Status = models.HumanRequestStatusExpired
+			count++
+		}
+	}
+	return count, nil
+}
+
 func copyOptions(s []string) []string {
 	if s == nil {
 		return nil

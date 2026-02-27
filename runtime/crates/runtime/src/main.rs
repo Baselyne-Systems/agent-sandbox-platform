@@ -10,6 +10,7 @@ use tonic::transport::Server;
 use tracing::info;
 
 use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
+use proto_gen::platform::economics::v1::economics_service_client::EconomicsServiceClient;
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::runtime::v1::agent_api_service_server::AgentApiServiceServer;
 use proto_gen::platform::runtime::v1::runtime_service_server::RuntimeServiceServer;
@@ -62,11 +63,28 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Optional Economics Service endpoint for budget enforcement.
+    let economics_client = match std::env::var("ECONOMICS_ENDPOINT") {
+        Ok(endpoint) => {
+            info!(endpoint = %endpoint, "connecting to Economics Service");
+            let client = EconomicsServiceClient::connect(endpoint).await?;
+            Some(client)
+        }
+        Err(_) => {
+            info!("ECONOMICS_ENDPOINT not set — budget enforcement disabled");
+            None
+        }
+    };
+
+    let advertise_addr = std::env::var("ADVERTISE_ADDRESS").unwrap_or_else(|_| "localhost".to_string());
+    let advertise_endpoint = format!("{advertise_addr}:{port}");
+    info!(advertise_endpoint = %advertise_endpoint, "agent API advertise endpoint");
+
     let sandbox_manager = SandboxManager::new();
     let tool_interceptor = ToolInterceptor::new();
-    let runtime_service = RuntimeServiceImpl::new(sandbox_manager.clone());
+    let runtime_service = RuntimeServiceImpl::new(sandbox_manager.clone(), advertise_endpoint);
     let agent_api_service =
-        AgentApiServiceImpl::new(sandbox_manager, tool_interceptor, his_client, activity_client);
+        AgentApiServiceImpl::new(sandbox_manager, tool_interceptor, his_client, activity_client, economics_client);
 
     info!("Runtime starting on :{port}");
 

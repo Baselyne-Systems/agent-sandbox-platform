@@ -69,6 +69,20 @@ func (h *Handler) PlaceWorkspace(ctx context.Context, req *pb.PlaceWorkspaceRequ
 	}, nil
 }
 
+func (h *Handler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
+	host, err := h.svc.Heartbeat(ctx, req.GetHostId(), models.HostResources{
+		MemoryMb:      req.GetAvailableMemoryMb(),
+		CpuMillicores: req.GetAvailableCpuMillicores(),
+		DiskMb:        req.GetAvailableDiskMb(),
+	}, req.GetActiveSandboxes())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.HeartbeatResponse{
+		Status: modelHostStatusToProto(host.Status),
+	}, nil
+}
+
 // --- converters ---
 
 func hostToProto(h *models.Host) *pb.Host {

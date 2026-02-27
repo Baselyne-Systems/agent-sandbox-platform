@@ -6,6 +6,8 @@ package platform.governance.v1;
 service DataGovernanceService {
   rpc ClassifyData(ClassifyDataRequest) returns (ClassifyDataResponse);
   rpc CheckPolicy(CheckPolicyRequest) returns (CheckPolicyResponse);
+  // InspectEgress combines classify + check in a single call for the hot path.
+  rpc InspectEgress(InspectEgressRequest) returns (InspectEgressResponse);
 }
 
 enum DataClassification {
@@ -35,4 +37,18 @@ message CheckPolicyRequest {
 message CheckPolicyResponse {
   bool allowed = 1;
   string reason = 2;
+}
+
+message InspectEgressRequest {
+  string agent_id = 1;
+  string destination = 2;
+  bytes content = 3;
+  string content_type = 4;
+}
+
+message InspectEgressResponse {
+  bool allowed = 1;
+  string reason = 2;
+  DataClassification classification = 3;
+  repeated string detected_patterns = 4;
 }

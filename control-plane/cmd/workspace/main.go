@@ -11,6 +11,7 @@ import (
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/config"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/database"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/identity"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/workspace"
 	computepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/compute/v1"
@@ -20,6 +21,8 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -88,10 +91,20 @@ func main() {
 	})
 	handler := workspace.NewHandler(svc)
 
+	authCfg := middleware.AuthConfig{
+		Credentials:   &middleware.PostgresCredentialLookup{DB: db},
+		TokenHashFunc: identity.HashToken,
+	}
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
+		grpc.ChainUnaryInterceptor(
+			middleware.UnaryLoggingInterceptor(logger),
+			middleware.UnaryAuthInterceptor(authCfg),
+		),
 	)
 	pb.RegisterWorkspaceServiceServer(srv, handler)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(srv, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(srv)
 
 	logger.Info("Workspace Service starting", zap.String("port", cfg.GRPCPort))

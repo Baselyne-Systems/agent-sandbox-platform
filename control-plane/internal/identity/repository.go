@@ -17,6 +17,7 @@ type Repository interface {
 	DeactivateAgent(ctx context.Context, id string) error
 
 	UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel) error
+	UpdateAgentStatus(ctx context.Context, agentID string, from []models.AgentStatus, to models.AgentStatus) error
 
 	CreateCredential(ctx context.Context, cred *models.ScopedCredential) error
 	RevokeCredential(ctx context.Context, id string) error
@@ -178,6 +179,43 @@ func (r *PostgresRepository) UpdateTrustLevel(ctx context.Context, agentID strin
 			return ErrAgentNotFound
 		}
 		return ErrAgentInactive
+	}
+	return nil
+}
+
+func (r *PostgresRepository) UpdateAgentStatus(ctx context.Context, agentID string, from []models.AgentStatus, to models.AgentStatus) error {
+	query := `UPDATE agents SET status = $1, updated_at = now() WHERE id = $2`
+	args := []any{string(to), agentID}
+
+	if len(from) > 0 {
+		placeholders := ""
+		for i, s := range from {
+			if i > 0 {
+				placeholders += ", "
+			}
+			placeholders += fmt.Sprintf("$%d", i+3)
+			args = append(args, string(s))
+		}
+		query += fmt.Sprintf(" AND status IN (%s)", placeholders)
+	}
+
+	res, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1)`, agentID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrAgentNotFound
+		}
+		return ErrInvalidStatusTransition
 	}
 	return nil
 }

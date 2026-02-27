@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 WORKDIR /app
 
@@ -10,9 +10,14 @@ COPY control-plane/ .
 ARG SERVICE=identity
 RUN CGO_ENABLED=0 go build -o /service ./cmd/${SERVICE}
 
+# Install grpc_health_probe for container health checks.
+ARG TARGETARCH
+RUN GOBIN=/out go install github.com/grpc-ecosystem/grpc-health-probe@latest
+
 FROM alpine:3.20
 
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /service /service
+COPY --from=builder /out/grpc_health_probe /usr/local/bin/grpc_health_probe
 
 ENTRYPOINT ["/service"]

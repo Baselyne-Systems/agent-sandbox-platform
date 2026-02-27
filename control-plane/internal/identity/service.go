@@ -12,8 +12,9 @@ var (
 	ErrAgentNotFound      = errors.New("agent not found")
 	ErrCredentialNotFound = errors.New("credential not found")
 	ErrInvalidInput       = errors.New("invalid input")
-	ErrAgentInactive      = errors.New("agent is not active")
-	ErrInvalidTrustLevel  = errors.New("invalid trust level")
+	ErrAgentInactive           = errors.New("agent is not active")
+	ErrInvalidTrustLevel       = errors.New("invalid trust level")
+	ErrInvalidStatusTransition = errors.New("invalid status transition")
 )
 
 const (
@@ -175,6 +176,30 @@ func (s *Service) RevokeCredential(ctx context.Context, credentialID string) err
 		return ErrInvalidInput
 	}
 	return s.repo.RevokeCredential(ctx, credentialID)
+}
+
+func (s *Service) SuspendAgent(ctx context.Context, agentID string) (*models.Agent, error) {
+	if agentID == "" {
+		return nil, ErrInvalidInput
+	}
+	if err := s.repo.UpdateAgentStatus(ctx, agentID, []models.AgentStatus{
+		models.AgentStatusActive, models.AgentStatusSuspended,
+	}, models.AgentStatusSuspended); err != nil {
+		return nil, err
+	}
+	return s.GetAgent(ctx, agentID)
+}
+
+func (s *Service) ReactivateAgent(ctx context.Context, agentID string) (*models.Agent, error) {
+	if agentID == "" {
+		return nil, ErrInvalidInput
+	}
+	if err := s.repo.UpdateAgentStatus(ctx, agentID, []models.AgentStatus{
+		models.AgentStatusSuspended, models.AgentStatusInactive, models.AgentStatusActive,
+	}, models.AgentStatusActive); err != nil {
+		return nil, err
+	}
+	return s.GetAgent(ctx, agentID)
 }
 
 // encodePageToken encodes a cursor ID as a page token.

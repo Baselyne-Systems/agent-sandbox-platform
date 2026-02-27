@@ -42,6 +42,24 @@ func (h *Handler) CheckPolicy(_ context.Context, req *pb.CheckPolicyRequest) (*p
 	}, nil
 }
 
+func (h *Handler) InspectEgress(_ context.Context, req *pb.InspectEgressRequest) (*pb.InspectEgressResponse, error) {
+	allowed, reason, classification, patterns, err := h.svc.InspectEgress(
+		req.GetAgentId(),
+		req.GetDestination(),
+		req.GetContent(),
+		req.GetContentType(),
+	)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.InspectEgressResponse{
+		Allowed:          allowed,
+		Reason:           reason,
+		Classification:   classificationToProto(classification),
+		DetectedPatterns: patterns,
+	}, nil
+}
+
 // --- converters ---
 
 func classificationToProto(c DataClassification) pb.DataClassification {

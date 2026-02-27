@@ -19,6 +19,9 @@ service RuntimeService {
 
   // StreamEvents returns a stream of sandbox lifecycle and action events.
   rpc StreamEvents(StreamEventsRequest) returns (stream SandboxEvent);
+
+  // UpdateSandboxGuardrails replaces the compiled guardrails policy for a running sandbox.
+  rpc UpdateSandboxGuardrails(UpdateSandboxGuardrailsRequest) returns (UpdateSandboxGuardrailsResponse);
 }
 
 // AgentAPIService is exposed inside the sandbox for agents to call.
@@ -33,6 +36,9 @@ service AgentAPIService {
 
   // ReportProgress allows agents to report task progress.
   rpc ReportProgress(ReportProgressRequest) returns (ReportProgressResponse);
+
+  // CheckHumanRequest polls the status of a previously submitted human request.
+  rpc CheckHumanRequest(CheckHumanRequestRequest) returns (CheckHumanRequestResponse);
 }
 
 message CreateSandboxRequest {
@@ -143,6 +149,17 @@ message RequestHumanInputResponse {
   string response = 1;
   string responder_id = 2;
   bool timed_out = 3;
+  string request_id = 4;
+}
+
+message CheckHumanRequestRequest {
+  string request_id = 1;
+}
+
+message CheckHumanRequestResponse {
+  string status = 1; // pending, responded, expired
+  string response = 2;
+  string responder_id = 3;
 }
 
 message ReportProgressRequest {
@@ -152,3 +169,10 @@ message ReportProgressRequest {
 }
 
 message ReportProgressResponse {}
+
+message UpdateSandboxGuardrailsRequest {
+  string sandbox_id = 1;
+  bytes compiled_guardrails = 2;
+}
+
+message UpdateSandboxGuardrailsResponse {}

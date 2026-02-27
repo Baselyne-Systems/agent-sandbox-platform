@@ -74,6 +74,26 @@ func (s *Service) ClassifyData(content []byte, contentType string) (DataClassifi
 	return highest, detected, nil
 }
 
+// InspectEgress combines classify + check in a single call. It classifies the
+// content, checks the policy, and returns the combined result.
+func (s *Service) InspectEgress(agentID, destination string, content []byte, contentType string) (bool, string, DataClassification, []string, error) {
+	if agentID == "" || destination == "" {
+		return false, "", 0, nil, ErrInvalidInput
+	}
+
+	classification, patterns, err := s.ClassifyData(content, contentType)
+	if err != nil {
+		return false, "", 0, nil, err
+	}
+
+	allowed, reason, err := s.CheckPolicy(agentID, destination, classification)
+	if err != nil {
+		return false, "", 0, nil, err
+	}
+
+	return allowed, reason, classification, patterns, nil
+}
+
 // CheckPolicy determines whether an agent is allowed to send data of a given
 // classification to a destination.
 func (s *Service) CheckPolicy(agentID, destination string, classification DataClassification) (bool, string, error) {

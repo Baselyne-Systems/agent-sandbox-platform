@@ -15,6 +15,8 @@ import (
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/identity/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -42,10 +44,20 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
+	authCfg := middleware.AuthConfig{
+		Credentials:   &middleware.PostgresCredentialLookup{DB: db},
+		TokenHashFunc: identity.HashToken,
+	}
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
+		grpc.ChainUnaryInterceptor(
+			middleware.UnaryLoggingInterceptor(logger),
+			middleware.UnaryAuthInterceptor(authCfg),
+		),
 	)
 	pb.RegisterIdentityServiceServer(srv, handler)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(srv, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(srv)
 
 	logger.Info("Identity Service starting", zap.String("port", cfg.GRPCPort))

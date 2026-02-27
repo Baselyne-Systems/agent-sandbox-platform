@@ -106,6 +106,26 @@ func (m *mockRepo) UpdateTrustLevel(_ context.Context, agentID string, level mod
 	return nil
 }
 
+func (m *mockRepo) UpdateAgentStatus(_ context.Context, agentID string, from []models.AgentStatus, to models.AgentStatus) error {
+	a, ok := m.agents[agentID]
+	if !ok {
+		return ErrAgentNotFound
+	}
+	allowed := false
+	for _, s := range from {
+		if a.Status == s {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return ErrInvalidStatusTransition
+	}
+	a.Status = to
+	a.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *mockRepo) CreateCredential(_ context.Context, cred *models.ScopedCredential) error {
 	cred.ID = m.nextUUID()
 	cred.CreatedAt = time.Now()
@@ -415,5 +435,119 @@ func TestUpdateTrustLevel_EmptyID(t *testing.T) {
 	_, err := svc.UpdateTrustLevel(context.Background(), "", models.AgentTrustLevelEstablished, "test")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
+	}
+}
+
+// --- SuspendAgent tests ---
+
+func TestSuspendAgent_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+
+	suspended, err := svc.SuspendAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suspended.Status != models.AgentStatusSuspended {
+		t.Errorf("expected suspended, got %q", suspended.Status)
+	}
+}
+
+func TestSuspendAgent_AlreadySuspended(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+
+	svc.SuspendAgent(ctx, agent.ID)
+	// Suspending again should be idempotent.
+	suspended, err := svc.SuspendAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if suspended.Status != models.AgentStatusSuspended {
+		t.Errorf("expected suspended, got %q", suspended.Status)
+	}
+}
+
+func TestSuspendAgent_NotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.SuspendAgent(context.Background(), "nonexistent")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound, got: %v", err)
+	}
+}
+
+func TestSuspendAgent_EmptyID(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.SuspendAgent(context.Background(), "")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput, got: %v", err)
+	}
+}
+
+func TestSuspendAgent_InactiveAgent(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	svc.DeactivateAgent(ctx, agent.ID)
+
+	_, err := svc.SuspendAgent(ctx, agent.ID)
+	if !errors.Is(err, ErrInvalidStatusTransition) {
+		t.Errorf("expected ErrInvalidStatusTransition, got: %v", err)
+	}
+}
+
+// --- ReactivateAgent tests ---
+
+func TestReactivateAgent_FromSuspended(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	svc.SuspendAgent(ctx, agent.ID)
+
+	reactivated, err := svc.ReactivateAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reactivated.Status != models.AgentStatusActive {
+		t.Errorf("expected active, got %q", reactivated.Status)
+	}
+}
+
+func TestReactivateAgent_FromInactive(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	svc.DeactivateAgent(ctx, agent.ID)
+
+	reactivated, err := svc.ReactivateAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reactivated.Status != models.AgentStatusActive {
+		t.Errorf("expected active, got %q", reactivated.Status)
+	}
+}
+
+func TestReactivateAgent_AlreadyActive(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+
+	reactivated, err := svc.ReactivateAgent(ctx, agent.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reactivated.Status != models.AgentStatusActive {
+		t.Errorf("expected active, got %q", reactivated.Status)
+	}
+}
+
+func TestReactivateAgent_NotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.ReactivateAgent(context.Background(), "nonexistent")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound, got: %v", err)
 	}
 }

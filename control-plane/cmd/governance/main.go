@@ -14,6 +14,8 @@ import (
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/governance/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 )
 
@@ -34,10 +36,17 @@ func main() {
 	svc := governance.NewService()
 	handler := governance.NewHandler(svc)
 
+	authCfg := middleware.AuthConfig{} // No DB — auth passthrough
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
+		grpc.ChainUnaryInterceptor(
+			middleware.UnaryLoggingInterceptor(logger),
+			middleware.UnaryAuthInterceptor(authCfg),
+		),
 	)
 	pb.RegisterDataGovernanceServiceServer(srv, handler)
+	healthSrv := health.NewServer()
+	healthpb.RegisterHealthServer(srv, healthSrv)
+	healthSrv.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	reflection.Register(srv)
 
 	logger.Info("Data Governance Service starting", zap.String("port", cfg.GRPCPort))

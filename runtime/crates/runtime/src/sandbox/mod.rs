@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::SystemTime;
 
 use anyhow::{anyhow, Result};
@@ -58,7 +58,8 @@ pub struct SandboxState {
     /// Current status.
     pub status: Mutex<SandboxStatus>,
     /// The guardrails evaluator loaded with the sandbox's compiled policy.
-    pub evaluator: Evaluator,
+    /// Wrapped in RwLock to support hot-reload via UpdateSandboxGuardrails RPC.
+    pub evaluator: RwLock<Evaluator>,
     /// Tools the agent is allowed to invoke.
     pub allowed_tools: Vec<String>,
     /// Environment variables injected into the sandbox.
@@ -112,7 +113,7 @@ impl SandboxManager {
             workspace_id: params.workspace_id.clone(),
             agent_id: params.agent_id.clone(),
             status: Mutex::new(SandboxStatus::Running),
-            evaluator,
+            evaluator: RwLock::new(evaluator),
             allowed_tools: params.allowed_tools,
             env_vars: params.env_vars,
             actions_executed: AtomicU32::new(0),
@@ -177,6 +178,29 @@ impl SandboxManager {
             .get(sandbox_id)
             .cloned()
             .ok_or_else(|| anyhow!("sandbox not found: {sandbox_id}"))
+    }
+
+    /// Hot-reload guardrails for a running sandbox.
+    pub fn update_guardrails(&self, sandbox_id: &str, compiled_guardrails: &[u8]) -> Result<()> {
+        let sandbox = self.get_sandbox(sandbox_id)?;
+
+        let new_evaluator = Evaluator::load(compiled_guardrails)
+            .map_err(|e| anyhow!("failed to load guardrails: {e}"))?;
+
+        let mut evaluator = sandbox
+            .evaluator
+            .write()
+            .map_err(|e| anyhow!("evaluator lock poisoned: {e}"))?;
+        *evaluator = new_evaluator;
+
+        info!(sandbox_id = %sandbox_id, "guardrails updated");
+
+        let _ = sandbox.event_tx.send(SandboxEvent::Lifecycle {
+            new_state: "running".into(),
+            reason: "guardrails updated".into(),
+        });
+
+        Ok(())
     }
 
     /// Look up a sandbox ID from gRPC request metadata.
@@ -264,6 +288,68 @@ mod tests {
         assert_eq!(state.actions_executed.load(Ordering::Relaxed), 0);
         state.actions_executed.fetch_add(1, Ordering::Relaxed);
         assert_eq!(state.actions_executed.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn update_guardrails_replaces_policy() {
+        let mgr = SandboxManager::new();
+        let state = mgr.create(test_params("ws-005", "agent-005")).unwrap();
+
+        // Build a policy with one deny rule
+        let policy_with_rule = serde_json::to_vec(&guardrails_eval::CompiledPolicy {
+            rules: vec![guardrails_eval::CompiledRule {
+                id: "r1".to_string(),
+                name: "block-dangerous".to_string(),
+                rule_type: guardrails_eval::RuleType::ToolFilter,
+                condition: "dangerous_tool".to_string(),
+                action: guardrails_eval::RuleAction::Deny,
+                priority: 1,
+                enabled: true,
+            }],
+        })
+        .unwrap();
+
+        mgr.update_guardrails(&state.id, &policy_with_rule).unwrap();
+
+        // Verify the new policy is active by evaluating
+        let ctx = guardrails_eval::EvalContext {
+            tool_name: "dangerous_tool".to_string(),
+            parameters: serde_json::Value::Null,
+            agent_id: "agent-005".to_string(),
+        };
+        let evaluator = state.evaluator.read().unwrap();
+        let verdict = evaluator.evaluate(&ctx);
+        assert!(matches!(verdict, guardrails_eval::Verdict::Deny(_)));
+    }
+
+    #[test]
+    fn update_guardrails_nonexistent_sandbox() {
+        let mgr = SandboxManager::new();
+        let result = mgr.update_guardrails("no-such-sandbox", &empty_policy_bytes());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_guardrails_invalid_bytes() {
+        let mgr = SandboxManager::new();
+        let state = mgr.create(test_params("ws-006", "agent-006")).unwrap();
+        let result = mgr.update_guardrails(&state.id, b"not valid json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn update_guardrails_emits_lifecycle_event() {
+        let mgr = SandboxManager::new();
+        let state = mgr.create(test_params("ws-007", "agent-007")).unwrap();
+
+        let mut rx = state.event_tx.subscribe();
+        mgr.update_guardrails(&state.id, &empty_policy_bytes()).unwrap();
+
+        let event = rx.try_recv().unwrap();
+        match event {
+            SandboxEvent::Lifecycle { reason, .. } => assert_eq!(reason, "guardrails updated"),
+            _ => panic!("expected lifecycle event"),
+        }
     }
 
     #[test]

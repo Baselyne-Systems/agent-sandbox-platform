@@ -10,6 +10,7 @@ service EconomicsService {
   rpc GetBudget(GetBudgetRequest) returns (GetBudgetResponse);
   rpc SetBudget(SetBudgetRequest) returns (SetBudgetResponse);
   rpc CheckBudget(CheckBudgetRequest) returns (CheckBudgetResponse);
+  rpc GetCostReport(GetCostReportRequest) returns (GetCostReportResponse);
 }
 
 message UsageRecord {
@@ -67,4 +68,22 @@ message CheckBudgetRequest {
 message CheckBudgetResponse {
   bool allowed = 1;
   double remaining = 2;
+}
+
+message GetCostReportRequest {
+  string agent_id = 1; // optional — empty = all agents
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+}
+
+message GetCostReportResponse {
+  double total_cost = 1;
+  int32 record_count = 2;
+  repeated CostBreakdown by_resource_type = 3;
+}
+
+message CostBreakdown {
+  string resource_type = 1;
+  double total_cost = 2;
+  int32 record_count = 3;
 }

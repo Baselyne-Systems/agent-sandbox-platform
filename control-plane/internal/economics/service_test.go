@@ -63,6 +63,30 @@ func (m *mockRepo) AddUsedAmount(_ context.Context, agentID string, amount float
 	return nil
 }
 
+func (m *mockRepo) GetCostReport(_ context.Context, agentID string, start, end time.Time) ([]ResourceCost, error) {
+	costs := make(map[string]*ResourceCost)
+	for _, r := range m.usageRecords {
+		if agentID != "" && r.AgentID != agentID {
+			continue
+		}
+		if r.RecordedAt.Before(start) || r.RecordedAt.After(end) {
+			continue
+		}
+		c, ok := costs[r.ResourceType]
+		if !ok {
+			c = &ResourceCost{ResourceType: r.ResourceType}
+			costs[r.ResourceType] = c
+		}
+		c.TotalCost += r.Cost
+		c.RecordCount++
+	}
+	var result []ResourceCost
+	for _, c := range costs {
+		result = append(result, *c)
+	}
+	return result, nil
+}
+
 // --- RecordUsage tests ---
 
 func TestRecordUsage_Success(t *testing.T) {
@@ -289,5 +313,108 @@ func TestCheckBudget_NoBudget(t *testing.T) {
 	}
 	if !allowed {
 		t.Error("expected allowed=true when no budget exists")
+	}
+}
+
+// --- GetCostReport tests ---
+
+func TestGetCostReport_WithData(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	// Insert some usage records.
+	svc.RecordUsage(ctx, "agent-1", "ws-1", "compute", "seconds", 100, 5.0)
+	svc.RecordUsage(ctx, "agent-1", "ws-1", "compute", "seconds", 200, 10.0)
+	svc.RecordUsage(ctx, "agent-1", "ws-1", "storage", "bytes", 500, 2.0)
+
+	report, err := svc.GetCostReport(ctx, "agent-1", now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.TotalCost != 17.0 {
+		t.Errorf("expected total cost 17.0, got %f", report.TotalCost)
+	}
+	if report.RecordCount != 3 {
+		t.Errorf("expected record count 3, got %d", report.RecordCount)
+	}
+	if len(report.ByResourceType) != 2 {
+		t.Errorf("expected 2 resource types, got %d", len(report.ByResourceType))
+	}
+}
+
+func TestGetCostReport_Empty(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	report, err := svc.GetCostReport(ctx, "agent-1", now.Add(-time.Hour), now.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.TotalCost != 0 {
+		t.Errorf("expected total cost 0, got %f", report.TotalCost)
+	}
+	if report.RecordCount != 0 {
+		t.Errorf("expected record count 0, got %d", report.RecordCount)
+	}
+}
+
+func TestGetCostReport_InvalidTimeRange(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	_, err := svc.GetCostReport(ctx, "", now.Add(time.Hour), now.Add(-time.Hour))
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for end before start, got: %v", err)
+	}
+
+	_, err = svc.GetCostReport(ctx, "", now, now)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for equal start and end, got: %v", err)
+	}
+}
+
+func TestGetCostReport_FiltersByAgent(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	svc.RecordUsage(ctx, "agent-1", "ws-1", "compute", "seconds", 100, 5.0)
+	svc.RecordUsage(ctx, "agent-2", "ws-2", "compute", "seconds", 200, 10.0)
+
+	report, err := svc.GetCostReport(ctx, "agent-1", now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.TotalCost != 5.0 {
+		t.Errorf("expected total cost 5.0 (agent-1 only), got %f", report.TotalCost)
+	}
+	if report.RecordCount != 1 {
+		t.Errorf("expected record count 1, got %d", report.RecordCount)
+	}
+}
+
+func TestGetCostReport_AllAgents(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	now := time.Now().UTC()
+	svc.RecordUsage(ctx, "agent-1", "ws-1", "compute", "seconds", 100, 5.0)
+	svc.RecordUsage(ctx, "agent-2", "ws-2", "compute", "seconds", 200, 10.0)
+
+	report, err := svc.GetCostReport(ctx, "", now.Add(-time.Minute), now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.TotalCost != 15.0 {
+		t.Errorf("expected total cost 15.0 (all agents), got %f", report.TotalCost)
+	}
+	if report.RecordCount != 2 {
+		t.Errorf("expected record count 2, got %d", report.RecordCount)
 	}
 }
