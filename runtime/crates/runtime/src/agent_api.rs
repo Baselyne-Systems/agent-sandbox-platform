@@ -1,4 +1,5 @@
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 
 use tokio::sync::Mutex as TokioMutex;
@@ -8,6 +9,8 @@ use uuid::Uuid;
 
 use guardrails_eval::{EvalContext, Verdict};
 
+use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
+use proto_gen::platform::activity::v1::{ActionOutcome, ActionRecord, RecordActionRequest};
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::human::v1::{
     CreateHumanRequestRequest, GetHumanRequestRequest, HumanRequestStatus,
@@ -27,6 +30,7 @@ pub struct AgentApiServiceImpl {
     sandbox_manager: SandboxManager,
     tool_interceptor: ToolInterceptor,
     his_client: Option<TokioMutex<HumanInteractionServiceClient<tonic::transport::Channel>>>,
+    activity_client: Option<Arc<TokioMutex<ActivityServiceClient<tonic::transport::Channel>>>>,
 }
 
 impl std::fmt::Debug for AgentApiServiceImpl {
@@ -35,6 +39,7 @@ impl std::fmt::Debug for AgentApiServiceImpl {
             .field("sandbox_manager", &self.sandbox_manager)
             .field("tool_interceptor", &self.tool_interceptor)
             .field("his_configured", &self.his_client.is_some())
+            .field("activity_configured", &self.activity_client.is_some())
             .finish()
     }
 }
@@ -44,11 +49,13 @@ impl AgentApiServiceImpl {
         sandbox_manager: SandboxManager,
         tool_interceptor: ToolInterceptor,
         his_client: Option<HumanInteractionServiceClient<tonic::transport::Channel>>,
+        activity_client: Option<ActivityServiceClient<tonic::transport::Channel>>,
     ) -> Self {
         Self {
             sandbox_manager,
             tool_interceptor,
             his_client: his_client.map(TokioMutex::new),
+            activity_client: activity_client.map(|c| Arc::new(TokioMutex::new(c))),
         }
     }
 }
@@ -74,6 +81,7 @@ impl AgentApiService for AgentApiServiceImpl {
         );
 
         // 2. Convert proto Struct parameters to serde_json::Value
+        let proto_parameters = req.parameters.clone();
         let parameters = req
             .parameters
             .map(|s| {
@@ -147,6 +155,41 @@ impl AgentApiService for AgentApiServiceImpl {
             eval_latency_us = %eval_latency_us,
             "tool execution evaluated"
         );
+
+        // 8. Fire-and-forget: persist action record to Activity Store
+        if let Some(activity_mutex) = &self.activity_client {
+            let outcome = match &verdict {
+                Verdict::Allow => ActionOutcome::Allowed as i32,
+                Verdict::Deny(_) => ActionOutcome::Denied as i32,
+                Verdict::Escalate(_) => ActionOutcome::Escalated as i32,
+            };
+            let guardrail_rule_id = match &verdict {
+                Verdict::Escalate(rule_id) => rule_id.clone(),
+                _ => String::new(),
+            };
+            let record = ActionRecord {
+                record_id: String::new(),
+                workspace_id: sandbox.workspace_id.clone(),
+                agent_id: sandbox.agent_id.clone(),
+                task_id: String::new(),
+                tool_name: req.tool_name.clone(),
+                parameters: proto_parameters.clone(),
+                result: tool_result.clone(),
+                outcome,
+                guardrail_rule_id,
+                denial_reason: denial_reason.clone(),
+                evaluation_latency_us: eval_latency_us,
+                execution_latency_us: 0,
+                recorded_at: None,
+            };
+            let activity_mutex = activity_mutex.clone();
+            tokio::spawn(async move {
+                let mut client = activity_mutex.lock().await;
+                if let Err(e) = client.record_action(RecordActionRequest { record: Some(record) }).await {
+                    tracing::warn!(error = %e, "failed to persist action record to Activity Store");
+                }
+            });
+        }
 
         Ok(Response::new(ExecuteToolResponse {
             verdict: action_verdict as i32,

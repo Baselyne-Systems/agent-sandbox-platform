@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
+	"strings"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
@@ -196,6 +198,104 @@ func (s *Service) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, 
 		return nil, 0, err
 	}
 	return compiled, len(rules), nil
+}
+
+// SimulationResult holds the outcome of a policy simulation.
+type SimulationResult struct {
+	Verdict         string
+	MatchedRuleID   string
+	MatchedRuleName string
+	Reason          string
+}
+
+// SimulatePolicy dry-runs a set of rules against a sample tool call, returning
+// the verdict that would be produced. Rules are evaluated in priority order
+// (ascending — lower priority number = higher precedence).
+func (s *Service) SimulatePolicy(ctx context.Context, ruleIDs []string, toolName string, parameters map[string]string, agentID string) (*SimulationResult, error) {
+	if len(ruleIDs) == 0 {
+		return nil, ErrInvalidInput
+	}
+	if toolName == "" {
+		return nil, ErrInvalidInput
+	}
+
+	// Fetch all rules.
+	var rules []models.GuardrailRule
+	for _, id := range ruleIDs {
+		rule, err := s.repo.GetRule(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if rule == nil {
+			return nil, ErrRuleNotFound
+		}
+		rules = append(rules, *rule)
+	}
+
+	// Sort by priority ascending (lower number = higher precedence).
+	sort.Slice(rules, func(i, j int) bool { return rules[i].Priority < rules[j].Priority })
+
+	// Evaluate each enabled rule.
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+
+		matched := false
+		switch rule.Type {
+		case models.RuleTypeToolFilter:
+			// Condition is a comma-separated list of tool names.
+			tools := strings.Split(rule.Condition, ",")
+			for _, t := range tools {
+				if strings.TrimSpace(t) == toolName {
+					matched = true
+					break
+				}
+			}
+		case models.RuleTypeParameterCheck:
+			// Condition format: "field=value"
+			parts := strings.SplitN(rule.Condition, "=", 2)
+			if len(parts) == 2 {
+				field := strings.TrimSpace(parts[0])
+				value := strings.TrimSpace(parts[1])
+				if parameters[field] == value {
+					matched = true
+				}
+			}
+		default:
+			// rate_limit, budget_limit — not evaluated at request time.
+			continue
+		}
+
+		if matched {
+			verdict := "allow"
+			reason := ""
+			switch rule.Action {
+			case models.RuleActionDeny:
+				verdict = "deny"
+				reason = "denied by rule: " + rule.Name
+			case models.RuleActionEscalate:
+				verdict = "escalate"
+				reason = "escalated by rule: " + rule.Name
+			case models.RuleActionAllow:
+				verdict = "allow"
+			case models.RuleActionLog:
+				verdict = "allow" // log rules allow the action but log it
+			}
+			return &SimulationResult{
+				Verdict:         verdict,
+				MatchedRuleID:   rule.ID,
+				MatchedRuleName: rule.Name,
+				Reason:          reason,
+			}, nil
+		}
+	}
+
+	// No rule matched — default allow.
+	return &SimulationResult{
+		Verdict: "allow",
+		Reason:  "no matching rule",
+	}, nil
 }
 
 func encodePageToken(id string) string {

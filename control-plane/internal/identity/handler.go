@@ -87,6 +87,14 @@ func (h *Handler) RevokeCredential(ctx context.Context, req *pb.RevokeCredential
 	return &pb.RevokeCredentialResponse{}, nil
 }
 
+func (h *Handler) UpdateTrustLevel(ctx context.Context, req *pb.UpdateTrustLevelRequest) (*pb.UpdateTrustLevelResponse, error) {
+	agent, err := h.svc.UpdateTrustLevel(ctx, req.GetAgentId(), protoTrustLevelToModel(req.GetTrustLevel()), req.GetJustification())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.UpdateTrustLevelResponse{Agent: agentToProto(agent)}, nil
+}
+
 // --- converters ---
 
 func agentToProto(a *models.Agent) *pb.Agent {
@@ -175,6 +183,8 @@ func toGRPCError(err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, ErrAgentInactive):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrInvalidTrustLevel):
+		return status.Error(codes.InvalidArgument, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}

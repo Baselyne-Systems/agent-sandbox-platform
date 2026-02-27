@@ -16,6 +16,8 @@ type Repository interface {
 	ListAgents(ctx context.Context, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error)
 	DeactivateAgent(ctx context.Context, id string) error
 
+	UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel) error
+
 	CreateCredential(ctx context.Context, cred *models.ScopedCredential) error
 	RevokeCredential(ctx context.Context, id string) error
 }
@@ -154,6 +156,30 @@ func (r *PostgresRepository) DeactivateAgent(ctx context.Context, id string) err
 	}
 
 	return tx.Commit()
+}
+
+func (r *PostgresRepository) UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE agents SET trust_level = $1, updated_at = now() WHERE id = $2 AND status = 'active'`,
+		string(level), agentID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var exists bool
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1)`, agentID).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return ErrAgentNotFound
+		}
+		return ErrAgentInactive
+	}
+	return nil
 }
 
 func (r *PostgresRepository) CreateCredential(ctx context.Context, cred *models.ScopedCredential) error {

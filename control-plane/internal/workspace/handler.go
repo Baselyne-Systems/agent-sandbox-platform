@@ -67,6 +67,25 @@ func (h *Handler) TerminateWorkspace(ctx context.Context, req *pb.TerminateWorks
 	return &pb.TerminateWorkspaceResponse{}, nil
 }
 
+func (h *Handler) SnapshotWorkspace(ctx context.Context, req *pb.SnapshotWorkspaceRequest) (*pb.SnapshotWorkspaceResponse, error) {
+	snapshot, err := h.svc.SnapshotWorkspace(ctx, req.GetWorkspaceId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.SnapshotWorkspaceResponse{
+		SnapshotId: snapshot.ID,
+		CreatedAt:  timestamppb.New(snapshot.CreatedAt),
+	}, nil
+}
+
+func (h *Handler) RestoreWorkspace(ctx context.Context, req *pb.RestoreWorkspaceRequest) (*pb.RestoreWorkspaceResponse, error) {
+	ws, err := h.svc.RestoreWorkspace(ctx, req.GetSnapshotId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.RestoreWorkspaceResponse{Workspace: workspaceToProto(ws)}, nil
+}
+
 // --- converters ---
 
 func workspaceToProto(ws *models.Workspace) *pb.Workspace {
@@ -77,6 +96,7 @@ func workspaceToProto(ws *models.Workspace) *pb.Workspace {
 		Status:      modelWorkspaceStatusToProto(ws.Status),
 		Spec:        modelSpecToProto(&ws.Spec),
 		HostId:      ws.HostID,
+		SnapshotId:  ws.SnapshotID,
 		CreatedAt:   timestamppb.New(ws.CreatedAt),
 		UpdatedAt:   timestamppb.New(ws.UpdatedAt),
 	}
@@ -163,6 +183,10 @@ func toGRPCError(err error) error {
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, ErrWorkspaceAlreadyTerminal):
 		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrWorkspaceNotRunning):
+		return status.Error(codes.FailedPrecondition, err.Error())
+	case errors.Is(err, ErrSnapshotNotFound):
+		return status.Error(codes.NotFound, err.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}

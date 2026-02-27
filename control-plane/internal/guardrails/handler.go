@@ -93,6 +93,19 @@ func (h *Handler) CompilePolicy(ctx context.Context, req *pb.CompilePolicyReques
 	}, nil
 }
 
+func (h *Handler) SimulatePolicy(ctx context.Context, req *pb.SimulatePolicyRequest) (*pb.SimulatePolicyResponse, error) {
+	result, err := h.svc.SimulatePolicy(ctx, req.GetRuleIds(), req.GetToolName(), req.GetParameters(), req.GetAgentId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.SimulatePolicyResponse{
+		Verdict:         result.Verdict,
+		MatchedRuleId:   result.MatchedRuleID,
+		MatchedRuleName: result.MatchedRuleName,
+		Reason:          result.Reason,
+	}, nil
+}
+
 // --- converters ---
 
 func ruleToProto(r *models.GuardrailRule) *pb.GuardrailRule {

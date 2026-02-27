@@ -24,6 +24,9 @@ service GuardrailsService {
   // CompilePolicy compiles a set of rules into a binary format for the
   // runtime evaluator. Called before workspace creation.
   rpc CompilePolicy(CompilePolicyRequest) returns (CompilePolicyResponse);
+
+  // SimulatePolicy dry-runs a set of rules against a sample tool call.
+  rpc SimulatePolicy(SimulatePolicyRequest) returns (SimulatePolicyResponse);
 }
 
 // GuardrailRule defines a single guardrail rule.
@@ -117,4 +120,18 @@ message CompilePolicyRequest {
 message CompilePolicyResponse {
   bytes compiled_policy = 1;
   int32 rule_count = 2;
+}
+
+message SimulatePolicyRequest {
+  repeated string rule_ids = 1;
+  string tool_name = 2;
+  map<string, string> parameters = 3;
+  string agent_id = 4;
+}
+
+message SimulatePolicyResponse {
+  string verdict = 1;
+  string matched_rule_id = 2;
+  string matched_rule_name = 3;
+  string reason = 4;
 }

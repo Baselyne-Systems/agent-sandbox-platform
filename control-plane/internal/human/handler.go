@@ -71,6 +71,38 @@ func (h *Handler) ListRequests(ctx context.Context, req *pb.ListHumanRequestsReq
 	}, nil
 }
 
+func (h *Handler) ConfigureDeliveryChannel(ctx context.Context, req *pb.ConfigureDeliveryChannelRequest) (*pb.ConfigureDeliveryChannelResponse, error) {
+	cfg, err := h.svc.ConfigureDeliveryChannel(ctx, req.GetUserId(), req.GetChannelType(), req.GetEndpoint())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.ConfigureDeliveryChannelResponse{Config: deliveryChannelToProto(cfg)}, nil
+}
+
+func (h *Handler) GetDeliveryChannel(ctx context.Context, req *pb.GetDeliveryChannelRequest) (*pb.GetDeliveryChannelResponse, error) {
+	cfg, err := h.svc.GetDeliveryChannel(ctx, req.GetUserId(), req.GetChannelType())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.GetDeliveryChannelResponse{Config: deliveryChannelToProto(cfg)}, nil
+}
+
+func (h *Handler) SetTimeoutPolicy(ctx context.Context, req *pb.SetTimeoutPolicyRequest) (*pb.SetTimeoutPolicyResponse, error) {
+	policy, err := h.svc.SetTimeoutPolicy(ctx, req.GetScope(), req.GetScopeId(), req.GetTimeoutSeconds(), req.GetAction(), req.GetEscalationTargets())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.SetTimeoutPolicyResponse{Policy: timeoutPolicyToProto(policy)}, nil
+}
+
+func (h *Handler) GetTimeoutPolicy(ctx context.Context, req *pb.GetTimeoutPolicyRequest) (*pb.GetTimeoutPolicyResponse, error) {
+	policy, err := h.svc.GetTimeoutPolicy(ctx, req.GetScope(), req.GetScopeId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.GetTimeoutPolicyResponse{Policy: timeoutPolicyToProto(policy)}, nil
+}
+
 // --- converters ---
 
 func requestToProto(r *models.HumanRequest) *pb.HumanRequest {
@@ -184,9 +216,38 @@ func protoStatusToModel(s pb.HumanRequestStatus) models.HumanRequestStatus {
 	}
 }
 
+func deliveryChannelToProto(cfg *models.DeliveryChannelConfig) *pb.DeliveryChannelConfig {
+	return &pb.DeliveryChannelConfig{
+		ConfigId:    cfg.ID,
+		UserId:      cfg.UserID,
+		ChannelType: cfg.ChannelType,
+		Endpoint:    cfg.Endpoint,
+		Enabled:     cfg.Enabled,
+		CreatedAt:   timestamppb.New(cfg.CreatedAt),
+		UpdatedAt:   timestamppb.New(cfg.UpdatedAt),
+	}
+}
+
+func timeoutPolicyToProto(p *models.TimeoutPolicy) *pb.TimeoutPolicy {
+	return &pb.TimeoutPolicy{
+		PolicyId:          p.ID,
+		Scope:             p.Scope,
+		ScopeId:           p.ScopeID,
+		TimeoutSeconds:    p.TimeoutSecs,
+		Action:            p.Action,
+		EscalationTargets: p.EscalationTargets,
+		CreatedAt:         timestamppb.New(p.CreatedAt),
+		UpdatedAt:         timestamppb.New(p.UpdatedAt),
+	}
+}
+
 func toGRPCError(err error) error {
 	switch {
 	case errors.Is(err, ErrRequestNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrChannelNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrTimeoutPolicyNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())

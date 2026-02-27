@@ -167,9 +167,43 @@ type Workspace struct {
 	HostID      string
 	HostAddress string
 	SandboxID   string
+	SnapshotID  string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ExpiresAt *time.Time
+}
+
+// WorkspaceSnapshot records metadata for a workspace snapshot.
+type WorkspaceSnapshot struct {
+	ID          string
+	WorkspaceID string
+	AgentID     string
+	TaskID      string
+	SizeBytes   int64
+	CreatedAt   time.Time
+}
+
+// DeliveryChannelConfig stores a user's notification channel preference.
+type DeliveryChannelConfig struct {
+	ID          string
+	UserID      string
+	ChannelType string // slack, email, teams
+	Endpoint    string
+	Enabled     bool
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
+// TimeoutPolicy configures default timeout behavior for human interaction requests.
+type TimeoutPolicy struct {
+	ID                string
+	Scope             string // global, agent, workspace
+	ScopeID           string
+	TimeoutSecs       int64
+	Action            string // escalate, continue, halt
+	EscalationTargets []string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 // HostStatus represents the lifecycle state of a compute host.

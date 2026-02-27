@@ -93,6 +93,19 @@ func (m *mockRepo) DeactivateAgent(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *mockRepo) UpdateTrustLevel(_ context.Context, agentID string, level models.AgentTrustLevel) error {
+	a, ok := m.agents[agentID]
+	if !ok {
+		return ErrAgentNotFound
+	}
+	if a.Status != models.AgentStatusActive {
+		return ErrAgentInactive
+	}
+	a.TrustLevel = level
+	a.UpdatedAt = time.Now()
+	return nil
+}
+
 func (m *mockRepo) CreateCredential(_ context.Context, cred *models.ScopedCredential) error {
 	cred.ID = m.nextUUID()
 	cred.CreatedAt = time.Now()
@@ -337,5 +350,70 @@ func TestRevokeCredential(t *testing.T) {
 	err := svc.RevokeCredential(ctx, cred.ID)
 	if !errors.Is(err, ErrCredentialNotFound) {
 		t.Errorf("expected ErrCredentialNotFound on double-revoke, got: %v", err)
+	}
+}
+
+func TestUpdateTrustLevel_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
+
+	updated, err := svc.UpdateTrustLevel(ctx, agent.ID, models.AgentTrustLevelEstablished, "passed validation checks")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.TrustLevel != models.AgentTrustLevelEstablished {
+		t.Errorf("expected trust_level 'established', got %q", updated.TrustLevel)
+	}
+
+	// Upgrade again to trusted
+	updated, err = svc.UpdateTrustLevel(ctx, agent.ID, models.AgentTrustLevelTrusted, "fully verified")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.TrustLevel != models.AgentTrustLevelTrusted {
+		t.Errorf("expected trust_level 'trusted', got %q", updated.TrustLevel)
+	}
+}
+
+func TestUpdateTrustLevel_InvalidLevel(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
+
+	_, err := svc.UpdateTrustLevel(ctx, agent.ID, "bogus", "no reason")
+	if !errors.Is(err, ErrInvalidTrustLevel) {
+		t.Errorf("expected ErrInvalidTrustLevel, got: %v", err)
+	}
+}
+
+func TestUpdateTrustLevel_AgentNotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.UpdateTrustLevel(context.Background(), "no-such-agent", models.AgentTrustLevelEstablished, "test")
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound, got: %v", err)
+	}
+}
+
+func TestUpdateTrustLevel_DeactivatedAgent(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
+	svc.DeactivateAgent(ctx, agent.ID)
+
+	_, err := svc.UpdateTrustLevel(ctx, agent.ID, models.AgentTrustLevelEstablished, "test")
+	if !errors.Is(err, ErrAgentInactive) {
+		t.Errorf("expected ErrAgentInactive, got: %v", err)
+	}
+}
+
+func TestUpdateTrustLevel_EmptyID(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.UpdateTrustLevel(context.Background(), "", models.AgentTrustLevelEstablished, "test")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput, got: %v", err)
 	}
 }

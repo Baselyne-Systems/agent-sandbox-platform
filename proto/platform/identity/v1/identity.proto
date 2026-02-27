@@ -23,6 +23,9 @@ service IdentityService {
 
   // RevokeCredential immediately invalidates a credential.
   rpc RevokeCredential(RevokeCredentialRequest) returns (RevokeCredentialResponse);
+
+  // UpdateTrustLevel changes an agent's trust level with justification.
+  rpc UpdateTrustLevel(UpdateTrustLevelRequest) returns (UpdateTrustLevelResponse);
 }
 
 // Agent represents an autonomous agent registered in the platform.
@@ -119,3 +122,13 @@ message RevokeCredentialRequest {
 }
 
 message RevokeCredentialResponse {}
+
+message UpdateTrustLevelRequest {
+  string agent_id = 1;
+  AgentTrustLevel trust_level = 2;
+  string justification = 3;
+}
+
+message UpdateTrustLevelResponse {
+  Agent agent = 1;
+}

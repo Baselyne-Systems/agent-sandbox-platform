@@ -13,13 +13,17 @@ import (
 
 // mockRepo is a hand-written in-memory Repository for testing.
 type mockRepo struct {
-	requests map[string]*models.HumanRequest
-	nextID   int
+	requests        map[string]*models.HumanRequest
+	channels        map[string]*models.DeliveryChannelConfig
+	timeoutPolicies map[string]*models.TimeoutPolicy
+	nextID          int
 }
 
 func newMockRepo() *mockRepo {
 	return &mockRepo{
-		requests: make(map[string]*models.HumanRequest),
+		requests:        make(map[string]*models.HumanRequest),
+		channels:        make(map[string]*models.DeliveryChannelConfig),
+		timeoutPolicies: make(map[string]*models.TimeoutPolicy),
 	}
 }
 
@@ -96,6 +100,69 @@ func (m *mockRepo) ListRequests(_ context.Context, workspaceID string, status mo
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+func (m *mockRepo) UpsertDeliveryChannel(_ context.Context, cfg *models.DeliveryChannelConfig) error {
+	key := cfg.UserID + ":" + cfg.ChannelType
+	existing, ok := m.channels[key]
+	if ok {
+		existing.Endpoint = cfg.Endpoint
+		existing.Enabled = cfg.Enabled
+		existing.UpdatedAt = time.Now()
+		cfg.ID = existing.ID
+		cfg.CreatedAt = existing.CreatedAt
+		cfg.UpdatedAt = existing.UpdatedAt
+	} else {
+		cfg.ID = m.nextUUID()
+		cfg.CreatedAt = time.Now()
+		cfg.UpdatedAt = cfg.CreatedAt
+		cp := *cfg
+		m.channels[key] = &cp
+	}
+	return nil
+}
+
+func (m *mockRepo) GetDeliveryChannel(_ context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+	key := userID + ":" + channelType
+	cfg, ok := m.channels[key]
+	if !ok {
+		return nil, nil
+	}
+	cp := *cfg
+	return &cp, nil
+}
+
+func (m *mockRepo) UpsertTimeoutPolicy(_ context.Context, policy *models.TimeoutPolicy) error {
+	key := policy.Scope + ":" + policy.ScopeID
+	existing, ok := m.timeoutPolicies[key]
+	if ok {
+		existing.TimeoutSecs = policy.TimeoutSecs
+		existing.Action = policy.Action
+		existing.EscalationTargets = policy.EscalationTargets
+		existing.UpdatedAt = time.Now()
+		policy.ID = existing.ID
+		policy.CreatedAt = existing.CreatedAt
+		policy.UpdatedAt = existing.UpdatedAt
+	} else {
+		policy.ID = m.nextUUID()
+		policy.CreatedAt = time.Now()
+		policy.UpdatedAt = policy.CreatedAt
+		cp := *policy
+		cp.EscalationTargets = copyOptions(policy.EscalationTargets)
+		m.timeoutPolicies[key] = &cp
+	}
+	return nil
+}
+
+func (m *mockRepo) GetTimeoutPolicy(_ context.Context, scope, scopeID string) (*models.TimeoutPolicy, error) {
+	key := scope + ":" + scopeID
+	policy, ok := m.timeoutPolicies[key]
+	if !ok {
+		return nil, nil
+	}
+	cp := *policy
+	cp.EscalationTargets = copyOptions(policy.EscalationTargets)
+	return &cp, nil
 }
 
 func copyOptions(s []string) []string {
@@ -309,5 +376,146 @@ func TestListRequests_Pagination(t *testing.T) {
 	}
 	if nextToken2 != "" {
 		t.Error("expected no next page token on last page")
+	}
+}
+
+func TestConfigureDeliveryChannel_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	cfg, err := svc.ConfigureDeliveryChannel(ctx, "user-1", "slack", "https://hooks.slack.com/services/T00/B00/xxx")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ID == "" {
+		t.Error("expected config ID")
+	}
+	if cfg.ChannelType != "slack" {
+		t.Errorf("expected channel_type 'slack', got %q", cfg.ChannelType)
+	}
+	if !cfg.Enabled {
+		t.Error("expected enabled to be true")
+	}
+}
+
+func TestConfigureDeliveryChannel_InvalidType(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.ConfigureDeliveryChannel(context.Background(), "user-1", "sms", "1234567890")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for invalid channel type, got: %v", err)
+	}
+}
+
+func TestConfigureDeliveryChannel_Validation(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	if _, err := svc.ConfigureDeliveryChannel(ctx, "", "slack", "ep"); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty user_id, got: %v", err)
+	}
+	if _, err := svc.ConfigureDeliveryChannel(ctx, "u", "", "ep"); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty channel_type, got: %v", err)
+	}
+	if _, err := svc.ConfigureDeliveryChannel(ctx, "u", "slack", ""); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty endpoint, got: %v", err)
+	}
+}
+
+func TestGetDeliveryChannel_Found(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	svc.ConfigureDeliveryChannel(ctx, "user-1", "email", "user@example.com")
+	cfg, err := svc.GetDeliveryChannel(ctx, "user-1", "email")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Endpoint != "user@example.com" {
+		t.Errorf("expected endpoint 'user@example.com', got %q", cfg.Endpoint)
+	}
+}
+
+func TestGetDeliveryChannel_NotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.GetDeliveryChannel(context.Background(), "user-1", "slack")
+	if !errors.Is(err, ErrChannelNotFound) {
+		t.Errorf("expected ErrChannelNotFound, got: %v", err)
+	}
+}
+
+func TestSetTimeoutPolicy_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	policy, err := svc.SetTimeoutPolicy(ctx, "agent", "agent-1", 600, "escalate", []string{"admin@example.com"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy.ID == "" {
+		t.Error("expected policy ID")
+	}
+	if policy.TimeoutSecs != 600 {
+		t.Errorf("expected timeout_secs 600, got %d", policy.TimeoutSecs)
+	}
+	if policy.Action != "escalate" {
+		t.Errorf("expected action 'escalate', got %q", policy.Action)
+	}
+}
+
+func TestSetTimeoutPolicy_Validation(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Invalid scope
+	if _, err := svc.SetTimeoutPolicy(ctx, "invalid", "", 600, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for invalid scope, got: %v", err)
+	}
+	// Invalid action
+	if _, err := svc.SetTimeoutPolicy(ctx, "global", "", 600, "invalid", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for invalid action, got: %v", err)
+	}
+	// Zero timeout
+	if _, err := svc.SetTimeoutPolicy(ctx, "global", "", 0, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for zero timeout, got: %v", err)
+	}
+	// Non-global scope without scope_id
+	if _, err := svc.SetTimeoutPolicy(ctx, "agent", "", 600, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for agent scope without scope_id, got: %v", err)
+	}
+}
+
+func TestSetTimeoutPolicy_GlobalScope(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Global scope allows empty scope_id
+	policy, err := svc.SetTimeoutPolicy(ctx, "global", "", 300, "halt", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy.Scope != "global" {
+		t.Errorf("expected scope 'global', got %q", policy.Scope)
+	}
+}
+
+func TestGetTimeoutPolicy_Found(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	svc.SetTimeoutPolicy(ctx, "workspace", "ws-1", 900, "continue", nil)
+	policy, err := svc.GetTimeoutPolicy(ctx, "workspace", "ws-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if policy.TimeoutSecs != 900 {
+		t.Errorf("expected timeout_secs 900, got %d", policy.TimeoutSecs)
+	}
+}
+
+func TestGetTimeoutPolicy_NotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.GetTimeoutPolicy(context.Background(), "agent", "no-such-id")
+	if !errors.Is(err, ErrTimeoutPolicyNotFound) {
+		t.Errorf("expected ErrTimeoutPolicyNotFound, got: %v", err)
 	}
 }

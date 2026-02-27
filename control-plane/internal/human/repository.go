@@ -16,6 +16,11 @@ type Repository interface {
 	GetRequest(ctx context.Context, id string) (*models.HumanRequest, error)
 	RespondToRequest(ctx context.Context, id, response, responderID string) error
 	ListRequests(ctx context.Context, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error)
+
+	UpsertDeliveryChannel(ctx context.Context, cfg *models.DeliveryChannelConfig) error
+	GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error)
+	UpsertTimeoutPolicy(ctx context.Context, policy *models.TimeoutPolicy) error
+	GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error)
 }
 
 // PostgresRepository implements Repository backed by PostgreSQL.
@@ -171,4 +176,64 @@ func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID strin
 		requests = append(requests, req)
 	}
 	return requests, rows.Err()
+}
+
+func (r *PostgresRepository) UpsertDeliveryChannel(ctx context.Context, cfg *models.DeliveryChannelConfig) error {
+	return r.db.QueryRowContext(ctx,
+		`INSERT INTO delivery_channels (user_id, channel_type, endpoint, enabled)
+		 VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (user_id, channel_type) DO UPDATE SET endpoint = $3, enabled = $4, updated_at = now()
+		 RETURNING id, created_at, updated_at`,
+		cfg.UserID, cfg.ChannelType, cfg.Endpoint, cfg.Enabled,
+	).Scan(&cfg.ID, &cfg.CreatedAt, &cfg.UpdatedAt)
+}
+
+func (r *PostgresRepository) GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+	var cfg models.DeliveryChannelConfig
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, user_id, channel_type, endpoint, enabled, created_at, updated_at
+		 FROM delivery_channels WHERE user_id = $1 AND channel_type = $2`,
+		userID, channelType,
+	).Scan(&cfg.ID, &cfg.UserID, &cfg.ChannelType, &cfg.Endpoint, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (r *PostgresRepository) UpsertTimeoutPolicy(ctx context.Context, policy *models.TimeoutPolicy) error {
+	targetsJSON, err := json.Marshal(policy.EscalationTargets)
+	if err != nil {
+		return fmt.Errorf("marshal escalation_targets: %w", err)
+	}
+	return r.db.QueryRowContext(ctx,
+		`INSERT INTO timeout_policies (scope, scope_id, timeout_secs, action, escalation_targets)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (scope, scope_id) DO UPDATE SET timeout_secs = $3, action = $4, escalation_targets = $5, updated_at = now()
+		 RETURNING id, created_at, updated_at`,
+		policy.Scope, policy.ScopeID, policy.TimeoutSecs, policy.Action, targetsJSON,
+	).Scan(&policy.ID, &policy.CreatedAt, &policy.UpdatedAt)
+}
+
+func (r *PostgresRepository) GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error) {
+	var policy models.TimeoutPolicy
+	var targetsJSON []byte
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, scope, scope_id, timeout_secs, action, escalation_targets, created_at, updated_at
+		 FROM timeout_policies WHERE scope = $1 AND scope_id = $2`,
+		scope, scopeID,
+	).Scan(&policy.ID, &policy.Scope, &policy.ScopeID, &policy.TimeoutSecs, &policy.Action, &targetsJSON, &policy.CreatedAt, &policy.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(targetsJSON, &policy.EscalationTargets); err != nil {
+		return nil, fmt.Errorf("unmarshal escalation_targets: %w", err)
+	}
+	return &policy, nil
 }

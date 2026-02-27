@@ -11,6 +11,18 @@ service HumanInteractionService {
   rpc GetRequest(GetHumanRequestRequest) returns (GetHumanRequestResponse);
   rpc RespondToRequest(RespondToHumanRequestRequest) returns (RespondToHumanRequestResponse);
   rpc ListRequests(ListHumanRequestsRequest) returns (ListHumanRequestsResponse);
+
+  // ConfigureDeliveryChannel sets a user's preferred notification channel.
+  rpc ConfigureDeliveryChannel(ConfigureDeliveryChannelRequest) returns (ConfigureDeliveryChannelResponse);
+
+  // GetDeliveryChannel retrieves a user's delivery channel config.
+  rpc GetDeliveryChannel(GetDeliveryChannelRequest) returns (GetDeliveryChannelResponse);
+
+  // SetTimeoutPolicy configures timeout behavior for a scope.
+  rpc SetTimeoutPolicy(SetTimeoutPolicyRequest) returns (SetTimeoutPolicyResponse);
+
+  // GetTimeoutPolicy retrieves timeout policy for a scope.
+  rpc GetTimeoutPolicy(GetTimeoutPolicyRequest) returns (GetTimeoutPolicyResponse);
 }
 
 message HumanRequest {
@@ -96,4 +108,67 @@ message ListHumanRequestsRequest {
 message ListHumanRequestsResponse {
   repeated HumanRequest requests = 1;
   string next_page_token = 2;
+}
+
+// Delivery channel configuration for a user.
+message DeliveryChannelConfig {
+  string config_id = 1;
+  string user_id = 2;
+  string channel_type = 3;  // slack, email, teams
+  string endpoint = 4;
+  bool enabled = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message ConfigureDeliveryChannelRequest {
+  string user_id = 1;
+  string channel_type = 2;
+  string endpoint = 3;
+}
+
+message ConfigureDeliveryChannelResponse {
+  DeliveryChannelConfig config = 1;
+}
+
+message GetDeliveryChannelRequest {
+  string user_id = 1;
+  string channel_type = 2;
+}
+
+message GetDeliveryChannelResponse {
+  DeliveryChannelConfig config = 1;
+}
+
+// Timeout policy for human interaction requests.
+message TimeoutPolicy {
+  string policy_id = 1;
+  string scope = 2;       // global, agent, workspace
+  string scope_id = 3;
+  int64 timeout_seconds = 4;
+  string action = 5;      // escalate, continue, halt
+  repeated string escalation_targets = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp updated_at = 8;
+}
+
+message SetTimeoutPolicyRequest {
+  string scope = 1;
+  string scope_id = 2;
+  int64 timeout_seconds = 3;
+  string action = 4;
+  repeated string escalation_targets = 5;
+}
+
+message SetTimeoutPolicyResponse {
+  TimeoutPolicy policy = 1;
+}
+
+message GetTimeoutPolicyRequest {
+  string scope = 1;
+  string scope_id = 2;
+}
+
+message GetTimeoutPolicyResponse {
+  TimeoutPolicy policy = 1;
 }

@@ -9,6 +9,7 @@ use anyhow::Result;
 use tonic::transport::Server;
 use tracing::info;
 
+use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::runtime::v1::agent_api_service_server::AgentApiServiceServer;
 use proto_gen::platform::runtime::v1::runtime_service_server::RuntimeServiceServer;
@@ -48,11 +49,24 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Optional Activity Store endpoint for persisting action records.
+    let activity_client = match std::env::var("ACTIVITY_ENDPOINT") {
+        Ok(endpoint) => {
+            info!(endpoint = %endpoint, "connecting to Activity Store");
+            let client = ActivityServiceClient::connect(endpoint).await?;
+            Some(client)
+        }
+        Err(_) => {
+            info!("ACTIVITY_ENDPOINT not set — action records will not be persisted");
+            None
+        }
+    };
+
     let sandbox_manager = SandboxManager::new();
     let tool_interceptor = ToolInterceptor::new();
     let runtime_service = RuntimeServiceImpl::new(sandbox_manager.clone());
     let agent_api_service =
-        AgentApiServiceImpl::new(sandbox_manager, tool_interceptor, his_client);
+        AgentApiServiceImpl::new(sandbox_manager, tool_interceptor, his_client, activity_client);
 
     info!("Runtime starting on :{port}");
 

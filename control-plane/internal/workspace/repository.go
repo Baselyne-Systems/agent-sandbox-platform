@@ -17,6 +17,9 @@ type Repository interface {
 	ListWorkspaces(ctx context.Context, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error)
 	UpdateWorkspaceStatus(ctx context.Context, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error
 	TerminateWorkspace(ctx context.Context, id string, reason string) error
+	SetSnapshotID(ctx context.Context, workspaceID, snapshotID string) error
+	CreateSnapshot(ctx context.Context, snapshot *models.WorkspaceSnapshot) error
+	GetSnapshot(ctx context.Context, snapshotID string) (*models.WorkspaceSnapshot, error)
 }
 
 // PostgresRepository implements Repository using PostgreSQL.
@@ -157,6 +160,47 @@ func (r *PostgresRepository) UpdateWorkspaceStatus(ctx context.Context, id strin
 		return ErrWorkspaceNotFound
 	}
 	return nil
+}
+
+func (r *PostgresRepository) SetSnapshotID(ctx context.Context, workspaceID, snapshotID string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE workspaces SET snapshot_id = $1, updated_at = $2 WHERE id = $3`,
+		snapshotID, time.Now(), workspaceID)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrWorkspaceNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) CreateSnapshot(ctx context.Context, snapshot *models.WorkspaceSnapshot) error {
+	return r.db.QueryRowContext(ctx,
+		`INSERT INTO workspace_snapshots (workspace_id, agent_id, task_id, size_bytes)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, created_at`,
+		snapshot.WorkspaceID, snapshot.AgentID, snapshot.TaskID, snapshot.SizeBytes,
+	).Scan(&snapshot.ID, &snapshot.CreatedAt)
+}
+
+func (r *PostgresRepository) GetSnapshot(ctx context.Context, snapshotID string) (*models.WorkspaceSnapshot, error) {
+	var s models.WorkspaceSnapshot
+	err := r.db.QueryRowContext(ctx,
+		`SELECT id, workspace_id, agent_id, task_id, size_bytes, created_at
+		 FROM workspace_snapshots WHERE id = $1`, snapshotID,
+	).Scan(&s.ID, &s.WorkspaceID, &s.AgentID, &s.TaskID, &s.SizeBytes, &s.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
 
 func (r *PostgresRepository) TerminateWorkspace(ctx context.Context, id string, reason string) error {

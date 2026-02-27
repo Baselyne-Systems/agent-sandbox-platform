@@ -16,6 +16,8 @@ import (
 var (
 	ErrWorkspaceNotFound        = errors.New("workspace not found")
 	ErrWorkspaceAlreadyTerminal = errors.New("workspace is already in a terminal state")
+	ErrWorkspaceNotRunning      = errors.New("workspace is not running")
+	ErrSnapshotNotFound         = errors.New("snapshot not found")
 	ErrInvalidInput             = errors.New("invalid input")
 	ErrPlacementFailed          = errors.New("workspace placement failed")
 	ErrRuntimeUnavailable       = errors.New("runtime unavailable")
@@ -43,12 +45,19 @@ type PolicyCompiler interface {
 // RuntimeDialer creates a gRPC connection to a runtime host and returns a client.
 type RuntimeDialer func(ctx context.Context, address string) (runtimepb.RuntimeServiceClient, error)
 
+// SnapshotStore persists and retrieves workspace snapshots.
+type SnapshotStore interface {
+	SaveSnapshot(ctx context.Context, workspaceID string) (snapshotID string, err error)
+	LoadSnapshot(ctx context.Context, snapshotID string) error
+}
+
 // Service implements workspace business logic with runtime orchestration.
 type Service struct {
 	repo           Repository
 	compute        ComputePlacer
 	guardrails     PolicyCompiler
 	dialRuntime    RuntimeDialer
+	snapshots      SnapshotStore
 	logger         *zap.Logger
 }
 
@@ -60,6 +69,7 @@ type ServiceConfig struct {
 	Compute     ComputePlacer
 	Guardrails  PolicyCompiler
 	DialRuntime RuntimeDialer
+	Snapshots   SnapshotStore
 	Logger      *zap.Logger
 }
 
@@ -73,6 +83,7 @@ func NewService(cfg ServiceConfig) *Service {
 		compute:     cfg.Compute,
 		guardrails:  cfg.Guardrails,
 		dialRuntime: cfg.DialRuntime,
+		snapshots:   cfg.Snapshots,
 		logger:      logger,
 	}
 }
@@ -283,6 +294,116 @@ func (s *Service) TerminateWorkspace(ctx context.Context, id string, reason stri
 	}
 
 	return s.repo.TerminateWorkspace(ctx, id, reason)
+}
+
+func (s *Service) SnapshotWorkspace(ctx context.Context, id string) (*models.WorkspaceSnapshot, error) {
+	if id == "" {
+		return nil, ErrInvalidInput
+	}
+	if s.snapshots == nil {
+		return nil, errors.New("snapshot store not configured")
+	}
+
+	ws, err := s.repo.GetWorkspace(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if ws == nil {
+		return nil, ErrWorkspaceNotFound
+	}
+	if ws.Status != models.WorkspaceStatusRunning {
+		return nil, ErrWorkspaceNotRunning
+	}
+
+	// Save snapshot via snapshot store.
+	snapshotID, err := s.snapshots.SaveSnapshot(ctx, ws.ID)
+	if err != nil {
+		return nil, fmt.Errorf("save snapshot: %w", err)
+	}
+
+	// Destroy the sandbox to free resources (best-effort).
+	if s.dialRuntime != nil && ws.SandboxID != "" && ws.HostAddress != "" {
+		if err := s.destroySandbox(ctx, ws, "snapshot"); err != nil {
+			s.logger.Warn("failed to destroy sandbox during snapshot",
+				zap.String("workspace_id", id),
+				zap.Error(err),
+			)
+		}
+	}
+
+	// Transition workspace to Paused with snapshot reference.
+	if err := s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusPaused, ws.HostID, ws.HostAddress, ""); err != nil {
+		return nil, fmt.Errorf("update workspace status to paused: %w", err)
+	}
+	if err := s.repo.SetSnapshotID(ctx, ws.ID, snapshotID); err != nil {
+		return nil, fmt.Errorf("set snapshot ID: %w", err)
+	}
+
+	snapshot := &models.WorkspaceSnapshot{
+		ID:          snapshotID,
+		WorkspaceID: ws.ID,
+		AgentID:     ws.AgentID,
+		TaskID:      ws.TaskID,
+		CreatedAt:   time.Now(),
+	}
+	if err := s.repo.CreateSnapshot(ctx, snapshot); err != nil {
+		return nil, fmt.Errorf("create snapshot record: %w", err)
+	}
+
+	return snapshot, nil
+}
+
+func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*models.Workspace, error) {
+	if snapshotID == "" {
+		return nil, ErrInvalidInput
+	}
+	if s.snapshots == nil {
+		return nil, errors.New("snapshot store not configured")
+	}
+
+	snapshot, err := s.repo.GetSnapshot(ctx, snapshotID)
+	if err != nil {
+		return nil, err
+	}
+	if snapshot == nil {
+		return nil, ErrSnapshotNotFound
+	}
+
+	ws, err := s.repo.GetWorkspace(ctx, snapshot.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if ws == nil {
+		return nil, ErrWorkspaceNotFound
+	}
+	if ws.Status != models.WorkspaceStatusPaused {
+		return nil, fmt.Errorf("workspace must be paused to restore, current status: %s", ws.Status)
+	}
+
+	// Load snapshot data via snapshot store.
+	if err := s.snapshots.LoadSnapshot(ctx, snapshotID); err != nil {
+		return nil, fmt.Errorf("load snapshot: %w", err)
+	}
+
+	// Re-provision sandbox using existing orchestration pipeline.
+	if s.compute != nil && s.dialRuntime != nil {
+		if err := s.provisionSandbox(ctx, ws); err != nil {
+			s.logger.Error("sandbox re-provisioning failed during restore",
+				zap.String("workspace_id", ws.ID),
+				zap.Error(err),
+			)
+			_ = s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusFailed, ws.HostID, "", "")
+			ws.Status = models.WorkspaceStatusFailed
+			return ws, nil
+		}
+	}
+
+	// Clear snapshot reference.
+	if err := s.repo.SetSnapshotID(ctx, ws.ID, ""); err != nil {
+		return nil, fmt.Errorf("clear snapshot ID: %w", err)
+	}
+
+	return ws, nil
 }
 
 // destroySandbox dials the runtime and destroys the sandbox.

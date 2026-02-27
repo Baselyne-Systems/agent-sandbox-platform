@@ -9,9 +9,11 @@ import (
 )
 
 var (
-	ErrRequestNotFound  = errors.New("request not found")
-	ErrRequestNotPending = errors.New("request is not pending")
-	ErrInvalidInput     = errors.New("invalid input")
+	ErrRequestNotFound       = errors.New("request not found")
+	ErrRequestNotPending     = errors.New("request is not pending")
+	ErrInvalidInput          = errors.New("invalid input")
+	ErrChannelNotFound       = errors.New("delivery channel not found")
+	ErrTimeoutPolicyNotFound = errors.New("timeout policy not found")
 )
 
 const (
@@ -129,6 +131,89 @@ func (s *Service) ListRequests(ctx context.Context, workspaceID string, status m
 	}
 
 	return requests, nextToken, nil
+}
+
+var validChannelTypes = map[string]bool{"slack": true, "email": true, "teams": true}
+var validTimeoutActions = map[string]bool{"escalate": true, "continue": true, "halt": true}
+var validScopes = map[string]bool{"global": true, "agent": true, "workspace": true}
+
+func (s *Service) ConfigureDeliveryChannel(ctx context.Context, userID, channelType, endpoint string) (*models.DeliveryChannelConfig, error) {
+	if userID == "" || channelType == "" || endpoint == "" {
+		return nil, ErrInvalidInput
+	}
+	if !validChannelTypes[channelType] {
+		return nil, ErrInvalidInput
+	}
+	cfg := &models.DeliveryChannelConfig{
+		UserID:      userID,
+		ChannelType: channelType,
+		Endpoint:    endpoint,
+		Enabled:     true,
+	}
+	if err := s.repo.UpsertDeliveryChannel(ctx, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func (s *Service) GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+	if userID == "" || channelType == "" {
+		return nil, ErrInvalidInput
+	}
+	cfg, err := s.repo.GetDeliveryChannel(ctx, userID, channelType)
+	if err != nil {
+		return nil, err
+	}
+	if cfg == nil {
+		return nil, ErrChannelNotFound
+	}
+	return cfg, nil
+}
+
+func (s *Service) SetTimeoutPolicy(ctx context.Context, scope, scopeID string, timeoutSecs int64, action string, escalationTargets []string) (*models.TimeoutPolicy, error) {
+	if scope == "" || action == "" {
+		return nil, ErrInvalidInput
+	}
+	if !validScopes[scope] {
+		return nil, ErrInvalidInput
+	}
+	if !validTimeoutActions[action] {
+		return nil, ErrInvalidInput
+	}
+	if timeoutSecs <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if scope != "global" && scopeID == "" {
+		return nil, ErrInvalidInput
+	}
+	if escalationTargets == nil {
+		escalationTargets = []string{}
+	}
+	policy := &models.TimeoutPolicy{
+		Scope:             scope,
+		ScopeID:           scopeID,
+		TimeoutSecs:       timeoutSecs,
+		Action:            action,
+		EscalationTargets: escalationTargets,
+	}
+	if err := s.repo.UpsertTimeoutPolicy(ctx, policy); err != nil {
+		return nil, err
+	}
+	return policy, nil
+}
+
+func (s *Service) GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error) {
+	if scope == "" {
+		return nil, ErrInvalidInput
+	}
+	policy, err := s.repo.GetTimeoutPolicy(ctx, scope, scopeID)
+	if err != nil {
+		return nil, err
+	}
+	if policy == nil {
+		return nil, ErrTimeoutPolicyNotFound
+	}
+	return policy, nil
 }
 
 func encodePageToken(id string) string {

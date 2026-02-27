@@ -103,6 +103,40 @@ func (m *mockRepo) UpdateWorkspaceStatus(_ context.Context, id string, status mo
 	return nil
 }
 
+func (m *mockRepo) SetSnapshotID(_ context.Context, workspaceID, snapshotID string) error {
+	ws, ok := m.workspaces[workspaceID]
+	if !ok {
+		return ErrWorkspaceNotFound
+	}
+	ws.SnapshotID = snapshotID
+	ws.UpdatedAt = time.Now()
+	return nil
+}
+
+func (m *mockRepo) CreateSnapshot(_ context.Context, snapshot *models.WorkspaceSnapshot) error {
+	if snapshot.ID == "" {
+		snapshot.ID = m.nextUUID()
+	}
+	snapshot.CreatedAt = time.Now()
+	return nil
+}
+
+func (m *mockRepo) GetSnapshot(_ context.Context, snapshotID string) (*models.WorkspaceSnapshot, error) {
+	// Look through workspaces to find one with matching snapshot ID.
+	for _, ws := range m.workspaces {
+		if ws.SnapshotID == snapshotID {
+			return &models.WorkspaceSnapshot{
+				ID:          snapshotID,
+				WorkspaceID: ws.ID,
+				AgentID:     ws.AgentID,
+				TaskID:      ws.TaskID,
+				CreatedAt:   time.Now(),
+			}, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *mockRepo) TerminateWorkspace(_ context.Context, id string, reason string) error {
 	ws, ok := m.workspaces[id]
 	if !ok {
@@ -559,5 +593,140 @@ func TestTerminateWorkspace_WithSandboxTeardown(t *testing.T) {
 	}
 	if runtimeClient.destroyCalls != 1 {
 		t.Errorf("expected 1 destroy call, got %d", runtimeClient.destroyCalls)
+	}
+}
+
+// --- Snapshot/Restore tests ---
+
+type mockSnapshotStore struct {
+	saveCalls    int
+	loadCalls    int
+	saveErr      error
+	loadErr      error
+	returnSnapID string
+}
+
+func (m *mockSnapshotStore) SaveSnapshot(_ context.Context, _ string) (string, error) {
+	m.saveCalls++
+	if m.saveErr != nil {
+		return "", m.saveErr
+	}
+	return m.returnSnapID, nil
+}
+
+func (m *mockSnapshotStore) LoadSnapshot(_ context.Context, _ string) error {
+	m.loadCalls++
+	return m.loadErr
+}
+
+func newSnapshotService(repo Repository, compute ComputePlacer, runtimeClient *mockRuntimeServiceClient, snapshots SnapshotStore) *Service {
+	dialer := func(_ context.Context, _ string) (runtimepb.RuntimeServiceClient, error) {
+		return runtimeClient, nil
+	}
+	return NewService(ServiceConfig{
+		Repo:        repo,
+		Compute:     compute,
+		DialRuntime: dialer,
+		Snapshots:   snapshots,
+	})
+}
+
+func TestSnapshotWorkspace_Success(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
+	runtimeClient := &mockRuntimeServiceClient{
+		createResp:  &runtimepb.CreateSandboxResponse{SandboxId: "sb-1", AgentApiEndpoint: "localhost:50052"},
+		destroyResp: &runtimepb.DestroySandboxResponse{},
+	}
+	snapStore := &mockSnapshotStore{returnSnapID: "snap-123"}
+	svc := newSnapshotService(repo, compute, runtimeClient, snapStore)
+	ctx := context.Background()
+
+	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	if ws.Status != models.WorkspaceStatusRunning {
+		t.Fatalf("expected running, got %q", ws.Status)
+	}
+
+	snapshot, err := svc.SnapshotWorkspace(ctx, ws.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if snapshot.ID == "" {
+		t.Error("expected snapshot ID")
+	}
+	if snapshot.WorkspaceID != ws.ID {
+		t.Errorf("expected workspace_id %q, got %q", ws.ID, snapshot.WorkspaceID)
+	}
+	if snapStore.saveCalls != 1 {
+		t.Errorf("expected 1 save call, got %d", snapStore.saveCalls)
+	}
+
+	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	if got.Status != models.WorkspaceStatusPaused {
+		t.Errorf("expected paused after snapshot, got %q", got.Status)
+	}
+}
+
+func TestSnapshotWorkspace_NotRunning(t *testing.T) {
+	svc := NewService(ServiceConfig{
+		Repo:      newMockRepo(),
+		Snapshots: &mockSnapshotStore{returnSnapID: "snap-1"},
+	})
+	ctx := context.Background()
+
+	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	// ws is in Pending state (no orchestration)
+
+	_, err := svc.SnapshotWorkspace(ctx, ws.ID)
+	if !errors.Is(err, ErrWorkspaceNotRunning) {
+		t.Errorf("expected ErrWorkspaceNotRunning, got: %v", err)
+	}
+}
+
+func TestSnapshotWorkspace_NoSnapshotStore(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	ctx := context.Background()
+
+	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	_, err := svc.SnapshotWorkspace(ctx, ws.ID)
+	if err == nil {
+		t.Error("expected error when snapshot store not configured")
+	}
+}
+
+func TestRestoreWorkspace_Success(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
+	runtimeClient := &mockRuntimeServiceClient{
+		createResp:  &runtimepb.CreateSandboxResponse{SandboxId: "sb-2", AgentApiEndpoint: "localhost:50052"},
+		destroyResp: &runtimepb.DestroySandboxResponse{},
+	}
+	snapStore := &mockSnapshotStore{returnSnapID: "snap-456"}
+	svc := newSnapshotService(repo, compute, runtimeClient, snapStore)
+	ctx := context.Background()
+
+	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	snapshot, _ := svc.SnapshotWorkspace(ctx, ws.ID)
+
+	restored, err := svc.RestoreWorkspace(ctx, snapshot.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if restored.Status != models.WorkspaceStatusRunning {
+		t.Errorf("expected running after restore, got %q", restored.Status)
+	}
+	if snapStore.loadCalls != 1 {
+		t.Errorf("expected 1 load call, got %d", snapStore.loadCalls)
+	}
+}
+
+func TestRestoreWorkspace_SnapshotNotFound(t *testing.T) {
+	svc := NewService(ServiceConfig{
+		Repo:      newMockRepo(),
+		Snapshots: &mockSnapshotStore{},
+	})
+	_, err := svc.RestoreWorkspace(context.Background(), "nonexistent")
+	if !errors.Is(err, ErrSnapshotNotFound) {
+		t.Errorf("expected ErrSnapshotNotFound, got: %v", err)
 	}
 }

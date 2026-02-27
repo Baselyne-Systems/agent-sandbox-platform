@@ -336,3 +336,130 @@ func TestCompilePolicy_NotFoundRule(t *testing.T) {
 		t.Errorf("expected ErrRuleNotFound for nonexistent rule, got: %v", err)
 	}
 }
+
+func TestSimulatePolicy_ToolFilterMatch(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil)
+
+	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "exec", nil, "agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != "deny" {
+		t.Errorf("expected verdict 'deny', got %q", result.Verdict)
+	}
+	if result.MatchedRuleID != rule.ID {
+		t.Errorf("expected matched rule ID %q, got %q", rule.ID, result.MatchedRuleID)
+	}
+	if result.MatchedRuleName != "deny-exec" {
+		t.Errorf("expected matched rule name 'deny-exec', got %q", result.MatchedRuleName)
+	}
+}
+
+func TestSimulatePolicy_ToolFilterNoMatch(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil)
+
+	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "read_file", nil, "agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != "allow" {
+		t.Errorf("expected verdict 'allow', got %q", result.Verdict)
+	}
+	if result.MatchedRuleID != "" {
+		t.Errorf("expected no matched rule ID, got %q", result.MatchedRuleID)
+	}
+}
+
+func TestSimulatePolicy_ParameterCheckMatch(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	rule, _ := svc.CreateRule(ctx, "block-shadow", "Block /etc/shadow", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil)
+
+	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "read_file", map[string]string{"path": "/etc/shadow"}, "agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != "deny" {
+		t.Errorf("expected verdict 'deny', got %q", result.Verdict)
+	}
+	if result.MatchedRuleID != rule.ID {
+		t.Errorf("expected matched rule ID %q, got %q", rule.ID, result.MatchedRuleID)
+	}
+}
+
+func TestSimulatePolicy_PriorityOrdering(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Lower priority number = higher precedence
+	allowRule, _ := svc.CreateRule(ctx, "allow-read", "Allow reads", models.RuleTypeToolFilter, "read_file", models.RuleActionAllow, 1, nil)
+	svc.CreateRule(ctx, "deny-read", "Deny reads", models.RuleTypeToolFilter, "read_file", models.RuleActionDeny, 10, nil)
+
+	result, err := svc.SimulatePolicy(ctx, []string{allowRule.ID}, "read_file", nil, "agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != "allow" {
+		t.Errorf("expected verdict 'allow' (higher priority), got %q", result.Verdict)
+	}
+}
+
+func TestSimulatePolicy_DisabledRulesSkipped(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 10, nil)
+
+	// Disable the rule
+	rule.Enabled = false
+	svc.UpdateRule(ctx, rule)
+
+	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "exec", nil, "agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != "allow" {
+		t.Errorf("expected verdict 'allow' (disabled rule), got %q", result.Verdict)
+	}
+}
+
+func TestSimulatePolicy_EscalateVerdict(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	rule, _ := svc.CreateRule(ctx, "escalate-deploy", "Escalate deployments", models.RuleTypeToolFilter, "deploy", models.RuleActionEscalate, 5, nil)
+
+	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "deploy", nil, "agent-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Verdict != "escalate" {
+		t.Errorf("expected verdict 'escalate', got %q", result.Verdict)
+	}
+}
+
+func TestSimulatePolicy_EmptyRules(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.SimulatePolicy(context.Background(), nil, "exec", nil, "agent-1")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput, got: %v", err)
+	}
+}
+
+func TestSimulatePolicy_EmptyToolName(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 0, nil)
+	_, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "", nil, "agent-1")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput, got: %v", err)
+	}
+}

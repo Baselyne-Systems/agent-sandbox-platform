@@ -13,6 +13,7 @@ var (
 	ErrCredentialNotFound = errors.New("credential not found")
 	ErrInvalidInput       = errors.New("invalid input")
 	ErrAgentInactive      = errors.New("agent is not active")
+	ErrInvalidTrustLevel  = errors.New("invalid trust level")
 )
 
 const (
@@ -149,6 +150,24 @@ func (s *Service) MintCredential(ctx context.Context, agentID string, scopes []s
 	}
 
 	return cred, rawToken, nil
+}
+
+func (s *Service) UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel, justification string) (*models.Agent, error) {
+	if agentID == "" {
+		return nil, ErrInvalidInput
+	}
+	switch level {
+	case models.AgentTrustLevelNew, models.AgentTrustLevelEstablished, models.AgentTrustLevelTrusted:
+		// valid
+	default:
+		return nil, ErrInvalidTrustLevel
+	}
+
+	if err := s.repo.UpdateTrustLevel(ctx, agentID, level); err != nil {
+		return nil, err
+	}
+
+	return s.GetAgent(ctx, agentID)
 }
 
 func (s *Service) RevokeCredential(ctx context.Context, credentialID string) error {
