@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 // Repository defines persistence operations for guardrail rules.

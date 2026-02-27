@@ -192,6 +192,9 @@ impl AgentApiService for AgentApiServiceImpl {
             options: req.options,
             context: req.context,
             timeout_seconds,
+            r#type: 0,   // UNSPECIFIED — HIS defaults to "question"
+            urgency: 0,  // UNSPECIFIED — HIS defaults to "normal"
+            task_id: String::new(),
         };
 
         let create_resp = {

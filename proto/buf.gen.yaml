@@ -3,7 +3,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package_prefix
-      value: github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen
+      value: github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen
 plugins:
   # Go
   - remote: buf.build/protocolbuffers/go

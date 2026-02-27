@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
-	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/human/v1"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/human/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -29,6 +29,9 @@ func (h *Handler) CreateRequest(ctx context.Context, req *pb.CreateHumanRequestR
 		req.GetOptions(),
 		req.GetContext(),
 		req.GetTimeoutSeconds(),
+		protoRequestTypeToModel(req.GetType()),
+		protoUrgencyToModel(req.GetUrgency()),
+		req.GetTaskId(),
 	)
 	if err != nil {
 		return nil, toGRPCError(err)
@@ -82,6 +85,9 @@ func requestToProto(r *models.HumanRequest) *pb.HumanRequest {
 		Response:    r.Response,
 		ResponderId: r.ResponderID,
 		CreatedAt:   timestamppb.New(r.CreatedAt),
+		Type:        modelRequestTypeToProto(r.Type),
+		Urgency:     modelUrgencyToProto(r.Urgency),
+		TaskId:      r.TaskID,
 	}
 	if r.RespondedAt != nil {
 		p.RespondedAt = timestamppb.New(*r.RespondedAt)
@@ -90,6 +96,62 @@ func requestToProto(r *models.HumanRequest) *pb.HumanRequest {
 		p.ExpiresAt = timestamppb.New(*r.ExpiresAt)
 	}
 	return p
+}
+
+func modelRequestTypeToProto(t models.HumanRequestType) pb.HumanRequestType {
+	switch t {
+	case models.HumanRequestTypeApproval:
+		return pb.HumanRequestType_HUMAN_REQUEST_TYPE_APPROVAL
+	case models.HumanRequestTypeQuestion:
+		return pb.HumanRequestType_HUMAN_REQUEST_TYPE_QUESTION
+	case models.HumanRequestTypeEscalation:
+		return pb.HumanRequestType_HUMAN_REQUEST_TYPE_ESCALATION
+	default:
+		return pb.HumanRequestType_HUMAN_REQUEST_TYPE_UNSPECIFIED
+	}
+}
+
+func protoRequestTypeToModel(t pb.HumanRequestType) models.HumanRequestType {
+	switch t {
+	case pb.HumanRequestType_HUMAN_REQUEST_TYPE_APPROVAL:
+		return models.HumanRequestTypeApproval
+	case pb.HumanRequestType_HUMAN_REQUEST_TYPE_QUESTION:
+		return models.HumanRequestTypeQuestion
+	case pb.HumanRequestType_HUMAN_REQUEST_TYPE_ESCALATION:
+		return models.HumanRequestTypeEscalation
+	default:
+		return ""
+	}
+}
+
+func modelUrgencyToProto(u models.HumanRequestUrgency) pb.HumanRequestUrgency {
+	switch u {
+	case models.HumanRequestUrgencyLow:
+		return pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_LOW
+	case models.HumanRequestUrgencyNormal:
+		return pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_NORMAL
+	case models.HumanRequestUrgencyHigh:
+		return pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_HIGH
+	case models.HumanRequestUrgencyCritical:
+		return pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_CRITICAL
+	default:
+		return pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_UNSPECIFIED
+	}
+}
+
+func protoUrgencyToModel(u pb.HumanRequestUrgency) models.HumanRequestUrgency {
+	switch u {
+	case pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_LOW:
+		return models.HumanRequestUrgencyLow
+	case pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_NORMAL:
+		return models.HumanRequestUrgencyNormal
+	case pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_HIGH:
+		return models.HumanRequestUrgencyHigh
+	case pb.HumanRequestUrgency_HUMAN_REQUEST_URGENCY_CRITICAL:
+		return models.HumanRequestUrgencyCritical
+	default:
+		return ""
+	}
 }
 
 func modelStatusToProto(s models.HumanRequestStatus) pb.HumanRequestStatus {

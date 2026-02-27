@@ -28,7 +28,7 @@ func BenchmarkRegisterAgent(b *testing.B) {
 	labels := map[string]string{"env": "prod", "team": "platform"}
 
 	for b.Loop() {
-		_, err := svc.RegisterAgent(ctx, "bench-agent", "benchmark", "owner-1", labels)
+		_, err := svc.RegisterAgent(ctx, "bench-agent", "benchmark", "owner-1", labels, "", "", nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -40,7 +40,7 @@ func BenchmarkGetAgent(b *testing.B) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "bench-agent", "", "owner-1", nil)
+	agent, _ := svc.RegisterAgent(ctx, "bench-agent", "", "owner-1", nil, "", "", nil)
 
 	for b.Loop() {
 		_, err := svc.GetAgent(ctx, agent.ID)
@@ -55,7 +55,7 @@ func BenchmarkMintCredential(b *testing.B) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "bench-agent", "", "owner-1", nil)
+	agent, _ := svc.RegisterAgent(ctx, "bench-agent", "", "owner-1", nil, "", "", nil)
 	scopes := []string{"read", "write", "admin"}
 
 	for b.Loop() {
@@ -74,7 +74,7 @@ func BenchmarkListAgents_Scaling(b *testing.B) {
 			ctx := context.Background()
 
 			for i := 0; i < n; i++ {
-				svc.RegisterAgent(ctx, fmt.Sprintf("agent-%d", i), "", "owner-1", nil)
+				svc.RegisterAgent(ctx, fmt.Sprintf("agent-%d", i), "", "owner-1", nil, "", "", nil)
 			}
 
 			b.ResetTimer()
@@ -95,7 +95,7 @@ func BenchmarkDeactivateAgent(b *testing.B) {
 		b.StopTimer()
 		repo := newMockRepo()
 		svc := NewService(repo)
-		agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil)
+		agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
 		for j := 0; j < 10; j++ {
 			svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
 		}

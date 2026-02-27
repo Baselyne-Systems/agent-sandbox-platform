@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 // mockRepo is a hand-written in-memory Repository for testing.

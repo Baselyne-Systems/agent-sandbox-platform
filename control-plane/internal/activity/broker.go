@@ -3,7 +3,7 @@ package activity
 import (
 	"sync"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 const subscriberBufferSize = 256

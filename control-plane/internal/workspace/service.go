@@ -9,8 +9,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
-	runtimepb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/runtime/v1"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	runtimepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/runtime/v1"
 )
 
 var (

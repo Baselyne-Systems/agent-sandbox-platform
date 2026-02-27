@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package platform.task.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// TaskService manages the lifecycle of agent tasks — the fundamental unit
+// of work in the platform. A task is a goal an agent pursues autonomously.
+service TaskService {
+  // CreateTask creates a new task for an agent, provisioning a workspace.
+  rpc CreateTask(CreateTaskRequest) returns (CreateTaskResponse);
+
+  // GetTask retrieves task details by ID.
+  rpc GetTask(GetTaskRequest) returns (GetTaskResponse);
+
+  // ListTasks returns tasks matching the given filter.
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+  // UpdateTaskStatus transitions a task to a new status.
+  rpc UpdateTaskStatus(UpdateTaskStatusRequest) returns (UpdateTaskStatusResponse);
+
+  // CancelTask cancels a running or pending task.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+}
+
+// Task represents a goal an agent pursues autonomously.
+message Task {
+  string task_id = 1;
+  string agent_id = 2;
+  string goal = 3;
+  TaskStatus status = 4;
+  string workspace_id = 5;
+
+  // Workspace configuration
+  TaskWorkspaceConfig workspace_config = 6;
+
+  // Guardrails
+  string guardrail_policy_id = 7;
+
+  // Human interaction
+  HumanInteractionConfig human_interaction = 8;
+
+  // Budget
+  BudgetConfig budget = 9;
+
+  // Autonomy
+  int64 max_duration_without_checkin_secs = 10;
+
+  // Metadata
+  map<string, string> input = 11;
+  map<string, string> labels = 12;
+
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+  google.protobuf.Timestamp completed_at = 15;
+}
+
+enum TaskStatus {
+  TASK_STATUS_UNSPECIFIED = 0;
+  TASK_STATUS_PENDING = 1;
+  TASK_STATUS_RUNNING = 2;
+  TASK_STATUS_WAITING_ON_HUMAN = 3;
+  TASK_STATUS_COMPLETED = 4;
+  TASK_STATUS_FAILED = 5;
+  TASK_STATUS_CANCELLED = 6;
+}
+
+// TaskWorkspaceConfig defines workspace requirements for the task.
+message TaskWorkspaceConfig {
+  string isolation_tier = 1;    // "wasm", "container", "microvm" (auto-selected if empty)
+  bool persistent = 2;
+  int64 memory_mb = 3;
+  int32 cpu_millicores = 4;
+  int64 disk_mb = 5;
+  int64 max_duration_secs = 6;
+  repeated string allowed_tools = 7;
+  map<string, string> env_vars = 8;
+}
+
+// HumanInteractionConfig defines how the task interacts with humans.
+message HumanInteractionConfig {
+  repeated string escalation_targets = 1;
+  repeated string approval_targets = 2;
+  int64 timeout_secs = 3;
+  string timeout_action = 4;   // "escalate", "continue", "halt"
+}
+
+// BudgetConfig defines cost constraints for the task.
+message BudgetConfig {
+  double max_cost = 1;
+  double warning_threshold = 2;
+  string on_exceeded = 3;      // "halt", "request_increase"
+  string currency = 4;
+}
+
+message CreateTaskRequest {
+  string agent_id = 1;
+  string goal = 2;
+  TaskWorkspaceConfig workspace_config = 3;
+  string guardrail_policy_id = 4;
+  HumanInteractionConfig human_interaction = 5;
+  BudgetConfig budget = 6;
+  int64 max_duration_without_checkin_secs = 7;
+  map<string, string> input = 8;
+  map<string, string> labels = 9;
+}
+
+message CreateTaskResponse {
+  Task task = 1;
+}
+
+message GetTaskRequest {
+  string task_id = 1;
+}
+
+message GetTaskResponse {
+  Task task = 1;
+}
+
+message ListTasksRequest {
+  string agent_id = 1;
+  TaskStatus status = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+  string next_page_token = 2;
+}
+
+message UpdateTaskStatusRequest {
+  string task_id = 1;
+  TaskStatus status = 2;
+  string reason = 3;
+}
+
+message UpdateTaskStatusResponse {
+  Task task = 1;
+}
+
+message CancelTaskRequest {
+  string task_id = 1;
+  string reason = 2;
+}
+
+message CancelTaskResponse {}

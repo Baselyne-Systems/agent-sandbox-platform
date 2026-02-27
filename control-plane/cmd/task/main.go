@@ -8,11 +8,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/activity"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/config"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/database"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
-	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/activity/v1"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/task"
+	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/task/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -33,9 +33,9 @@ func main() {
 	}
 	defer db.Close()
 
-	repo := activity.NewPostgresRepository(db)
-	svc := activity.NewService(repo)
-	handler := activity.NewHandler(svc)
+	repo := task.NewPostgresRepository(db)
+	svc := task.NewService(repo)
+	handler := task.NewHandler(svc)
 
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cfg.GRPCPort))
 	if err != nil {
@@ -45,10 +45,10 @@ func main() {
 	srv := grpc.NewServer(
 		grpc.UnaryInterceptor(middleware.UnaryLoggingInterceptor(logger)),
 	)
-	pb.RegisterActivityServiceServer(srv, handler)
+	pb.RegisterTaskServiceServer(srv, handler)
 	reflection.Register(srv)
 
-	logger.Info("Activity Store Service starting", zap.String("port", cfg.GRPCPort))
+	logger.Info("Task Service starting", zap.String("port", cfg.GRPCPort))
 
 	go func() {
 		if err := srv.Serve(lis); err != nil {
@@ -60,7 +60,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("shutting down Activity Store Service")
+	logger.Info("shutting down Task Service")
 	srv.GracefulStop()
 }
 

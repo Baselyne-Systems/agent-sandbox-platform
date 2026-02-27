@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/testutil"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/testutil"
 )
 
 var testDB *testutil.TestDB

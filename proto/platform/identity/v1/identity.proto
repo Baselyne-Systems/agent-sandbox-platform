@@ -35,6 +35,9 @@ message Agent {
   map<string, string> labels = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  string purpose = 9;                      // what this agent does — input to guardrail scoping
+  AgentTrustLevel trust_level = 10;        // trust level affects guardrail strictness and isolation tier
+  repeated string capabilities = 11;      // tools/systems this agent can use
 }
 
 enum AgentStatus {
@@ -42,6 +45,13 @@ enum AgentStatus {
   AGENT_STATUS_ACTIVE = 1;
   AGENT_STATUS_INACTIVE = 2;
   AGENT_STATUS_SUSPENDED = 3;
+}
+
+enum AgentTrustLevel {
+  AGENT_TRUST_LEVEL_UNSPECIFIED = 0;
+  AGENT_TRUST_LEVEL_NEW = 1;
+  AGENT_TRUST_LEVEL_ESTABLISHED = 2;
+  AGENT_TRUST_LEVEL_TRUSTED = 3;
 }
 
 // ScopedCredential is a time-limited credential with explicit permission scopes.
@@ -58,6 +68,9 @@ message RegisterAgentRequest {
   string description = 2;
   string owner_id = 3;
   map<string, string> labels = 4;
+  string purpose = 5;
+  AgentTrustLevel trust_level = 6;
+  repeated string capabilities = 7;
 }
 
 message RegisterAgentResponse {

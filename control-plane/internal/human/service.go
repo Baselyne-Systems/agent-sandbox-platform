@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 var (
@@ -29,7 +29,7 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, question string, options []string, requestContext string, timeoutSeconds int64) (*models.HumanRequest, error) {
+func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, question string, options []string, requestContext string, timeoutSeconds int64, requestType models.HumanRequestType, urgency models.HumanRequestUrgency, taskID string) (*models.HumanRequest, error) {
 	if workspaceID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -45,6 +45,12 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, quest
 	if timeoutSeconds <= 0 {
 		timeoutSeconds = defaultTimeoutSecs
 	}
+	if requestType == "" {
+		requestType = models.HumanRequestTypeQuestion
+	}
+	if urgency == "" {
+		urgency = models.HumanRequestUrgencyNormal
+	}
 
 	expiresAt := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 	req := &models.HumanRequest{
@@ -55,6 +61,9 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, quest
 		Context:     requestContext,
 		Status:      models.HumanRequestStatusPending,
 		ExpiresAt:   &expiresAt,
+		Type:        requestType,
+		Urgency:     urgency,
+		TaskID:      taskID,
 	}
 	if err := s.repo.CreateRequest(ctx, req); err != nil {
 		return nil, err

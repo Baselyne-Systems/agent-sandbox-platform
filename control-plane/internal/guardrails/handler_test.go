@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
-	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/guardrails/v1"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/guardrails/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

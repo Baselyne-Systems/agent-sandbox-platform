@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/economics/v1"
+	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/economics/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

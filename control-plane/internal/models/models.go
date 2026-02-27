@@ -14,16 +14,28 @@ const (
 	AgentStatusSuspended AgentStatus = "suspended"
 )
 
+// AgentTrustLevel represents the level of trust assigned to an agent.
+type AgentTrustLevel string
+
+const (
+	AgentTrustLevelNew         AgentTrustLevel = "new"
+	AgentTrustLevelEstablished AgentTrustLevel = "established"
+	AgentTrustLevelTrusted     AgentTrustLevel = "trusted"
+)
+
 // Agent represents an autonomous agent registered in the platform.
 type Agent struct {
-	ID          string
-	Name        string
-	Description string
-	OwnerID     string
-	Status      AgentStatus
-	Labels      map[string]string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID           string
+	Name         string
+	Description  string
+	OwnerID      string
+	Status       AgentStatus
+	Labels       map[string]string
+	Purpose      string           // what this agent does — input to guardrail scoping
+	TrustLevel   AgentTrustLevel  // affects guardrail strictness and isolation tier
+	Capabilities []string         // tools/systems this agent can use
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ScopedCredential is a time-limited credential with explicit permission scopes.
@@ -197,18 +209,99 @@ const (
 	HumanRequestStatusCancelled HumanRequestStatus = "cancelled"
 )
 
+// HumanRequestType classifies the kind of human interaction.
+type HumanRequestType string
+
+const (
+	HumanRequestTypeApproval   HumanRequestType = "approval"
+	HumanRequestTypeQuestion   HumanRequestType = "question"
+	HumanRequestTypeEscalation HumanRequestType = "escalation"
+)
+
+// HumanRequestUrgency indicates how quickly a response is needed.
+type HumanRequestUrgency string
+
+const (
+	HumanRequestUrgencyLow      HumanRequestUrgency = "low"
+	HumanRequestUrgencyNormal   HumanRequestUrgency = "normal"
+	HumanRequestUrgencyHigh     HumanRequestUrgency = "high"
+	HumanRequestUrgencyCritical HumanRequestUrgency = "critical"
+)
+
 // HumanRequest represents an agent's request for human input.
 type HumanRequest struct {
 	ID          string
 	WorkspaceID string
 	AgentID     string
+	TaskID      string
 	Question    string
 	Options     []string
 	Context     string
+	Type        HumanRequestType
+	Urgency     HumanRequestUrgency
 	Status      HumanRequestStatus
 	Response    string
 	ResponderID string
 	CreatedAt   time.Time
 	RespondedAt *time.Time
 	ExpiresAt   *time.Time
+}
+
+// TaskStatus represents the lifecycle state of a task.
+type TaskStatus string
+
+const (
+	TaskStatusPending        TaskStatus = "pending"
+	TaskStatusRunning        TaskStatus = "running"
+	TaskStatusWaitingOnHuman TaskStatus = "waiting_on_human"
+	TaskStatusCompleted      TaskStatus = "completed"
+	TaskStatusFailed         TaskStatus = "failed"
+	TaskStatusCancelled      TaskStatus = "cancelled"
+)
+
+// TaskWorkspaceConfig defines workspace requirements for a task.
+type TaskWorkspaceConfig struct {
+	IsolationTier string            `json:"isolation_tier,omitempty"`
+	Persistent    bool              `json:"persistent,omitempty"`
+	MemoryMb      int64             `json:"memory_mb,omitempty"`
+	CpuMillicores int32            `json:"cpu_millicores,omitempty"`
+	DiskMb        int64             `json:"disk_mb,omitempty"`
+	MaxDurationSecs int64          `json:"max_duration_secs,omitempty"`
+	AllowedTools  []string          `json:"allowed_tools,omitempty"`
+	EnvVars       map[string]string `json:"env_vars,omitempty"`
+}
+
+// TaskHumanInteractionConfig defines how a task interacts with humans.
+type TaskHumanInteractionConfig struct {
+	EscalationTargets []string `json:"escalation_targets,omitempty"`
+	ApprovalTargets   []string `json:"approval_targets,omitempty"`
+	TimeoutSecs       int64    `json:"timeout_secs,omitempty"`
+	TimeoutAction     string   `json:"timeout_action,omitempty"` // escalate, continue, halt
+}
+
+// TaskBudgetConfig defines cost constraints for a task.
+type TaskBudgetConfig struct {
+	MaxCost          float64 `json:"max_cost,omitempty"`
+	WarningThreshold float64 `json:"warning_threshold,omitempty"`
+	OnExceeded       string  `json:"on_exceeded,omitempty"` // halt, request_increase
+	Currency         string  `json:"currency,omitempty"`
+}
+
+// Task represents a goal an agent pursues autonomously.
+type Task struct {
+	ID                          string
+	AgentID                     string
+	Goal                        string
+	Status                      TaskStatus
+	WorkspaceID                 string
+	GuardrailPolicyID           string
+	WorkspaceConfig             TaskWorkspaceConfig
+	HumanInteractionConfig      TaskHumanInteractionConfig
+	BudgetConfig                TaskBudgetConfig
+	MaxDurationWithoutCheckinSecs int64
+	Input                       map[string]string
+	Labels                      map[string]string
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
+	CompletedAt                 *time.Time
 }

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 // Repository defines persistence operations for agent identities and credentials.
@@ -34,21 +34,27 @@ func (r *PostgresRepository) CreateAgent(ctx context.Context, agent *models.Agen
 	if err != nil {
 		return fmt.Errorf("marshal labels: %w", err)
 	}
+	capsJSON, err := json.Marshal(agent.Capabilities)
+	if err != nil {
+		return fmt.Errorf("marshal capabilities: %w", err)
+	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO agents (name, description, owner_id, status, labels)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO agents (name, description, owner_id, status, labels, purpose, trust_level, capabilities)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id, created_at, updated_at`,
 		agent.Name, agent.Description, agent.OwnerID, agent.Status, labelsJSON,
+		agent.Purpose, string(agent.TrustLevel), capsJSON,
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
 func (r *PostgresRepository) GetAgent(ctx context.Context, id string) (*models.Agent, error) {
 	var a models.Agent
-	var labelsJSON []byte
+	var labelsJSON, capsJSON []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, description, owner_id, status, labels, created_at, updated_at
+		`SELECT id, name, description, owner_id, status, labels, purpose, trust_level, capabilities, created_at, updated_at
 		 FROM agents WHERE id = $1`, id,
-	).Scan(&a.ID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON, &a.CreatedAt, &a.UpdatedAt)
+	).Scan(&a.ID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON,
+		&a.Purpose, &a.TrustLevel, &capsJSON, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -58,11 +64,14 @@ func (r *PostgresRepository) GetAgent(ctx context.Context, id string) (*models.A
 	if err := json.Unmarshal(labelsJSON, &a.Labels); err != nil {
 		return nil, fmt.Errorf("unmarshal labels: %w", err)
 	}
+	if err := json.Unmarshal(capsJSON, &a.Capabilities); err != nil {
+		return nil, fmt.Errorf("unmarshal capabilities: %w", err)
+	}
 	return &a, nil
 }
 
 func (r *PostgresRepository) ListAgents(ctx context.Context, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error) {
-	query := `SELECT id, name, description, owner_id, status, labels, created_at, updated_at FROM agents WHERE 1=1`
+	query := `SELECT id, name, description, owner_id, status, labels, purpose, trust_level, capabilities, created_at, updated_at FROM agents WHERE 1=1`
 	args := []any{}
 	argIdx := 1
 
@@ -94,12 +103,16 @@ func (r *PostgresRepository) ListAgents(ctx context.Context, ownerID string, sta
 	var agents []models.Agent
 	for rows.Next() {
 		var a models.Agent
-		var labelsJSON []byte
-		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		var labelsJSON, capsJSON []byte
+		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON,
+			&a.Purpose, &a.TrustLevel, &capsJSON, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(labelsJSON, &a.Labels); err != nil {
 			return nil, fmt.Errorf("unmarshal labels: %w", err)
+		}
+		if err := json.Unmarshal(capsJSON, &a.Capabilities); err != nil {
+			return nil, fmt.Errorf("unmarshal capabilities: %w", err)
 		}
 		agents = append(agents, a)
 	}

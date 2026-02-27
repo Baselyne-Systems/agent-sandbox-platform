@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 var (
@@ -30,7 +30,7 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) RegisterAgent(ctx context.Context, name, description, ownerID string, labels map[string]string) (*models.Agent, error) {
+func (s *Service) RegisterAgent(ctx context.Context, name, description, ownerID string, labels map[string]string, purpose string, trustLevel models.AgentTrustLevel, capabilities []string) (*models.Agent, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -40,12 +40,21 @@ func (s *Service) RegisterAgent(ctx context.Context, name, description, ownerID 
 	if labels == nil {
 		labels = map[string]string{}
 	}
+	if trustLevel == "" {
+		trustLevel = models.AgentTrustLevelNew
+	}
+	if capabilities == nil {
+		capabilities = []string{}
+	}
 	agent := &models.Agent{
-		Name:        name,
-		Description: description,
-		OwnerID:     ownerID,
-		Status:      models.AgentStatusActive,
-		Labels:      labels,
+		Name:         name,
+		Description:  description,
+		OwnerID:      ownerID,
+		Status:       models.AgentStatusActive,
+		Labels:       labels,
+		Purpose:      purpose,
+		TrustLevel:   trustLevel,
+		Capabilities: capabilities,
 	}
 	if err := s.repo.CreateAgent(ctx, agent); err != nil {
 		return nil, err

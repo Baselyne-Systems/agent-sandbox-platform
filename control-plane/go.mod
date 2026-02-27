@@ -1,4 +1,4 @@
-module github.com/baselyne/agent-sandbox-platform/control-plane
+module github.com/Baselyne-Systems/bulkhead/control-plane
 
 go 1.24.0
 

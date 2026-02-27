@@ -1,7 +1,7 @@
 version: v2
 modules:
   - path: platform
-    name: buf.build/baselyne/platform
+    name: buf.build/baselyne-systems/bulkhead
 lint:
   use:
     - STANDARD

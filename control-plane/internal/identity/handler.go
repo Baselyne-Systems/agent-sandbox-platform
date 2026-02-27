@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
-	pb "github.com/baselyne/agent-sandbox-platform/control-plane/pkg/gen/identity/v1"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/identity/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -22,7 +22,15 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) RegisterAgent(ctx context.Context, req *pb.RegisterAgentRequest) (*pb.RegisterAgentResponse, error) {
-	agent, err := h.svc.RegisterAgent(ctx, req.GetName(), req.GetDescription(), req.GetOwnerId(), req.GetLabels())
+	agent, err := h.svc.RegisterAgent(ctx,
+		req.GetName(),
+		req.GetDescription(),
+		req.GetOwnerId(),
+		req.GetLabels(),
+		req.GetPurpose(),
+		protoTrustLevelToModel(req.GetTrustLevel()),
+		req.GetCapabilities(),
+	)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -83,14 +91,43 @@ func (h *Handler) RevokeCredential(ctx context.Context, req *pb.RevokeCredential
 
 func agentToProto(a *models.Agent) *pb.Agent {
 	return &pb.Agent{
-		AgentId:     a.ID,
-		Name:        a.Name,
-		Description: a.Description,
-		OwnerId:     a.OwnerID,
-		Status:      modelStatusToProto(a.Status),
-		Labels:      a.Labels,
-		CreatedAt:   timestamppb.New(a.CreatedAt),
-		UpdatedAt:   timestamppb.New(a.UpdatedAt),
+		AgentId:      a.ID,
+		Name:         a.Name,
+		Description:  a.Description,
+		OwnerId:      a.OwnerID,
+		Status:       modelStatusToProto(a.Status),
+		Labels:       a.Labels,
+		Purpose:      a.Purpose,
+		TrustLevel:   modelTrustLevelToProto(a.TrustLevel),
+		Capabilities: a.Capabilities,
+		CreatedAt:    timestamppb.New(a.CreatedAt),
+		UpdatedAt:    timestamppb.New(a.UpdatedAt),
+	}
+}
+
+func modelTrustLevelToProto(t models.AgentTrustLevel) pb.AgentTrustLevel {
+	switch t {
+	case models.AgentTrustLevelNew:
+		return pb.AgentTrustLevel_AGENT_TRUST_LEVEL_NEW
+	case models.AgentTrustLevelEstablished:
+		return pb.AgentTrustLevel_AGENT_TRUST_LEVEL_ESTABLISHED
+	case models.AgentTrustLevelTrusted:
+		return pb.AgentTrustLevel_AGENT_TRUST_LEVEL_TRUSTED
+	default:
+		return pb.AgentTrustLevel_AGENT_TRUST_LEVEL_UNSPECIFIED
+	}
+}
+
+func protoTrustLevelToModel(t pb.AgentTrustLevel) models.AgentTrustLevel {
+	switch t {
+	case pb.AgentTrustLevel_AGENT_TRUST_LEVEL_NEW:
+		return models.AgentTrustLevelNew
+	case pb.AgentTrustLevel_AGENT_TRUST_LEVEL_ESTABLISHED:
+		return models.AgentTrustLevelEstablished
+	case pb.AgentTrustLevel_AGENT_TRUST_LEVEL_TRUSTED:
+		return models.AgentTrustLevelTrusted
+	default:
+		return ""
 	}
 }
 

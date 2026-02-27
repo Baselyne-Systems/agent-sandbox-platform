@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/testutil"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/testutil"
 )
 
 // wsUUID generates a deterministic valid UUID for workspace IDs in tests.

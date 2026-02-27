@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 // Repository defines persistence operations for human interaction requests.
@@ -32,12 +32,17 @@ func (r *PostgresRepository) CreateRequest(ctx context.Context, req *models.Huma
 	if err != nil {
 		return fmt.Errorf("marshal options: %w", err)
 	}
+	var taskID interface{}
+	if req.TaskID != "" {
+		taskID = req.TaskID
+	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO human_requests (workspace_id, agent_id, question, options, context, status, expires_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO human_requests (workspace_id, agent_id, question, options, context, status, expires_at, type, urgency, task_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		 RETURNING id, created_at`,
 		req.WorkspaceID, req.AgentID, req.Question, optionsJSON,
 		req.Context, string(req.Status), req.ExpiresAt,
+		string(req.Type), string(req.Urgency), taskID,
 	).Scan(&req.ID, &req.CreatedAt)
 }
 
@@ -48,13 +53,17 @@ func (r *PostgresRepository) GetRequest(ctx context.Context, id string) (*models
 	var respondedAt sql.NullTime
 	var expiresAt sql.NullTime
 
+	var taskID sql.NullString
+
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, workspace_id, agent_id, question, options, context, status,
-			response, responder_id, created_at, responded_at, expires_at
+			response, responder_id, created_at, responded_at, expires_at,
+			type, urgency, task_id
 		 FROM human_requests WHERE id = $1`, id,
 	).Scan(&req.ID, &req.WorkspaceID, &req.AgentID, &req.Question, &optionsJSON,
 		&req.Context, &req.Status, &response, &responderID,
-		&req.CreatedAt, &respondedAt, &expiresAt)
+		&req.CreatedAt, &respondedAt, &expiresAt,
+		&req.Type, &req.Urgency, &taskID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -69,6 +78,9 @@ func (r *PostgresRepository) GetRequest(ctx context.Context, id string) (*models
 	}
 	if expiresAt.Valid {
 		req.ExpiresAt = &expiresAt.Time
+	}
+	if taskID.Valid {
+		req.TaskID = taskID.String
 	}
 
 	if err := json.Unmarshal(optionsJSON, &req.Options); err != nil {
@@ -98,7 +110,8 @@ func (r *PostgresRepository) RespondToRequest(ctx context.Context, id, response,
 
 func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error) {
 	query := `SELECT id, workspace_id, agent_id, question, options, context, status,
-		response, responder_id, created_at, responded_at, expires_at
+		response, responder_id, created_at, responded_at, expires_at,
+		type, urgency, task_id
 		FROM human_requests WHERE 1=1`
 	args := []any{}
 	argIdx := 1
@@ -132,12 +145,13 @@ func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID strin
 	for rows.Next() {
 		var req models.HumanRequest
 		var optionsJSON []byte
-		var response, responderID sql.NullString
+		var response, responderID, taskID sql.NullString
 		var respondedAt, expiresAt sql.NullTime
 
 		if err := rows.Scan(&req.ID, &req.WorkspaceID, &req.AgentID, &req.Question,
 			&optionsJSON, &req.Context, &req.Status, &response, &responderID,
-			&req.CreatedAt, &respondedAt, &expiresAt); err != nil {
+			&req.CreatedAt, &respondedAt, &expiresAt,
+			&req.Type, &req.Urgency, &taskID); err != nil {
 			return nil, err
 		}
 		req.Response = response.String
@@ -147,6 +161,9 @@ func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID strin
 		}
 		if expiresAt.Valid {
 			req.ExpiresAt = &expiresAt.Time
+		}
+		if taskID.Valid {
+			req.TaskID = taskID.String
 		}
 		if err := json.Unmarshal(optionsJSON, &req.Options); err != nil {
 			return nil, fmt.Errorf("unmarshal options: %w", err)

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 func BenchmarkRegisterHost(b *testing.B) {

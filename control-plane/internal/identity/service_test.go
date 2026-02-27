@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 // mockRepo is a hand-written in-memory Repository for testing.
@@ -35,8 +35,18 @@ func (m *mockRepo) CreateAgent(_ context.Context, agent *models.Agent) error {
 	agent.CreatedAt = time.Now()
 	agent.UpdatedAt = agent.CreatedAt
 	cp := *agent
+	cp.Capabilities = copyStringSlice(agent.Capabilities)
 	m.agents[agent.ID] = &cp
 	return nil
+}
+
+func copyStringSlice(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	cp := make([]string, len(s))
+	copy(cp, s)
+	return cp
 }
 
 func (m *mockRepo) GetAgent(_ context.Context, id string) (*models.Agent, error) {
@@ -102,7 +112,7 @@ func (m *mockRepo) RevokeCredential(_ context.Context, id string) error {
 
 func TestRegisterAgent_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
-	agent, err := svc.RegisterAgent(context.Background(), "test-agent", "A test agent", "owner-1", nil)
+	agent, err := svc.RegisterAgent(context.Background(), "test-agent", "A test agent", "owner-1", nil, "invoice processing", models.AgentTrustLevelNew, []string{"bash", "curl"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -118,22 +128,45 @@ func TestRegisterAgent_Success(t *testing.T) {
 	if agent.Labels == nil {
 		t.Error("expected labels to be initialized")
 	}
+	if agent.Purpose != "invoice processing" {
+		t.Errorf("expected purpose 'invoice processing', got %q", agent.Purpose)
+	}
+	if agent.TrustLevel != models.AgentTrustLevelNew {
+		t.Errorf("expected trust_level 'new', got %q", agent.TrustLevel)
+	}
+	if len(agent.Capabilities) != 2 {
+		t.Errorf("expected 2 capabilities, got %d", len(agent.Capabilities))
+	}
 }
 
 func TestRegisterAgent_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 
-	if _, err := svc.RegisterAgent(context.Background(), "", "desc", "owner", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.RegisterAgent(context.Background(), "", "desc", "owner", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
 	}
-	if _, err := svc.RegisterAgent(context.Background(), "name", "desc", "", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.RegisterAgent(context.Background(), "name", "desc", "", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty owner, got: %v", err)
+	}
+}
+
+func TestRegisterAgent_Defaults(t *testing.T) {
+	svc := NewService(newMockRepo())
+	agent, err := svc.RegisterAgent(context.Background(), "a", "", "o", nil, "", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if agent.TrustLevel != models.AgentTrustLevelNew {
+		t.Errorf("expected default trust_level 'new', got %q", agent.TrustLevel)
+	}
+	if agent.Capabilities == nil {
+		t.Error("expected capabilities to be initialized")
 	}
 }
 
 func TestGetAgent_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.RegisterAgent(context.Background(), "a", "", "o", nil)
+	created, _ := svc.RegisterAgent(context.Background(), "a", "", "o", nil, "", "", nil)
 	got, err := svc.GetAgent(context.Background(), created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -157,7 +190,7 @@ func TestListAgents_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.RegisterAgent(ctx, fmt.Sprintf("agent-%d", i), "", "owner", nil)
+		svc.RegisterAgent(ctx, fmt.Sprintf("agent-%d", i), "", "owner", nil, "", "", nil)
 	}
 
 	agents, nextToken, err := svc.ListAgents(ctx, "", "", 3, "")
@@ -188,7 +221,7 @@ func TestDeactivateAgent(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil)
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
 	svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
 
 	if err := svc.DeactivateAgent(ctx, agent.ID); err != nil {
@@ -221,7 +254,7 @@ func TestMintCredential_Success(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil)
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
 	cred, rawToken, err := svc.MintCredential(ctx, agent.ID, []string{"read", "write"}, 3600)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -245,7 +278,7 @@ func TestMintCredential_InactiveAgent(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil)
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
 	svc.DeactivateAgent(ctx, agent.ID)
 
 	_, _, err := svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
@@ -259,7 +292,7 @@ func TestMintCredential_TTLBounds(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil)
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
 
 	// Zero TTL
 	_, _, err := svc.MintCredential(ctx, agent.ID, []string{"read"}, 0)
@@ -293,7 +326,7 @@ func TestRevokeCredential(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil)
+	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
 	cred, _, _ := svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
 
 	if err := svc.RevokeCredential(ctx, cred.ID); err != nil {

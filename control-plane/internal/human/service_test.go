@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/baselyne/agent-sandbox-platform/control-plane/internal/models"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
 // mockRepo is a hand-written in-memory Repository for testing.
@@ -109,7 +109,7 @@ func copyOptions(s []string) []string {
 
 func TestCreateRequest_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
-	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "Approve invoice?", []string{"yes", "no"}, "Invoice #123", 300)
+	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "Approve invoice?", []string{"yes", "no"}, "Invoice #123", 300, "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,20 +131,20 @@ func TestCreateRequest_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.CreateRequest(ctx, "", "a", "q", nil, "", 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRequest(ctx, "", "a", "q", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty workspace_id, got: %v", err)
 	}
-	if _, err := svc.CreateRequest(ctx, "ws", "", "q", nil, "", 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRequest(ctx, "ws", "", "q", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty agent_id, got: %v", err)
 	}
-	if _, err := svc.CreateRequest(ctx, "ws", "a", "", nil, "", 0); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRequest(ctx, "ws", "a", "", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty question, got: %v", err)
 	}
 }
 
 func TestCreateRequest_DefaultTimeout(t *testing.T) {
 	svc := NewService(newMockRepo())
-	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "q", nil, "", 0)
+	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "q", nil, "", 0, "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestCreateRequest_DefaultTimeout(t *testing.T) {
 
 func TestGetRequest_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.CreateRequest(context.Background(), "ws", "a", "q", nil, "", 300)
+	created, _ := svc.CreateRequest(context.Background(), "ws", "a", "q", nil, "", 300, "", "", "")
 	got, err := svc.GetRequest(context.Background(), created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -183,7 +183,7 @@ func TestGetRequest_Expired(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 1)
+	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 1, "", "", "")
 	// Manually set expires_at to the past
 	pastTime := time.Now().Add(-1 * time.Minute)
 	repo.requests[req.ID].ExpiresAt = &pastTime
@@ -200,7 +200,7 @@ func TestGetRequest_Expired(t *testing.T) {
 func TestRespondToRequest_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300)
+	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300, "", "", "")
 
 	if err := svc.RespondToRequest(ctx, req.ID, "approved", "human-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -221,7 +221,7 @@ func TestRespondToRequest_Success(t *testing.T) {
 func TestRespondToRequest_NotPending(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300)
+	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300, "", "", "")
 
 	svc.RespondToRequest(ctx, req.ID, "first", "h1")
 
@@ -258,9 +258,9 @@ func TestListRequests_WithFilters(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	svc.CreateRequest(ctx, "ws-1", "a", "q1", nil, "", 300)
-	svc.CreateRequest(ctx, "ws-2", "a", "q2", nil, "", 300)
-	svc.CreateRequest(ctx, "ws-1", "a", "q3", nil, "", 300)
+	svc.CreateRequest(ctx, "ws-1", "a", "q1", nil, "", 300, "", "", "")
+	svc.CreateRequest(ctx, "ws-2", "a", "q2", nil, "", 300, "", "", "")
+	svc.CreateRequest(ctx, "ws-1", "a", "q3", nil, "", 300, "", "", "")
 
 	// Filter by workspace
 	reqs, _, err := svc.ListRequests(ctx, "ws-1", "", 50, "")
@@ -286,7 +286,7 @@ func TestListRequests_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.CreateRequest(ctx, "ws", "a", fmt.Sprintf("q%d", i), nil, "", 300)
+		svc.CreateRequest(ctx, "ws", "a", fmt.Sprintf("q%d", i), nil, "", 300, "", "", "")
 	}
 
 	reqs, nextToken, err := svc.ListRequests(ctx, "", "", 3, "")
