@@ -16,7 +16,7 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/workspace"
 	computepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/compute/v1"
 	guardrailspb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/guardrails/v1"
-	runtimepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/runtime/v1"
+	hostagentpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/host_agent/v1"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/workspace/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -72,21 +72,21 @@ func main() {
 		guardrails = &guardrailsAdapter{client: guardrailspb.NewGuardrailsServiceClient(conn)}
 	}
 
-	// Runtime dialer: creates a gRPC connection to a runtime host on demand.
-	var dialRuntime workspace.RuntimeDialer
-	dialRuntime = func(_ context.Context, address string) (runtimepb.RuntimeServiceClient, error) {
+	// Host Agent dialer: creates a gRPC connection to a Host Agent on demand.
+	var dialHostAgent workspace.HostAgentDialer
+	dialHostAgent = func(_ context.Context, address string) (hostagentpb.HostAgentServiceClient, error) {
 		conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			return nil, fmt.Errorf("dial runtime at %s: %w", address, err)
+			return nil, fmt.Errorf("dial host agent at %s: %w", address, err)
 		}
-		return runtimepb.NewRuntimeServiceClient(conn), nil
+		return hostagentpb.NewHostAgentServiceClient(conn), nil
 	}
 
 	svc := workspace.NewService(workspace.ServiceConfig{
 		Repo:        repo,
 		Compute:     compute,
 		Guardrails:  guardrails,
-		DialRuntime: dialRuntime,
+		DialHostAgent: dialHostAgent,
 		Logger:      logger,
 	})
 	handler := workspace.NewHandler(svc)

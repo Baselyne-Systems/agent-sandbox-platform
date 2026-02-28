@@ -1,5 +1,7 @@
 # API Reference
 
+> **Getting started?** See the [Operator Guide](getting-started/operator-guide.md), [Agent Developer Guide](getting-started/agent-guide.md), or [LangChain Integration Guide](getting-started/langchain-guide.md).
+
 All services communicate over gRPC using Protocol Buffers. Proto definitions are in `proto/platform/*/v1/*.proto`.
 
 ## Authentication
@@ -384,9 +386,9 @@ All other destinations are denied for Confidential and Restricted data.
 
 ---
 
-## Runtime Service (Control API)
+## Host Agent — HostAgentService (Control API)
 
-**Proto:** `proto/platform/runtime/v1/runtime.proto` — `RuntimeService`
+**Proto:** `proto/platform/host_agent/v1/host_agent.proto` — `HostAgentService`
 **Docker Compose port:** 50052
 
 Called by the control-plane Workspace Service to manage sandboxes on a host.
@@ -395,7 +397,7 @@ Called by the control-plane Workspace Service to manage sandboxes on a host.
 
 | RPC | Description |
 |-----|-------------|
-| `CreateSandbox` | Provision a sandbox with workspace/agent IDs, compiled guardrails, allowed tools, env vars, and `container_image`. Starts a Docker container if an image is specified. Returns sandbox_id and agent API endpoint. |
+| `CreateSandbox` | Provision a sandbox with workspace/agent IDs, compiled guardrails, allowed tools, env vars, `container_image`, and `egress_allowlist`. Starts a Docker container if an image is specified and applies iptables egress rules. Returns sandbox_id and agent API endpoint. |
 | `DestroySandbox` | Tear down a sandbox. Sends lifecycle stopped event. |
 | `GetSandboxStatus` | Get sandbox state, resource usage, and action count. |
 | `StreamEvents` | Server-streaming RPC. Subscribe to sandbox events (action verdicts, lifecycle changes). |
@@ -403,14 +405,14 @@ Called by the control-plane Workspace Service to manage sandboxes on a host.
 
 ---
 
-## Agent API Service (Agent-Facing)
+## Host Agent — HostAgentAPIService (Agent-Facing)
 
-**Proto:** `proto/platform/runtime/v1/runtime.proto` — `AgentAPIService`
+**Proto:** `proto/platform/host_agent/v1/host_agent.proto` — `HostAgentAPIService`
 **Docker Compose port:** 50052
 
 Called by agents running inside sandboxes. Requires `x-sandbox-id` metadata header.
 
-The Agent API is **policy-only**: `ExecuteTool` evaluates guardrails and budget but does NOT execute tools. The agent executes tools locally inside its container, then calls `ReportActionResult` to record the outcome for the audit trail.
+The Agent API is **policy-only**: `ExecuteTool` evaluates guardrails and budget but does NOT execute tools. The agent executes tools locally inside its container, then calls `ReportActionResult` to record the outcome for the audit trail. See the [Agent Developer Guide](getting-started/agent-guide.md) for the full SDK tutorial.
 
 ### RPCs
 
@@ -424,20 +426,7 @@ The Agent API is **policy-only**: `ExecuteTool` evaluates guardrails and budget 
 
 ### Python SDK
 
-The Python SDK (`bulkhead-sdk`) handles the evaluate → execute → report cycle transparently:
-
-```python
-from bulkhead import BulkheadAgent, tool, Verdict
-
-@tool("read_file")
-def read_file(path: str) -> dict:
-    with open(path) as f:
-        return json.load(f)
-
-with BulkheadAgent(tools=[read_file]) as agent:
-    result = agent.execute_tool("read_file", {"path": "/data/file.json"})
-    # SDK calls ExecuteTool → runs read_file → calls ReportActionResult
-```
+The Python SDK (`bulkhead-sdk`) handles the evaluate-execute-report cycle transparently via the `@tool` decorator. See the [Agent Developer Guide](getting-started/agent-guide.md) for a full tutorial.
 
 ---
 

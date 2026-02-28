@@ -1,10 +1,10 @@
 [package]
-name = "sandbox-runtime"
+name = "host-agent"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "runtime"
+name = "host-agent"
 path = "src/main.rs"
 
 [dependencies]

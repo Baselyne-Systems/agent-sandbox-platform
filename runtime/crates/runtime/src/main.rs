@@ -13,12 +13,12 @@ use tracing::info;
 use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
 use proto_gen::platform::economics::v1::economics_service_client::EconomicsServiceClient;
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
-use proto_gen::platform::runtime::v1::agent_api_service_server::AgentApiServiceServer;
-use proto_gen::platform::runtime::v1::runtime_service_server::RuntimeServiceServer;
+use proto_gen::platform::host_agent::v1::host_agent_api_service_server::HostAgentApiServiceServer;
+use proto_gen::platform::host_agent::v1::host_agent_service_server::HostAgentServiceServer;
 
-use crate::agent_api::AgentApiServiceImpl;
+use crate::agent_api::HostAgentApiServiceImpl;
 use crate::sandbox::SandboxManager;
-use crate::server::RuntimeServiceImpl;
+use crate::server::HostAgentServiceImpl;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -91,15 +91,15 @@ async fn main() -> Result<()> {
         };
 
     let sandbox_manager = SandboxManager::new(container_runtime);
-    let runtime_service = RuntimeServiceImpl::new(sandbox_manager.clone(), advertise_endpoint);
-    let agent_api_service =
-        AgentApiServiceImpl::new(sandbox_manager, his_client, activity_client, economics_client);
+    let host_agent_service = HostAgentServiceImpl::new(sandbox_manager.clone(), advertise_endpoint);
+    let host_agent_api_service =
+        HostAgentApiServiceImpl::new(sandbox_manager, his_client, activity_client, economics_client);
 
-    info!("Runtime starting on :{port}");
+    info!("Host Agent starting on :{port}");
 
     Server::builder()
-        .add_service(RuntimeServiceServer::new(runtime_service))
-        .add_service(AgentApiServiceServer::new(agent_api_service))
+        .add_service(HostAgentServiceServer::new(host_agent_service))
+        .add_service(HostAgentApiServiceServer::new(host_agent_api_service))
         .serve_with_shutdown(addr, async {
             tokio::signal::ctrl_c()
                 .await

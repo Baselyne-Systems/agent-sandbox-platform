@@ -1,10 +1,12 @@
 # Architecture
 
-Bulkhead follows a control-plane / data-plane architecture. The **control plane** (Go) manages the lifecycle of agents, workspaces, tasks, guardrails, and budgets. The **data plane** (Rust) runs on each host and executes agent workloads inside sandboxed environments with real-time guardrails evaluation.
+> **Getting started?** See the [Operator Guide](getting-started/operator-guide.md), [Agent Developer Guide](getting-started/agent-guide.md), or [LangChain Integration Guide](getting-started/langchain-guide.md).
+
+Bulkhead follows a control-plane / host-agent architecture. The **control plane** (Go) manages the lifecycle of agents, workspaces, tasks, guardrails, and budgets. The **Host Agent** (Rust) runs on each host and manages sandboxed Docker containers with real-time guardrails evaluation.
 
 ## Design Principles
 
-1. **Control-plane / data-plane separation** — The control plane handles orchestration, persistence, and policy management. The data plane handles hot-path execution with minimal latency. They communicate over gRPC.
+1. **Control-plane / host-agent separation** — The control plane handles orchestration, persistence, and policy management. The Host Agent handles hot-path evaluation with minimal latency. They communicate over gRPC.
 
 2. **Guardrails in the hot path** — Every tool call is evaluated against compiled policy rules before execution. The Rust evaluator targets <50ms latency with lock-free concurrent reads via `RwLock`.
 
@@ -16,7 +18,7 @@ Bulkhead follows a control-plane / data-plane architecture. The **control plane*
 
 6. **Atomic resource management** — Compute placement uses `SELECT ... FOR UPDATE SKIP LOCKED` to atomically reserve resources, preventing double-allocation under concurrent requests.
 
-7. **Graceful degradation** — Optional upstream services (HIS, Activity Store, Economics) degrade gracefully when not configured. The runtime warns and continues rather than failing.
+7. **Graceful degradation** — Optional upstream services (HIS, Activity Store, Economics) degrade gracefully when not configured. The Host Agent warns and continues rather than failing.
 
 ---
 
@@ -138,11 +140,11 @@ A stateless service for content classification and data loss prevention. Classif
 | Confidential | Cloud credentials | `AKIA...` (AWS keys) |
 | Restricted | PII patterns | SSN (`123-45-6789`), credit card numbers |
 
-### Sandbox Runtime (Data Plane)
+### Host Agent
 
-A Rust binary that runs on each host in the fleet, **outside** the agent containers. It exposes two gRPC services: **RuntimeService** (called by the control plane to manage sandboxes) and **AgentAPIService** (called by agents running inside containers for guardrail evaluation). The Runtime is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents run inside Docker containers, execute tools locally, and call back to the Runtime via `ReportActionResult` to record outcomes for the audit trail.
+A Rust binary that runs on each host in the fleet, **outside** the agent containers. It exposes two gRPC services: **HostAgentService** (called by the control plane to manage sandboxes) and **HostAgentAPIService** (called by agents running inside containers for guardrail evaluation). The Host Agent is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents run inside Docker containers, execute tools locally, and call back to the Host Agent via `ReportActionResult` to record outcomes for the audit trail.
 
-The Runtime manages the full lifecycle of agent containers (create, resource-limit, destroy) via the bollard crate (enabled via `ENABLE_DOCKER=true`). Each sandbox tracks its own guardrails evaluator, container ID, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`.
+The Host Agent manages the full lifecycle of agent containers (create, resource-limit, destroy) via the bollard crate (enabled via `ENABLE_DOCKER=true`). Each sandbox tracks its own guardrails evaluator, container ID, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`.
 
 **Responsibilities:**
 - Sandbox lifecycle management (create, destroy, status, events)
@@ -171,34 +173,34 @@ The Runtime manages the full lifecycle of agent containers (create, resource-lim
 
 ### Flow 1: Action Evaluation (Policy-Only Hot Path)
 
-This is the most performance-critical flow — executed on every tool call an agent makes. Target latency: <50ms for guardrails evaluation. The Runtime is **policy-only**: it evaluates but does not execute tools.
+This is the most performance-critical flow — executed on every tool call an agent makes. Target latency: <50ms for guardrails evaluation. The Host Agent is **policy-only**: it evaluates but does not execute tools.
 
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant Runtime as Sandbox Runtime (Rust)
+    participant HA as Host Agent (Rust)
     participant Economics
     participant Activity as Activity Store
 
-    Agent->>Runtime: ExecuteTool (x-sandbox-id)
-    Note over Runtime: 1. Lookup sandbox from header
-    Note over Runtime: 2. Parse parameters (Struct → JSON)
-    Runtime->>Economics: 3. CheckBudget
-    Economics-->>Runtime: allowed / denied
-    Note over Runtime: 4. Guardrails eval (RwLock read)<br/>Allow / Deny(reason) / Escalate(id)
-    Note over Runtime: 5. Generate action_id (UUID)
-    Note over Runtime: 6. Increment action counter (atomic)
-    Note over Runtime: 7. Emit action event (broadcast)
-    Runtime-->>Agent: verdict, action_id, denial_reason
-    Runtime-)Activity: 8. Record evaluation (fire-and-forget)
-    Runtime-)Economics: 9. Record usage (fire-and-forget)
+    Agent->>HA: ExecuteTool (x-sandbox-id)
+    Note over HA: 1. Lookup sandbox from header
+    Note over HA: 2. Parse parameters (Struct → JSON)
+    HA->>Economics: 3. CheckBudget
+    Economics-->>HA: allowed / denied
+    Note over HA: 4. Guardrails eval (RwLock read)<br/>Allow / Deny(reason) / Escalate(id)
+    Note over HA: 5. Generate action_id (UUID)
+    Note over HA: 6. Increment action counter (atomic)
+    Note over HA: 7. Emit action event (broadcast)
+    HA-->>Agent: verdict, action_id, denial_reason
+    HA-)Activity: 8. Record evaluation (fire-and-forget)
+    HA-)Economics: 9. Record usage (fire-and-forget)
 
     Note over Agent: 10. Execute tool locally (inside container)
-    Agent->>Runtime: ReportActionResult (action_id, success, result)
-    Runtime-)Activity: 11. Record execution result (fire-and-forget)
+    Agent->>HA: ReportActionResult (action_id, success, result)
+    HA-)Activity: 11. Record execution result (fire-and-forget)
 ```
 
-Steps 8, 9, and 11 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The Python SDK's `@tool` decorator handles steps 10-11 transparently.
+Steps 8, 9, and 11 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The Python SDK's `@tool` decorator handles steps 10–11 transparently (see [Agent Developer Guide](getting-started/agent-guide.md)).
 
 ### Flow 2: Human Interaction (Non-Blocking)
 
@@ -207,27 +209,27 @@ Agents can request human input without blocking. The pattern is: submit a reques
 ```mermaid
 sequenceDiagram
     participant Agent
-    participant Runtime
+    participant HA as Host Agent
     participant HIS
 
-    Agent->>Runtime: RequestHumanInput
-    Runtime->>HIS: CreateRequest
-    HIS-->>Runtime: request_id
-    Runtime-->>Agent: request_id
+    Agent->>HA: RequestHumanInput
+    HA->>HIS: CreateRequest
+    HIS-->>HA: request_id
+    HA-->>Agent: request_id
 
     Note over Agent: agent continues working
 
-    Agent->>Runtime: CheckHumanRequest
-    Runtime->>HIS: GetRequest
-    HIS-->>Runtime: status: pending
-    Runtime-->>Agent: status: pending
+    Agent->>HA: CheckHumanRequest
+    HA->>HIS: GetRequest
+    HIS-->>HA: status: pending
+    HA-->>Agent: status: pending
 
     Human->>HIS: RespondToRequest
 
-    Agent->>Runtime: CheckHumanRequest
-    Runtime->>HIS: GetRequest
-    HIS-->>Runtime: status: responded
-    Runtime-->>Agent: response, responder_id
+    Agent->>HA: CheckHumanRequest
+    HA->>HIS: GetRequest
+    HIS-->>HA: status: responded
+    HA-->>Agent: response, responder_id
 ```
 
 ### Flow 3: Workspace Orchestration
@@ -240,7 +242,7 @@ sequenceDiagram
     participant WS as Workspace Service
     participant Compute as Compute Plane
     participant Guard as Guardrails Service
-    participant RT as Runtime (on host)
+    participant HA as Host Agent (on host)
 
     Task->>WS: ProvisionWorkspace
     Note over WS: 1. Create workspace (pending)
@@ -252,8 +254,8 @@ sequenceDiagram
     WS->>Guard: CompilePolicy
     Guard-->>WS: compiled_bytes (rules → binary)
 
-    WS->>RT: CreateSandbox
-    RT-->>WS: sandbox_id, endpoint (evaluator loaded)
+    WS->>HA: CreateSandbox
+    HA-->>WS: sandbox_id, endpoint (evaluator loaded)
 
     Note over WS: 3. Update status → running
     WS-->>Task: workspace_id
@@ -331,7 +333,7 @@ erDiagram
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Control Plane | Go 1.24 | 9 microservices with gRPC APIs |
-| Data Plane | Rust 1.83 | Per-host policy engine, <50ms evaluation, Docker container lifecycle |
+| Host Agent | Rust 1.83 | Per-host policy engine, <50ms evaluation, Docker container lifecycle, iptables egress |
 | Python SDK | Python 3.10+ | `@tool` decorator, evaluate → execute → report cycle |
 | Container Runtime | bollard (Rust) / Docker | Agent container lifecycle (opt-in via `ENABLE_DOCKER`) |
 | Database | PostgreSQL 16 | Shared persistence for all control-plane services |

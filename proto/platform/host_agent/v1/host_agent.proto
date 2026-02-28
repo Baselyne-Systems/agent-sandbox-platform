@@ -1,13 +1,13 @@
 syntax = "proto3";
 
-package platform.runtime.v1;
+package platform.host_agent.v1;
 
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/struct.proto";
 
-// RuntimeService is the Control API — called by Workspace Service to manage
-// sandboxes on a specific host. Each Runtime instance runs on a single host.
-service RuntimeService {
+// HostAgentService is the Control API — called by Workspace Service to manage
+// sandboxes on a specific host. Each Host Agent instance runs on a single host.
+service HostAgentService {
   // CreateSandbox provisions an isolated sandbox on this host.
   rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
 
@@ -24,9 +24,9 @@ service RuntimeService {
   rpc UpdateSandboxGuardrails(UpdateSandboxGuardrailsRequest) returns (UpdateSandboxGuardrailsResponse);
 }
 
-// AgentAPIService is exposed inside the sandbox for agents to call.
+// HostAgentAPIService is exposed inside the sandbox for agents to call.
 // This is the agent-facing API.
-service AgentAPIService {
+service HostAgentAPIService {
   // ExecuteTool evaluates guardrails and budget for a tool call.
   // Returns a verdict (ALLOW/DENY/ESCALATE) and an action_id.
   // The agent is responsible for executing the tool if allowed.

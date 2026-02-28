@@ -21,7 +21,7 @@ pub enum SandboxStatus {
     Failed,
 }
 
-/// Events emitted by a sandbox for streaming via RuntimeService.StreamEvents.
+/// Events emitted by a sandbox for streaming via HostAgentService.StreamEvents.
 #[derive(Debug, Clone)]
 pub enum SandboxEvent {
     Action {

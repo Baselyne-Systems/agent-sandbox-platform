@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&out_dir)?;
 
     let protos = &[
-        proto_dir.join("platform/runtime/v1/runtime.proto"),
+        proto_dir.join("platform/host_agent/v1/host_agent.proto"),
         proto_dir.join("platform/identity/v1/identity.proto"),
         proto_dir.join("platform/activity/v1/activity.proto"),
         proto_dir.join("platform/guardrails/v1/guardrails.proto"),

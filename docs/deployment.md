@@ -1,5 +1,7 @@
 # Deployment Guide
 
+> **Getting started?** See the [Operator Guide](getting-started/operator-guide.md) for a step-by-step walkthrough of deploying and using the platform.
+
 ## Local Development
 
 ### Prerequisites
@@ -7,7 +9,7 @@
 | Tool | Version | Purpose |
 |------|---------|---------|
 | Go | 1.24+ | Control plane services |
-| Rust | 1.83+ | Data plane runtime |
+| Rust | 1.83+ | Host Agent |
 | Python | 3.10+ | SDK for building agents |
 | Docker | 24+ | PostgreSQL, full stack, sandbox containers |
 | Docker Compose | v2+ | Service orchestration |
@@ -42,7 +44,7 @@ docker compose -f deploy/docker-compose.yml up -d postgres
 # Run the Identity Service
 cd control-plane && DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" go run ./cmd/identity
 
-# Run the Rust Runtime
+# Run the Rust Host Agent
 cd runtime && RUST_LOG=debug cargo run
 ```
 
@@ -50,7 +52,7 @@ cd runtime && RUST_LOG=debug cargo run
 
 ## Docker Compose (Full Stack)
 
-The full stack runs 11 containers: 9 Go microservices, 1 Rust runtime, and PostgreSQL.
+The full stack runs 11 containers: 9 Go microservices, 1 Rust Host Agent, and PostgreSQL.
 
 ### Starting the Stack
 
@@ -90,7 +92,7 @@ graph TB
         economics["economics :50066"]
         compute["compute :50067"]
         task["task :50068"]
-        runtime["runtime :50052"]
+        runtime["host-agent :50052"]
 
         PG --- identity & workspace & guardrails & human
         PG --- governance & activity & economics & compute & task
@@ -118,7 +120,7 @@ graph TB
 | Economics | 50051 | 50066 | gRPC |
 | Compute Plane | 50051 | 50067 | gRPC |
 | Task | 50051 | 50068 | gRPC |
-| Runtime | 50052 | 50052 | gRPC |
+| Host Agent | 50052 | 50052 | gRPC |
 
 ### Service Dependencies
 
@@ -128,7 +130,7 @@ Services start in dependency order via Docker Compose `depends_on` with health c
 2. **Independent services** start next: Identity, Guardrails, Human, Governance, Activity, Economics, Compute (depend only on PostgreSQL)
 3. **Workspace** starts after Identity, Compute, and Guardrails are healthy
 4. **Task** starts after Workspace is healthy
-5. **Runtime** starts after Human, Activity, and Economics are healthy
+5. **Host Agent** starts after Human, Activity, and Economics are healthy
 
 ### Health Checks
 
@@ -169,17 +171,17 @@ healthcheck:
 |---------------------|---------|-------------|
 | `WORKSPACE_ENDPOINT` | — | gRPC endpoint for Workspace Service (e.g., `workspace:50051`). Required for workspace provisioning on task start. |
 
-**Runtime (Rust):**
+**Host Agent (Rust):**
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
-| `GRPC_PORT` | `50052` | Port for RuntimeService and AgentAPIService |
+| `GRPC_PORT` | `50052` | Port for HostAgentService and HostAgentAPIService |
 | `ADVERTISE_ADDRESS` | `localhost` | Hostname/IP returned to agents as the API endpoint |
 | `HIS_ENDPOINT` | — | gRPC endpoint for Human Interaction Service (e.g., `http://human:50051`). If unset, `RequestHumanInput` returns `UNAVAILABLE`. |
 | `ACTIVITY_ENDPOINT` | — | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
 | `ECONOMICS_ENDPOINT` | — | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
 | `ENABLE_DOCKER` | `false` | Set to `true` to enable Docker container management via bollard. Requires Docker socket access. |
-| `RUST_LOG` | `info` | Tracing filter (e.g., `debug`, `runtime=trace,tower=warn`) |
+| `RUST_LOG` | `info` | Tracing filter (e.g., `debug`, `host_agent=trace,tower=warn`) |
 
 ### Docker Compose Environment
 
@@ -200,14 +202,14 @@ GUARDRAILS_ENDPOINT: guardrails:50051
 # Task service
 WORKSPACE_ENDPOINT: workspace:50051
 
-# Runtime
+# Host Agent
 HIS_ENDPOINT: http://human:50051
 ACTIVITY_ENDPOINT: http://activity:50051
 ECONOMICS_ENDPOINT: http://economics:50051
 ENABLE_DOCKER: "true"
 ```
 
-The Runtime container needs Docker socket access for managing agent containers:
+The Host Agent container needs Docker socket access for managing agent containers:
 
 ```yaml
 volumes:
@@ -296,9 +298,9 @@ FROM alpine:3.20
 
 All 9 Go services share this Dockerfile with different `SERVICE` args.
 
-### Runtime (`deploy/docker/Dockerfile.runtime`)
+### Host Agent (`deploy/docker/Dockerfile.host-agent`)
 
-Multi-stage build for the Rust sandbox runtime:
+Multi-stage build for the Rust Host Agent:
 
 ```dockerfile
 FROM rust:1.83-alpine AS builder
@@ -306,7 +308,7 @@ FROM rust:1.83-alpine AS builder
 # Builds release binary
 
 FROM alpine:3.20
-# Single binary: /runtime
+# Single binary: /host-agent
 ```
 
 ---
@@ -318,10 +320,10 @@ FROM alpine:3.20
 | `make proto` | Generate Go protobuf code via `buf generate` |
 | `make build` | Build Go + Rust |
 | `make build-go` | Build Go control plane only |
-| `make build-rust` | Build Rust runtime only |
+| `make build-rust` | Build Rust Host Agent only |
 | `make test` | Run Go + Rust unit tests |
 | `make test-go` | Run Go unit tests only |
-| `make test-rust` | Run Rust unit tests only |
+| `make test-rust` | Run Rust Host Agent unit tests only |
 | `make test-integration` | Run Go integration tests (requires Docker) |
 | `make test-integration-<svc>` | Run integration tests for a specific service (e.g., `make test-integration-identity`) |
 | `make dev` | Start Docker Compose stack |

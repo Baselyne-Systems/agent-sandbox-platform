@@ -17,8 +17,8 @@ use proto_gen::platform::human::v1::human_interaction_service_client::HumanInter
 use proto_gen::platform::human::v1::{
     CreateHumanRequestRequest, GetHumanRequestRequest, HumanRequestStatus,
 };
-use proto_gen::platform::runtime::v1::agent_api_service_server::AgentApiService;
-use proto_gen::platform::runtime::v1::{
+use proto_gen::platform::host_agent::v1::host_agent_api_service_server::HostAgentApiService;
+use proto_gen::platform::host_agent::v1::{
     ActionVerdict, CheckHumanRequestRequest, CheckHumanRequestResponse, ExecuteToolRequest,
     ExecuteToolResponse, ReportActionResultRequest, ReportActionResultResponse,
     ReportProgressRequest, ReportProgressResponse, RequestHumanInputRequest,
@@ -27,22 +27,22 @@ use proto_gen::platform::runtime::v1::{
 
 use crate::sandbox::{SandboxEvent, SandboxManager};
 
-/// gRPC implementation of the AgentAPIService — the agent-facing API exposed
+/// gRPC implementation of the HostAgentAPIService — the agent-facing API exposed
 /// inside each sandbox.
 ///
 /// This is a **policy-only** engine: ExecuteTool evaluates guardrails and budget
 /// but does NOT execute tools. The agent executes tools locally inside its
 /// container, then calls ReportActionResult to record the outcome for auditing.
-pub struct AgentApiServiceImpl {
+pub struct HostAgentApiServiceImpl {
     sandbox_manager: SandboxManager,
     his_client: Option<TokioMutex<HumanInteractionServiceClient<tonic::transport::Channel>>>,
     activity_client: Option<Arc<TokioMutex<ActivityServiceClient<tonic::transport::Channel>>>>,
     economics_client: Option<Arc<TokioMutex<EconomicsServiceClient<tonic::transport::Channel>>>>,
 }
 
-impl std::fmt::Debug for AgentApiServiceImpl {
+impl std::fmt::Debug for HostAgentApiServiceImpl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AgentApiServiceImpl")
+        f.debug_struct("HostAgentApiServiceImpl")
             .field("sandbox_manager", &self.sandbox_manager)
             .field("his_configured", &self.his_client.is_some())
             .field("activity_configured", &self.activity_client.is_some())
@@ -51,7 +51,7 @@ impl std::fmt::Debug for AgentApiServiceImpl {
     }
 }
 
-impl AgentApiServiceImpl {
+impl HostAgentApiServiceImpl {
     pub fn new(
         sandbox_manager: SandboxManager,
         his_client: Option<HumanInteractionServiceClient<tonic::transport::Channel>>,
@@ -68,7 +68,7 @@ impl AgentApiServiceImpl {
 }
 
 #[tonic::async_trait]
-impl AgentApiService for AgentApiServiceImpl {
+impl HostAgentApiService for HostAgentApiServiceImpl {
     /// Evaluate guardrails and budget for a tool call. Returns a verdict
     /// (ALLOW/DENY/ESCALATE) and an action_id. The agent is responsible for
     /// executing the tool locally if allowed, then calling ReportActionResult.

@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use sandbox_runtime::container::{ContainerRuntime, DockerRuntime};
+use host_agent::container::{ContainerRuntime, DockerRuntime};
 
 /// Run a command inside a container and return (exit_code, stdout).
 async fn docker_exec(container_id: &str, cmd: &[&str]) -> (i32, String) {

@@ -10,7 +10,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	runtimepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/runtime/v1"
+	hostagentpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/host_agent/v1"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 	ErrSnapshotNotFound         = errors.New("snapshot not found")
 	ErrInvalidInput             = errors.New("invalid input")
 	ErrPlacementFailed          = errors.New("workspace placement failed")
-	ErrRuntimeUnavailable       = errors.New("runtime unavailable")
+	ErrHostAgentUnavailable     = errors.New("host agent unavailable")
 )
 
 const (
@@ -37,13 +37,13 @@ type ComputePlacer interface {
 	PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (hostID, hostAddress string, err error)
 }
 
-// PolicyCompiler compiles guardrail rules into bytes for the runtime evaluator.
+// PolicyCompiler compiles guardrail rules into bytes for the Host Agent evaluator.
 type PolicyCompiler interface {
 	CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error)
 }
 
-// RuntimeDialer creates a gRPC connection to a runtime host and returns a client.
-type RuntimeDialer func(ctx context.Context, address string) (runtimepb.RuntimeServiceClient, error)
+// HostAgentDialer creates a gRPC connection to a Host Agent and returns a client.
+type HostAgentDialer func(ctx context.Context, address string) (hostagentpb.HostAgentServiceClient, error)
 
 // SnapshotStore persists and retrieves workspace snapshots.
 type SnapshotStore interface {
@@ -51,24 +51,24 @@ type SnapshotStore interface {
 	LoadSnapshot(ctx context.Context, snapshotID string) error
 }
 
-// Service implements workspace business logic with runtime orchestration.
+// Service implements workspace business logic with Host Agent orchestration.
 type Service struct {
 	repo           Repository
 	compute        ComputePlacer
 	guardrails     PolicyCompiler
-	dialRuntime    RuntimeDialer
+	dialHostAgent    HostAgentDialer
 	snapshots      SnapshotStore
 	logger         *zap.Logger
 }
 
 // ServiceConfig holds optional dependencies for the workspace service.
-// If compute/guardrails/dialRuntime are nil, the service operates in
-// "DB-only" mode (no runtime orchestration).
+// If compute/guardrails/dialHostAgent are nil, the service operates in
+// "DB-only" mode (no Host Agent orchestration).
 type ServiceConfig struct {
 	Repo        Repository
 	Compute     ComputePlacer
 	Guardrails  PolicyCompiler
-	DialRuntime RuntimeDialer
+	DialHostAgent HostAgentDialer
 	Snapshots   SnapshotStore
 	Logger      *zap.Logger
 }
@@ -82,7 +82,7 @@ func NewService(cfg ServiceConfig) *Service {
 		repo:        cfg.Repo,
 		compute:     cfg.Compute,
 		guardrails:  cfg.Guardrails,
-		dialRuntime: cfg.DialRuntime,
+		dialHostAgent: cfg.DialHostAgent,
 		snapshots:   cfg.Snapshots,
 		logger:      logger,
 	}
@@ -134,7 +134,7 @@ func (s *Service) CreateWorkspace(ctx context.Context, agentID, taskID string, s
 	}
 
 	// If orchestration dependencies are available, provision the sandbox.
-	if s.compute != nil && s.dialRuntime != nil {
+	if s.compute != nil && s.dialHostAgent != nil {
 		if err := s.provisionSandbox(ctx, ws); err != nil {
 			s.logger.Error("sandbox provisioning failed",
 				zap.String("workspace_id", ws.ID),
@@ -189,17 +189,17 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 		compiledGuardrails = []byte(`{"rules":[]}`)
 	}
 
-	// 4. Dial the runtime at the host address.
-	runtimeClient, err := s.dialRuntime(ctx, hostAddress)
+	// 4. Dial the Host Agent at the host address.
+	hostAgentClient, err := s.dialHostAgent(ctx, hostAddress)
 	if err != nil {
-		return fmt.Errorf("dial runtime at %s: %w", hostAddress, err)
+		return fmt.Errorf("dial host agent at %s: %w", hostAddress, err)
 	}
 
-	// 5. Create sandbox on the runtime.
-	createResp, err := runtimeClient.CreateSandbox(ctx, &runtimepb.CreateSandboxRequest{
+	// 5. Create sandbox on the Host Agent.
+	createResp, err := hostAgentClient.CreateSandbox(ctx, &hostagentpb.CreateSandboxRequest{
 		WorkspaceId: ws.ID,
 		AgentId:     ws.AgentID,
-		Spec: &runtimepb.SandboxSpec{
+		Spec: &hostagentpb.SandboxSpec{
 			MemoryMb:       ws.Spec.MemoryMb,
 			CpuMillicores:  ws.Spec.CpuMillicores,
 			DiskMb:         ws.Spec.DiskMb,
@@ -278,7 +278,7 @@ func (s *Service) TerminateWorkspace(ctx context.Context, id string, reason stri
 	}
 
 	// If orchestration is available, destroy the sandbox first.
-	if s.dialRuntime != nil {
+	if s.dialHostAgent != nil {
 		ws, err := s.repo.GetWorkspace(ctx, id)
 		if err != nil {
 			return err
@@ -327,7 +327,7 @@ func (s *Service) SnapshotWorkspace(ctx context.Context, id string) (*models.Wor
 	}
 
 	// Destroy the sandbox to free resources (best-effort).
-	if s.dialRuntime != nil && ws.SandboxID != "" && ws.HostAddress != "" {
+	if s.dialHostAgent != nil && ws.SandboxID != "" && ws.HostAddress != "" {
 		if err := s.destroySandbox(ctx, ws, "snapshot"); err != nil {
 			s.logger.Warn("failed to destroy sandbox during snapshot",
 				zap.String("workspace_id", id),
@@ -391,7 +391,7 @@ func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*mod
 	}
 
 	// Re-provision sandbox using existing orchestration pipeline.
-	if s.compute != nil && s.dialRuntime != nil {
+	if s.compute != nil && s.dialHostAgent != nil {
 		if err := s.provisionSandbox(ctx, ws); err != nil {
 			s.logger.Error("sandbox re-provisioning failed during restore",
 				zap.String("workspace_id", ws.ID),
@@ -411,10 +411,10 @@ func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*mod
 	return ws, nil
 }
 
-// destroySandbox dials the runtime and destroys the sandbox.
+// destroySandbox dials the Host Agent and destroys the sandbox.
 func (s *Service) destroySandbox(ctx context.Context, ws *models.Workspace, reason string) error {
 	if ws.HostAddress == "" {
-		s.logger.Warn("no host address stored, cannot dial runtime for teardown",
+		s.logger.Warn("no host address stored, cannot dial host agent for teardown",
 			zap.String("workspace_id", ws.ID),
 			zap.String("sandbox_id", ws.SandboxID),
 		)
@@ -427,12 +427,12 @@ func (s *Service) destroySandbox(ctx context.Context, ws *models.Workspace, reas
 		zap.String("host_address", ws.HostAddress),
 	)
 
-	runtimeClient, err := s.dialRuntime(ctx, ws.HostAddress)
+	hostAgentClient, err := s.dialHostAgent(ctx, ws.HostAddress)
 	if err != nil {
-		return fmt.Errorf("dial runtime at %s: %w", ws.HostAddress, err)
+		return fmt.Errorf("dial host agent at %s: %w", ws.HostAddress, err)
 	}
 
-	_, err = runtimeClient.DestroySandbox(ctx, &runtimepb.DestroySandboxRequest{
+	_, err = hostAgentClient.DestroySandbox(ctx, &hostagentpb.DestroySandboxRequest{
 		SandboxId: ws.SandboxID,
 		Reason:    reason,
 	})

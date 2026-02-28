@@ -149,13 +149,13 @@ services:
       workspace:
         condition: service_healthy
 
-  runtime:
+  host-agent:
     build:
       context: ..
-      dockerfile: deploy/docker/Dockerfile.runtime
+      dockerfile: deploy/docker/Dockerfile.host-agent
     environment:
       GRPC_PORT: "50052"
-      ADVERTISE_ADDRESS: runtime
+      ADVERTISE_ADDRESS: host-agent
       HIS_ENDPOINT: http://human:50051
       ACTIVITY_ENDPOINT: http://activity:50051
       ECONOMICS_ENDPOINT: http://economics:50051

@@ -7,26 +7,26 @@ use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
 use tracing::info;
 
-use proto_gen::platform::runtime::v1::runtime_service_server::RuntimeService;
-use proto_gen::platform::runtime::v1::{
+use proto_gen::platform::host_agent::v1::host_agent_service_server::HostAgentService;
+use proto_gen::platform::host_agent::v1::{
     CreateSandboxRequest, CreateSandboxResponse, DestroySandboxRequest, DestroySandboxResponse,
     GetSandboxStatusRequest, GetSandboxStatusResponse, SandboxEvent as ProtoSandboxEvent,
     SandboxState as ProtoSandboxState, StreamEventsRequest,
     UpdateSandboxGuardrailsRequest, UpdateSandboxGuardrailsResponse,
 };
-use proto_gen::platform::runtime::v1::{ActionEvent, ActionVerdict, LifecycleEvent};
+use proto_gen::platform::host_agent::v1::{ActionEvent, ActionVerdict, LifecycleEvent};
 
 use crate::sandbox::{CreateSandboxParams, SandboxEvent, SandboxManager, SandboxStatus};
 
-/// gRPC implementation of the RuntimeService — called by the control-plane
+/// gRPC implementation of the HostAgentService — called by the control-plane
 /// Workspace Service to manage sandboxes on this host.
 #[derive(Debug)]
-pub struct RuntimeServiceImpl {
+pub struct HostAgentServiceImpl {
     sandbox_manager: SandboxManager,
     advertise_endpoint: String,
 }
 
-impl RuntimeServiceImpl {
+impl HostAgentServiceImpl {
     pub fn new(sandbox_manager: SandboxManager, advertise_endpoint: String) -> Self {
         Self {
             sandbox_manager,
@@ -36,7 +36,7 @@ impl RuntimeServiceImpl {
 }
 
 #[tonic::async_trait]
-impl RuntimeService for RuntimeServiceImpl {
+impl HostAgentService for HostAgentServiceImpl {
     type StreamEventsStream =
         Pin<Box<dyn Stream<Item = Result<ProtoSandboxEvent, Status>> + Send + 'static>>;
 
@@ -198,7 +198,7 @@ impl RuntimeService for RuntimeServiceImpl {
                                 sandbox_id: sid,
                                 timestamp,
                                 event: Some(
-                                    proto_gen::platform::runtime::v1::sandbox_event::Event::Action(
+                                    proto_gen::platform::host_agent::v1::sandbox_event::Event::Action(
                                         ActionEvent {
                                             action_id,
                                             tool_name,
@@ -221,7 +221,7 @@ impl RuntimeService for RuntimeServiceImpl {
                                 sandbox_id: sid,
                                 timestamp,
                                 event: Some(
-                                    proto_gen::platform::runtime::v1::sandbox_event::Event::Lifecycle(
+                                    proto_gen::platform::host_agent::v1::sandbox_event::Event::Lifecycle(
                                         LifecycleEvent {
                                             new_state: state_enum as i32,
                                             reason,

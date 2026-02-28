@@ -2,9 +2,9 @@
 // After running build.rs, generated files appear in src/gen/
 
 pub mod platform {
-    pub mod runtime {
+    pub mod host_agent {
         pub mod v1 {
-            include!("gen/platform.runtime.v1.rs");
+            include!("gen/platform.host_agent.v1.rs");
         }
     }
     pub mod identity {

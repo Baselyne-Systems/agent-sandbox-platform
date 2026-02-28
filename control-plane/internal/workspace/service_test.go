@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	runtimepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/runtime/v1"
+	hostagentpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/host_agent/v1"
 	"google.golang.org/grpc"
 )
 
@@ -192,34 +192,34 @@ func (m *mockPolicyCompiler) CompilePolicy(_ context.Context, _ []string) ([]byt
 	return m.compiled, m.count, m.err
 }
 
-// mockRuntimeServiceClient implements runtimepb.RuntimeServiceClient for testing.
-type mockRuntimeServiceClient struct {
-	createResp   *runtimepb.CreateSandboxResponse
+// mockHostAgentServiceClient implements hostagentpb.HostAgentServiceClient for testing.
+type mockHostAgentServiceClient struct {
+	createResp   *hostagentpb.CreateSandboxResponse
 	createErr    error
-	destroyResp  *runtimepb.DestroySandboxResponse
+	destroyResp  *hostagentpb.DestroySandboxResponse
 	destroyErr   error
 	destroyCalls int
 }
 
-func (m *mockRuntimeServiceClient) CreateSandbox(_ context.Context, _ *runtimepb.CreateSandboxRequest, _ ...grpc.CallOption) (*runtimepb.CreateSandboxResponse, error) {
+func (m *mockHostAgentServiceClient) CreateSandbox(_ context.Context, _ *hostagentpb.CreateSandboxRequest, _ ...grpc.CallOption) (*hostagentpb.CreateSandboxResponse, error) {
 	return m.createResp, m.createErr
 }
 
-func (m *mockRuntimeServiceClient) DestroySandbox(_ context.Context, _ *runtimepb.DestroySandboxRequest, _ ...grpc.CallOption) (*runtimepb.DestroySandboxResponse, error) {
+func (m *mockHostAgentServiceClient) DestroySandbox(_ context.Context, _ *hostagentpb.DestroySandboxRequest, _ ...grpc.CallOption) (*hostagentpb.DestroySandboxResponse, error) {
 	m.destroyCalls++
 	return m.destroyResp, m.destroyErr
 }
 
-func (m *mockRuntimeServiceClient) GetSandboxStatus(_ context.Context, _ *runtimepb.GetSandboxStatusRequest, _ ...grpc.CallOption) (*runtimepb.GetSandboxStatusResponse, error) {
+func (m *mockHostAgentServiceClient) GetSandboxStatus(_ context.Context, _ *hostagentpb.GetSandboxStatusRequest, _ ...grpc.CallOption) (*hostagentpb.GetSandboxStatusResponse, error) {
 	return nil, nil
 }
 
-func (m *mockRuntimeServiceClient) StreamEvents(_ context.Context, _ *runtimepb.StreamEventsRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[runtimepb.SandboxEvent], error) {
+func (m *mockHostAgentServiceClient) StreamEvents(_ context.Context, _ *hostagentpb.StreamEventsRequest, _ ...grpc.CallOption) (grpc.ServerStreamingClient[hostagentpb.SandboxEvent], error) {
 	return nil, nil
 }
 
-func (m *mockRuntimeServiceClient) UpdateSandboxGuardrails(_ context.Context, _ *runtimepb.UpdateSandboxGuardrailsRequest, _ ...grpc.CallOption) (*runtimepb.UpdateSandboxGuardrailsResponse, error) {
-	return &runtimepb.UpdateSandboxGuardrailsResponse{}, nil
+func (m *mockHostAgentServiceClient) UpdateSandboxGuardrails(_ context.Context, _ *hostagentpb.UpdateSandboxGuardrailsRequest, _ ...grpc.CallOption) (*hostagentpb.UpdateSandboxGuardrailsResponse, error) {
+	return &hostagentpb.UpdateSandboxGuardrailsResponse{}, nil
 }
 
 // newTestService creates a Service with only the repo (no orchestration).
@@ -228,15 +228,15 @@ func newTestService(repo Repository) *Service {
 }
 
 // newOrchestratedService creates a Service with full orchestration mocks.
-func newOrchestratedService(repo Repository, compute ComputePlacer, guardrails PolicyCompiler, runtimeClient *mockRuntimeServiceClient) *Service {
-	dialer := func(_ context.Context, _ string) (runtimepb.RuntimeServiceClient, error) {
-		return runtimeClient, nil
+func newOrchestratedService(repo Repository, compute ComputePlacer, guardrails PolicyCompiler, hostAgentClient *mockHostAgentServiceClient) *Service {
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
 	}
 	return NewService(ServiceConfig{
 		Repo:        repo,
 		Compute:     compute,
 		Guardrails:  guardrails,
-		DialRuntime: dialer,
+		DialHostAgent: dialer,
 	})
 }
 
@@ -313,16 +313,16 @@ func TestCreateWorkspace_NilCollections(t *testing.T) {
 
 func TestCreateWorkspace_WithOrchestration(t *testing.T) {
 	repo := newMockRepo()
-	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host-agent.host1:50052"}
 	guardrails := &mockPolicyCompiler{compiled: []byte(`{"rules":[]}`), count: 0}
-	runtimeClient := &mockRuntimeServiceClient{
-		createResp: &runtimepb.CreateSandboxResponse{
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{
 			SandboxId:        "sandbox-abc",
 			AgentApiEndpoint: "localhost:50052",
 		},
 	}
 
-	svc := newOrchestratedService(repo, compute, guardrails, runtimeClient)
+	svc := newOrchestratedService(repo, compute, guardrails, hostAgentClient)
 	ctx := context.Background()
 
 	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", &models.WorkspaceSpec{
@@ -358,9 +358,9 @@ func TestCreateWorkspace_WithOrchestration(t *testing.T) {
 func TestCreateWorkspace_PlacementFailure(t *testing.T) {
 	repo := newMockRepo()
 	compute := &mockComputePlacer{err: errors.New("no capacity")}
-	runtimeClient := &mockRuntimeServiceClient{}
+	hostAgentClient := &mockHostAgentServiceClient{}
 
-	svc := newOrchestratedService(repo, compute, nil, runtimeClient)
+	svc := newOrchestratedService(repo, compute, nil, hostAgentClient)
 	ctx := context.Background()
 
 	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
@@ -374,10 +374,10 @@ func TestCreateWorkspace_PlacementFailure(t *testing.T) {
 
 func TestCreateWorkspace_RuntimeFailure(t *testing.T) {
 	repo := newMockRepo()
-	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
-	runtimeClient := &mockRuntimeServiceClient{createErr: errors.New("connection refused")}
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host-agent.host1:50052"}
+	hostAgentClient := &mockHostAgentServiceClient{createErr: errors.New("connection refused")}
 
-	svc := newOrchestratedService(repo, compute, nil, runtimeClient)
+	svc := newOrchestratedService(repo, compute, nil, hostAgentClient)
 	ctx := context.Background()
 
 	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
@@ -385,25 +385,25 @@ func TestCreateWorkspace_RuntimeFailure(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ws.Status != models.WorkspaceStatusFailed {
-		t.Errorf("expected status failed after runtime failure, got %q", ws.Status)
+		t.Errorf("expected status failed after host agent failure, got %q", ws.Status)
 	}
 }
 
 func TestCreateWorkspace_WithGuardrails(t *testing.T) {
 	repo := newMockRepo()
-	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host-agent.host1:50052"}
 	guardrails := &mockPolicyCompiler{
 		compiled: []byte(`{"rules":[{"id":"r1","name":"deny-exec","rule_type":"tool_filter","condition":"exec","action":"deny","priority":10,"enabled":true}]}`),
 		count:    1,
 	}
-	runtimeClient := &mockRuntimeServiceClient{
-		createResp: &runtimepb.CreateSandboxResponse{
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{
 			SandboxId:        "sandbox-def",
 			AgentApiEndpoint: "localhost:50052",
 		},
 	}
 
-	svc := newOrchestratedService(repo, compute, guardrails, runtimeClient)
+	svc := newOrchestratedService(repo, compute, guardrails, hostAgentClient)
 	ctx := context.Background()
 
 	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", &models.WorkspaceSpec{
@@ -570,16 +570,16 @@ func TestTerminateWorkspace_EmptyID(t *testing.T) {
 
 func TestTerminateWorkspace_WithSandboxTeardown(t *testing.T) {
 	repo := newMockRepo()
-	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "runtime.host1:50052"}
-	runtimeClient := &mockRuntimeServiceClient{
-		createResp: &runtimepb.CreateSandboxResponse{
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host-agent.host1:50052"}
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{
 			SandboxId:        "sandbox-xyz",
 			AgentApiEndpoint: "localhost:50052",
 		},
-		destroyResp: &runtimepb.DestroySandboxResponse{},
+		destroyResp: &hostagentpb.DestroySandboxResponse{},
 	}
 
-	svc := newOrchestratedService(repo, compute, nil, runtimeClient)
+	svc := newOrchestratedService(repo, compute, nil, hostAgentClient)
 	ctx := context.Background()
 
 	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
@@ -595,8 +595,8 @@ func TestTerminateWorkspace_WithSandboxTeardown(t *testing.T) {
 	if got.Status != models.WorkspaceStatusTerminated {
 		t.Errorf("expected status terminated, got %q", got.Status)
 	}
-	if runtimeClient.destroyCalls != 1 {
-		t.Errorf("expected 1 destroy call, got %d", runtimeClient.destroyCalls)
+	if hostAgentClient.destroyCalls != 1 {
+		t.Errorf("expected 1 destroy call, got %d", hostAgentClient.destroyCalls)
 	}
 }
 
@@ -623,14 +623,14 @@ func (m *mockSnapshotStore) LoadSnapshot(_ context.Context, _ string) error {
 	return m.loadErr
 }
 
-func newSnapshotService(repo Repository, compute ComputePlacer, runtimeClient *mockRuntimeServiceClient, snapshots SnapshotStore) *Service {
-	dialer := func(_ context.Context, _ string) (runtimepb.RuntimeServiceClient, error) {
-		return runtimeClient, nil
+func newSnapshotService(repo Repository, compute ComputePlacer, hostAgentClient *mockHostAgentServiceClient, snapshots SnapshotStore) *Service {
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
 	}
 	return NewService(ServiceConfig{
 		Repo:        repo,
 		Compute:     compute,
-		DialRuntime: dialer,
+		DialHostAgent: dialer,
 		Snapshots:   snapshots,
 	})
 }
@@ -638,12 +638,12 @@ func newSnapshotService(repo Repository, compute ComputePlacer, runtimeClient *m
 func TestSnapshotWorkspace_Success(t *testing.T) {
 	repo := newMockRepo()
 	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
-	runtimeClient := &mockRuntimeServiceClient{
-		createResp:  &runtimepb.CreateSandboxResponse{SandboxId: "sb-1", AgentApiEndpoint: "localhost:50052"},
-		destroyResp: &runtimepb.DestroySandboxResponse{},
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp:  &hostagentpb.CreateSandboxResponse{SandboxId: "sb-1", AgentApiEndpoint: "localhost:50052"},
+		destroyResp: &hostagentpb.DestroySandboxResponse{},
 	}
 	snapStore := &mockSnapshotStore{returnSnapID: "snap-123"}
-	svc := newSnapshotService(repo, compute, runtimeClient, snapStore)
+	svc := newSnapshotService(repo, compute, hostAgentClient, snapStore)
 	ctx := context.Background()
 
 	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
@@ -701,12 +701,12 @@ func TestSnapshotWorkspace_NoSnapshotStore(t *testing.T) {
 func TestRestoreWorkspace_Success(t *testing.T) {
 	repo := newMockRepo()
 	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
-	runtimeClient := &mockRuntimeServiceClient{
-		createResp:  &runtimepb.CreateSandboxResponse{SandboxId: "sb-2", AgentApiEndpoint: "localhost:50052"},
-		destroyResp: &runtimepb.DestroySandboxResponse{},
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp:  &hostagentpb.CreateSandboxResponse{SandboxId: "sb-2", AgentApiEndpoint: "localhost:50052"},
+		destroyResp: &hostagentpb.DestroySandboxResponse{},
 	}
 	snapStore := &mockSnapshotStore{returnSnapID: "snap-456"}
-	svc := newSnapshotService(repo, compute, runtimeClient, snapStore)
+	svc := newSnapshotService(repo, compute, hostAgentClient, snapStore)
 	ctx := context.Background()
 
 	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
