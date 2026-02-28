@@ -178,9 +178,11 @@ This is the most performance-critical flow — executed on every tool call an ag
 ```mermaid
 sequenceDiagram
     participant Agent
+    participant Egress as Egress Enforcer (iptables)
     participant HA as Host Agent (Rust)
     participant Economics
     participant Activity as Activity Store
+    participant Ext as External API
 
     Agent->>HA: ExecuteTool (x-sandbox-id)
     Note over HA: 1. Lookup sandbox from header
@@ -196,11 +198,20 @@ sequenceDiagram
     HA-)Economics: 9. Record usage (fire-and-forget)
 
     Note over Agent: 10. Execute tool locally (inside container)
-    Agent->>HA: ReportActionResult (action_id, success, result)
-    HA-)Activity: 11. Record execution result (fire-and-forget)
+    opt Tool makes outbound network call
+        Agent->>Egress: outbound request
+        alt destination in allowlist
+            Egress->>Ext: forward
+            Ext-->>Agent: response
+        else destination not in allowlist
+            Egress--xAgent: dropped (timeout)
+        end
+    end
+    Agent->>HA: 11. ReportActionResult (action_id, success, result)
+    HA-)Activity: 12. Record execution result (fire-and-forget)
 ```
 
-Steps 8, 9, and 11 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The Python SDK's `@tool` decorator handles steps 10–11 transparently (see [Agent Developer Guide](getting-started/agent-guide.md)).
+Steps 8, 9, and 12 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The Python SDK's `@tool` decorator handles steps 10–12 transparently (see [Agent Developer Guide](getting-started/agent-guide.md)). The egress enforcer operates at the kernel level (iptables FORWARD chain) — it filters actual network traffic independently of guardrails evaluation.
 
 ### Flow 2: Human Interaction (Non-Blocking)
 
@@ -254,14 +265,17 @@ sequenceDiagram
     WS->>Guard: CompilePolicy
     Guard-->>WS: compiled_bytes (rules → binary)
 
-    WS->>HA: CreateSandbox
-    HA-->>WS: sandbox_id, endpoint (evaluator loaded)
+    WS->>HA: CreateSandbox (image, egress_allowlist, compiled_policy)
+    Note over HA: Start Docker container
+    Note over HA: Load guardrails evaluator
+    Note over HA: Apply iptables egress rules
+    HA-->>WS: sandbox_id, endpoint
 
     Note over WS: 3. Update status → running
     WS-->>Task: workspace_id
 ```
 
-If any step fails, the workspace is marked as `failed` rather than throwing — the caller can inspect the workspace status to understand what went wrong.
+If any step fails, the workspace is marked as `failed` rather than throwing — the caller can inspect the workspace status to understand what went wrong. The `CreateSandbox` step sets up all three security layers: the guardrails evaluator (intent filtering), the egress enforcer (network filtering via iptables FORWARD chain rules), and container isolation (Docker namespaces + cgroups).
 
 ---
 

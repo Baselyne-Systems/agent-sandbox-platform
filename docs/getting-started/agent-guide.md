@@ -8,14 +8,16 @@ This guide shows you how to build AI agents that run inside Bulkhead sandboxes u
 
 ## How It Works
 
-Your agent runs inside a Docker container (the "sandbox"). When it needs to use a tool, it doesn't call the tool directly — it first asks the Host Agent for permission via gRPC. The Host Agent evaluates guardrails and budget, returns a verdict (ALLOW / DENY / ESCALATE), and the agent only executes the tool if allowed. After execution, the agent reports the result back for the audit trail.
+Your agent runs inside a Docker container (the "sandbox"). When it needs to use a tool, it first asks the Host Agent for permission via gRPC. The Host Agent evaluates guardrails and budget, returns a verdict (ALLOW / DENY / ESCALATE), and the agent only executes the tool if allowed. After execution, the agent reports the result back for the audit trail. Any outbound network calls the tool makes are filtered through the egress enforcer — only allowlisted destinations pass.
 
 ```mermaid
 sequenceDiagram
     participant Agent as Agent (in Sandbox)
+    participant Egress as Egress Enforcer (iptables)
     participant HA as Host Agent (Rust)
     participant Economics
     participant Activity as Activity Store
+    participant Ext as External API
 
     Agent->>HA: ExecuteTool (x-sandbox-id)
     Note over HA: 1. Check budget
@@ -24,12 +26,21 @@ sequenceDiagram
     Note over HA: 2. Evaluate guardrails (<50ms)
     Note over HA: 3. Return verdict + action_id
     HA-->>Agent: verdict, action_id
+
     Note over Agent: 4. Execute tool locally
+    Agent->>Egress: outbound request (e.g., HTTP)
+    alt destination in allowlist
+        Egress->>Ext: forward
+        Ext-->>Agent: response
+    else destination not in allowlist
+        Egress--xAgent: dropped (timeout)
+    end
+
     Agent->>HA: ReportActionResult
     HA-)Activity: Record (fire-and-forget)
 ```
 
-The Python SDK handles this entire cycle transparently through the `@tool` decorator.
+The Python SDK handles the evaluate-execute-report cycle transparently through the `@tool` decorator. The egress enforcer operates at the kernel level (iptables) — your code just makes normal network calls and they either succeed or timeout based on the allowlist.
 
 ---
 
@@ -248,6 +259,57 @@ These environment variables are automatically injected into your container by th
 | `BULKHEAD_SANDBOX_ID` | Your sandbox's unique identifier |
 
 The SDK reads these automatically — you don't need to configure them manually. Any additional environment variables specified in the workspace config are also injected.
+
+---
+
+## Network Egress
+
+Your container's outbound network access is restricted by an **egress allowlist** — a set of approved destination hosts and CIDRs configured by the operator when the task is created. This is enforced at the kernel level via iptables, not by the SDK.
+
+### What's always allowed
+
+- **DNS** (port 53) — your code can resolve hostnames normally
+- **Host Agent callback** — the SDK's gRPC connection to the Host Agent always works
+
+### What happens when you hit a non-allowed destination
+
+Outbound connections to destinations not in the allowlist are **silently dropped**. Your code sees a connection timeout or "network unreachable" error — there is no SDK-level exception or audit trail entry. Handle this gracefully:
+
+```python
+@tool("fetch_api", description="Call external API")
+def fetch_api(url: str) -> dict:
+    import requests
+    try:
+        response = requests.get(url, timeout=10)
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        return {"error": "Connection failed — destination may not be in the egress allowlist"}
+```
+
+### How to communicate egress requirements
+
+You don't configure egress directly — the operator sets `egress_allowlist` in the workspace config when creating a task. Document which external hosts your agent needs so operators know what to allowlist:
+
+```yaml
+# Example: this agent needs access to
+# - api.stripe.com (payment processing)
+# - db.internal.example.com (invoice database)
+# - 10.0.0.0/8 (internal network)
+```
+
+The operator then includes these in `egress_allowlist` when creating the task (see [Operator Guide](operator-guide.md#5-create-a-task-full-orchestration)).
+
+### Layered security
+
+Egress enforcement is one layer of the sandbox security model:
+
+| Layer | What it controls | How |
+|-------|-----------------|-----|
+| **Guardrails** | What the agent *intends* to do (tool calls) | Policy evaluation (<50ms) |
+| **Egress allowlist** | Where the agent can *actually* connect | iptables FORWARD rules per container |
+| **Container isolation** | Process boundary and resource limits | Docker namespaces + cgroups |
+
+Guardrails evaluate intent; egress enforces network behavior. A tool call can be ALLOWED by guardrails but still fail if it tries to reach a non-allowlisted destination.
 
 ---
 
