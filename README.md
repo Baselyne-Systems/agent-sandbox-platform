@@ -64,40 +64,80 @@ The control plane handles setup and orchestration; the data plane handles agent 
 
 ### Core Flows
 
-**1. Action Evaluation (Hot Path, <50ms)** — Every tool call an agent makes flows through the Runtime: budget check via Economics, guardrails evaluation (local, RwLock read), tool execution, then fire-and-forget recording to Activity Store and Economics.
-
-```mermaid
-flowchart LR
-    A[Agent] -->|ExecuteTool| B["Budget Check<br/>(Economics)"]
-    B --> C["Guardrails Eval<br/>(local RwLock)"]
-    C --> D[Tool Execution]
-    D -.->|"fire-and-forget"| E["Activity Store"]
-    D -.->|"fire-and-forget"| F["Economics"]
-```
-
-**2. Human Interaction (Non-Blocking)** — Agent submits a request through the Runtime, which forwards it to the Human Interaction Service. The agent gets back a `request_id` and polls until a human responds.
+**1. Task Lifecycle** — An operator creates a task and transitions it to running. This triggers workspace orchestration: the Workspace Service finds a host, compiles guardrails into a binary policy, and deploys a sandbox on the Runtime with the evaluator loaded. The agent then executes inside this sandbox.
 
 ```mermaid
 sequenceDiagram
-    Agent->>Runtime: RequestHumanInput
-    Runtime->>HIS: CreateRequest
-    HIS-->>Runtime: request_id
-    Runtime-->>Agent: request_id
-    Note over Agent: continues working
-    Agent->>Runtime: CheckHumanRequest
-    Runtime-->>Agent: status: pending
-    Human->>HIS: RespondToRequest
-    Agent->>Runtime: CheckHumanRequest
-    Runtime-->>Agent: response + responder_id
+    participant Op as Operator
+    participant Task as Task Service
+    participant WS as Workspace Service
+    participant Compute as Compute Plane
+    participant Guard as Guardrails Service
+    participant RT as Sandbox Runtime
+
+    Op->>Task: CreateTask (goal, workspace config, budget, guardrails)
+    Op->>Task: UpdateTaskStatus → RUNNING
+
+    Task->>WS: ProvisionWorkspace
+    WS->>Compute: PlaceWorkspace (memory, cpu, disk)
+    Compute-->>WS: host_id, address (atomic reservation)
+    WS->>Guard: CompilePolicy (rule IDs)
+    Guard-->>WS: compiled_policy (binary bytes)
+    WS->>RT: CreateSandbox (agent_id, compiled_policy, allowed_tools, env_vars)
+    RT-->>WS: sandbox_id, agent_api_endpoint
+    WS-->>Task: workspace_id
+
+    Note over RT: Sandbox is now running — agent can connect
 ```
 
-**3. Workspace Orchestration** — When a task starts, the Workspace Service coordinates placement, policy compilation, and sandbox creation across three services.
+**2. Agent Execution (Hot Path, <50ms)** — Once the sandbox is running, the agent calls `ExecuteTool` on every tool invocation. The Runtime checks the budget with Economics, evaluates guardrails locally (RwLock read, <50ms), executes the tool if allowed, then records the action and usage asynchronously.
 
 ```mermaid
-flowchart LR
-    A["Task Service<br/>(start task)"] --> B["Compute Plane<br/>(atomic host reservation)"]
-    B --> C["Guardrails Service<br/>(compile rules → binary)"]
-    C --> D["Sandbox Runtime<br/>(create sandbox + load evaluator)"]
+sequenceDiagram
+    participant Agent
+    participant RT as Sandbox Runtime
+    participant Econ as Economics Service
+    participant Act as Activity Store
+
+    Agent->>RT: ExecuteTool (tool_name, params, x-sandbox-id)
+    RT->>Econ: CheckBudget (agent_id)
+    Econ-->>RT: allowed=true, remaining=$95.50
+    Note over RT: Guardrails eval (local RwLock read)<br/>Match rules by priority → ALLOW / DENY / ESCALATE
+    Note over RT: Execute tool (if allowed)
+    RT-->>Agent: verdict=ALLOW, result={...}
+    RT-)Act: RecordAction (fire-and-forget)
+    RT-)Econ: RecordUsage (fire-and-forget)
+```
+
+If the budget is exhausted, the tool call is denied immediately. If guardrails deny or escalate, no execution occurs.
+
+**3. Human-in-the-Loop** — When an agent needs human input (approval, question, escalation), it submits a non-blocking request through the Runtime to the Human Interaction Service, then polls for a response while continuing other work.
+
+```mermaid
+sequenceDiagram
+    participant Agent
+    participant RT as Sandbox Runtime
+    participant HIS as Human Interaction Service
+    participant Human
+
+    Agent->>RT: RequestHumanInput (question, options, timeout)
+    RT->>HIS: CreateRequest
+    HIS-->>RT: request_id
+    RT-->>Agent: request_id
+
+    Note over Agent: Agent continues other work
+
+    Agent->>RT: CheckHumanRequest (request_id)
+    RT->>HIS: GetRequest
+    HIS-->>RT: status=PENDING
+    RT-->>Agent: status=PENDING
+
+    Human->>HIS: RespondToRequest (response, responder_id)
+
+    Agent->>RT: CheckHumanRequest (request_id)
+    RT->>HIS: GetRequest
+    HIS-->>RT: status=RESPONDED, response="approve"
+    RT-->>Agent: response="approve", responder_id="user-jane"
 ```
 
 ## Quick Start
