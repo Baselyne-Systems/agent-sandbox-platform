@@ -1,9 +1,10 @@
 mod agent_api;
+mod container;
 mod sandbox;
 mod server;
-mod tools;
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::Result;
 use tonic::transport::Server;
@@ -18,7 +19,6 @@ use proto_gen::platform::runtime::v1::runtime_service_server::RuntimeServiceServ
 use crate::agent_api::AgentApiServiceImpl;
 use crate::sandbox::SandboxManager;
 use crate::server::RuntimeServiceImpl;
-use crate::tools::ToolInterceptor;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -80,11 +80,20 @@ async fn main() -> Result<()> {
     let advertise_endpoint = format!("{advertise_addr}:{port}");
     info!(advertise_endpoint = %advertise_endpoint, "agent API advertise endpoint");
 
-    let sandbox_manager = SandboxManager::new();
-    let tool_interceptor = ToolInterceptor::new();
+    // Initialize container runtime — DockerRuntime if ENABLE_DOCKER=true, otherwise Noop.
+    let container_runtime: Arc<dyn container::ContainerRuntime> =
+        if std::env::var("ENABLE_DOCKER").unwrap_or_default() == "true" {
+            info!("Docker container runtime enabled");
+            Arc::new(container::DockerRuntime::new()?)
+        } else {
+            info!("Docker disabled — using noop container runtime");
+            Arc::new(container::NoopContainerRuntime)
+        };
+
+    let sandbox_manager = SandboxManager::new(container_runtime);
     let runtime_service = RuntimeServiceImpl::new(sandbox_manager.clone(), advertise_endpoint);
     let agent_api_service =
-        AgentApiServiceImpl::new(sandbox_manager, tool_interceptor, his_client, activity_client, economics_client);
+        AgentApiServiceImpl::new(sandbox_manager, his_client, activity_client, economics_client);
 
     info!("Runtime starting on :{port}");
 

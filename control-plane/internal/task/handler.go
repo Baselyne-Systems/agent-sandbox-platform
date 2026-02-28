@@ -167,8 +167,9 @@ func modelWSConfigToProto(c *models.TaskWorkspaceConfig) *pb.TaskWorkspaceConfig
 		CpuMillicores: c.CpuMillicores,
 		DiskMb:        c.DiskMb,
 		MaxDurationSecs: c.MaxDurationSecs,
-		AllowedTools:  c.AllowedTools,
-		EnvVars:       c.EnvVars,
+		AllowedTools:    c.AllowedTools,
+		EnvVars:         c.EnvVars,
+		ContainerImage:  c.ContainerImage,
 	}
 }
 
@@ -182,6 +183,7 @@ func protoWSConfigToModel(c *pb.TaskWorkspaceConfig) models.TaskWorkspaceConfig 
 		MaxDurationSecs: c.GetMaxDurationSecs(),
 		AllowedTools:    c.GetAllowedTools(),
 		EnvVars:         c.GetEnvVars(),
+		ContainerImage:  c.GetContainerImage(),
 	}
 }
 

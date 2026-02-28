@@ -27,9 +27,14 @@ service RuntimeService {
 // AgentAPIService is exposed inside the sandbox for agents to call.
 // This is the agent-facing API.
 service AgentAPIService {
-  // ExecuteTool requests execution of a tool. The runtime evaluates guardrails
-  // before executing and may require human approval.
+  // ExecuteTool evaluates guardrails and budget for a tool call.
+  // Returns a verdict (ALLOW/DENY/ESCALATE) and an action_id.
+  // The agent is responsible for executing the tool if allowed.
   rpc ExecuteTool(ExecuteToolRequest) returns (ExecuteToolResponse);
+
+  // ReportActionResult records the outcome of an agent-executed tool call.
+  // Called by the agent after executing a tool that was allowed by ExecuteTool.
+  rpc ReportActionResult(ReportActionResultRequest) returns (ReportActionResultResponse);
 
   // RequestHumanInput pauses agent execution pending human response.
   rpc RequestHumanInput(RequestHumanInputRequest) returns (RequestHumanInputResponse);
@@ -55,6 +60,7 @@ message SandboxSpec {
   int64 disk_mb = 3;
   repeated string allowed_tools = 4;
   map<string, string> env_vars = 5;
+  string container_image = 6;       // Docker image for sandbox container
 }
 
 message CreateSandboxResponse {
@@ -133,10 +139,20 @@ message ExecuteToolRequest {
 
 message ExecuteToolResponse {
   ActionVerdict verdict = 1;
-  google.protobuf.Struct result = 2;
+  google.protobuf.Struct result = 2;    // empty for policy-only; kept for backwards compat
   string denial_reason = 3;
   string escalation_id = 4;
+  string action_id = 5;                // links to ReportActionResult for audit trail
 }
+
+message ReportActionResultRequest {
+  string action_id = 1;                // from ExecuteToolResponse.action_id
+  bool success = 2;
+  google.protobuf.Struct result = 3;   // actual tool output
+  string error_message = 4;
+}
+
+message ReportActionResultResponse {}
 
 message RequestHumanInputRequest {
   string question = 1;

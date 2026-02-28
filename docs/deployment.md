@@ -8,7 +8,8 @@
 |------|---------|---------|
 | Go | 1.24+ | Control plane services |
 | Rust | 1.83+ | Data plane runtime |
-| Docker | 24+ | PostgreSQL, full stack |
+| Python | 3.10+ | SDK for building agents |
+| Docker | 24+ | PostgreSQL, full stack, sandbox containers |
 | Docker Compose | v2+ | Service orchestration |
 | buf | latest | Proto generation (Go) |
 | protoc | 3.x | Protocol buffer compiler |
@@ -177,6 +178,7 @@ healthcheck:
 | `HIS_ENDPOINT` | — | gRPC endpoint for Human Interaction Service (e.g., `http://human:50051`). If unset, `RequestHumanInput` returns `UNAVAILABLE`. |
 | `ACTIVITY_ENDPOINT` | — | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
 | `ECONOMICS_ENDPOINT` | — | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
+| `ENABLE_DOCKER` | `false` | Set to `true` to enable Docker container management via bollard. Requires Docker socket access. |
 | `RUST_LOG` | `info` | Tracing filter (e.g., `debug`, `runtime=trace,tower=warn`) |
 
 ### Docker Compose Environment
@@ -202,6 +204,14 @@ WORKSPACE_ENDPOINT: workspace:50051
 HIS_ENDPOINT: http://human:50051
 ACTIVITY_ENDPOINT: http://activity:50051
 ECONOMICS_ENDPOINT: http://economics:50051
+ENABLE_DOCKER: "true"
+```
+
+The Runtime container needs Docker socket access for managing agent containers:
+
+```yaml
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock
 ```
 
 ---
@@ -236,6 +246,7 @@ Migration files in `control-plane/migrations/` are automatically executed on fir
 | `004_workspace_sandbox.sql` | Snapshots: workspace_snapshots table, snapshot_id column on workspaces |
 | `005_task_enrichment.sql` | Extended task spec: goal, workspace_config, budget_config, HIS config, labels. Agent enhancements: purpose, trust_level, capabilities |
 | `006_missing_tables.sql` | HIS extensions: delivery_channels, timeout_policies. Workspace snapshot_id column |
+| `007_container_image.sql` | Adds `container_image` column to workspaces table |
 
 ### Migration Idempotency
 

@@ -159,7 +159,10 @@ services:
       HIS_ENDPOINT: http://human:50051
       ACTIVITY_ENDPOINT: http://activity:50051
       ECONOMICS_ENDPOINT: http://economics:50051
+      ENABLE_DOCKER: "true"
       RUST_LOG: info
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "50052:50052"
     depends_on:

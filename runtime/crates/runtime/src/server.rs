@@ -51,11 +51,11 @@ impl RuntimeService for RuntimeServiceImpl {
             "creating sandbox"
         );
 
-        let (allowed_tools, env_vars) = req
+        let (allowed_tools, env_vars, container_image) = req
             .spec
             .as_ref()
-            .map(|s| (s.allowed_tools.clone(), s.env_vars.clone()))
-            .unwrap_or_else(|| (vec![], HashMap::new()));
+            .map(|s| (s.allowed_tools.clone(), s.env_vars.clone(), s.container_image.clone()))
+            .unwrap_or_else(|| (vec![], HashMap::new(), String::new()));
 
         let params = CreateSandboxParams {
             workspace_id: req.workspace_id.clone(),
@@ -63,11 +63,13 @@ impl RuntimeService for RuntimeServiceImpl {
             allowed_tools,
             env_vars,
             compiled_guardrails: req.compiled_guardrails,
+            container_image,
         };
 
         let state = self
             .sandbox_manager
             .create(params)
+            .await
             .map_err(|e| Status::internal(e.to_string()))?;
 
         let agent_api_endpoint = self.advertise_endpoint.clone();
@@ -96,6 +98,7 @@ impl RuntimeService for RuntimeServiceImpl {
 
         self.sandbox_manager
             .destroy(&req.sandbox_id)
+            .await
             .map_err(|e| Status::not_found(e.to_string()))?;
 
         Ok(Response::new(DestroySandboxResponse {}))

@@ -4,7 +4,9 @@ Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It
 
 ## Key Features
 
-- **Sandboxed Execution** — Each agent runs in an isolated workspace with resource limits, allowed tool lists, and environment variable injection
+- **Sandboxed Execution** — Each agent runs in an isolated Docker container with resource limits, allowed tool lists, and environment variable injection. Specify a `container_image` per workspace to bring your own runtime environment
+- **Policy-Only Runtime** — The Runtime is a pure policy engine. `ExecuteTool` evaluates guardrails and budget, returning a verdict (ALLOW/DENY/ESCALATE) and an `action_id`. Agents execute tools locally inside their container, then report results via `ReportActionResult` for the audit trail
+- **Python SDK with `@tool` Decorator** — Register tool handlers with `@tool("name")` and the SDK transparently handles the evaluate → execute → report cycle. Integrates with LangChain and other frameworks
 - **Real-Time Guardrails** — Every tool call is evaluated against compiled policy rules in <50ms. Rules can deny, allow, escalate, or log actions based on tool names, parameters, and agent identity
 - **Human-in-the-Loop** — Agents can request human input (approvals, questions, escalations) via a non-blocking poll pattern. Supports configurable delivery channels and timeout policies
 - **Budget Enforcement** — Per-agent budgets checked before every tool execution. Usage metered automatically with cost reporting
@@ -34,9 +36,9 @@ graph TB
     end
 
     subgraph DP["Data Plane (Rust, per host)"]
-        subgraph Sandbox["Sandbox Runtime"]
+        subgraph Sandbox["Sandbox Runtime (Policy Engine)"]
             Evaluator["Guardrails Evaluator"]
-            Interceptor["Tool Interceptor"]
+            Container["Docker Container"]
         end
     end
 
@@ -60,7 +62,7 @@ The control plane handles setup and orchestration; the data plane handles agent 
 | **Activity Store** | Go | Append-only action records with streaming support |
 | **Economics** | Go | Usage metering, per-agent budgets, cost reporting |
 | **Data Governance** | Go | Content classification, DLP pattern detection, egress policy enforcement |
-| **Sandbox Runtime** | Rust | Per-host binary running sandboxed agent workloads with <50ms guardrails evaluation |
+| **Sandbox Runtime** | Rust | Per-host policy engine with <50ms guardrails evaluation, Docker container lifecycle, and audit trail recording |
 
 ### Core Flows
 
@@ -83,14 +85,15 @@ sequenceDiagram
     Compute-->>WS: host_id, address (atomic reservation)
     WS->>Guard: CompilePolicy (rule IDs)
     Guard-->>WS: compiled_policy (binary bytes)
-    WS->>RT: CreateSandbox (agent_id, compiled_policy, allowed_tools, env_vars)
+    WS->>RT: CreateSandbox (agent_id, compiled_policy, allowed_tools, env_vars, container_image)
     RT-->>WS: sandbox_id, agent_api_endpoint
+    Note over RT: Docker container started (if image specified)
     WS-->>Task: workspace_id
 
     Note over RT: Sandbox is now running — agent can connect
 ```
 
-**2. Agent Execution (Hot Path, <50ms)** — Once the sandbox is running, the agent calls `ExecuteTool` on every tool invocation. The Runtime checks the budget with Economics, evaluates guardrails locally (RwLock read, <50ms), executes the tool if allowed, then records the action and usage asynchronously.
+**2. Agent Execution (Policy-Only, <50ms)** — Once the sandbox is running, the agent calls `ExecuteTool` on every tool invocation. The Runtime checks the budget with Economics, evaluates guardrails locally (RwLock read, <50ms), and returns a verdict with an `action_id`. The agent executes the tool locally inside its container if allowed, then calls `ReportActionResult` to record the outcome.
 
 ```mermaid
 sequenceDiagram
@@ -103,13 +106,16 @@ sequenceDiagram
     RT->>Econ: CheckBudget (agent_id)
     Econ-->>RT: allowed=true, remaining=$95.50
     Note over RT: Guardrails eval (local RwLock read)<br/>Match rules by priority → ALLOW / DENY / ESCALATE
-    Note over RT: Execute tool (if allowed)
-    RT-->>Agent: verdict=ALLOW, result={...}
-    RT-)Act: RecordAction (fire-and-forget)
+    RT-->>Agent: verdict=ALLOW, action_id=uuid
+    RT-)Act: RecordAction (fire-and-forget, evaluation only)
     RT-)Econ: RecordUsage (fire-and-forget)
+
+    Note over Agent: Execute tool locally (inside container)
+    Agent->>RT: ReportActionResult (action_id, success, result)
+    RT-)Act: RecordAction (fire-and-forget, execution result)
 ```
 
-If the budget is exhausted, the tool call is denied immediately. If guardrails deny or escalate, no execution occurs.
+If the budget is exhausted, the tool call is denied immediately. If guardrails deny or escalate, no `action_id` is returned and the agent does not execute. The Python SDK handles this cycle transparently via the `@tool` decorator.
 
 **3. Human-in-the-Loop** — When an agent needs human input (approval, question, escalation), it submits a non-blocking request through the Runtime to the Human Interaction Service, then polls for a response while continuing other work.
 
@@ -146,6 +152,7 @@ sequenceDiagram
 
 - Go 1.24+
 - Rust 1.83+
+- Python 3.10+ (for the SDK)
 - Docker and Docker Compose
 - [buf](https://buf.build/) CLI (for proto generation)
 - [grpcurl](https://github.com/fullstorydev/grpcurl) (for examples below)
@@ -281,7 +288,8 @@ grpcurl -plaintext -d '{
     "cpu_millicores": 500,
     "disk_mb": 2048,
     "max_duration_secs": 3600,
-    "allowed_tools": ["read_file", "write_file", "http_request"]
+    "allowed_tools": ["read_file", "write_file", "http_request"],
+    "container_image": "myregistry/invoice-agent:latest"
   },
   "guardrail_policy_id": "<rule_id_1>,<rule_id_2>",
   "budget_config": {
@@ -300,12 +308,12 @@ grpcurl -plaintext -d '{
 
 This triggers: Compute placement -> Guardrails compilation -> Runtime sandbox creation.
 
-### 5. Execute a Tool (Agent Hot Path)
+### 5. Execute a Tool (Policy-Only Hot Path)
 
-Inside a running sandbox, the agent calls the Agent API with its sandbox ID in metadata:
+Inside a running sandbox, the agent calls the Agent API with its sandbox ID in metadata. The Runtime evaluates guardrails but does NOT execute the tool — the agent executes locally and reports the result.
 
 ```bash
-# Execute a tool (agent-facing API on the runtime)
+# Evaluate a tool call (agent-facing API on the runtime)
 grpcurl -plaintext \
   -H "x-sandbox-id: <sandbox_id>" \
   -d '{
@@ -313,7 +321,32 @@ grpcurl -plaintext \
     "parameters": {"path": "/data/invoices/inv-001.json"},
     "justification": "Reading invoice for processing"
   }' localhost:50052 platform.runtime.v1.AgentAPIService/ExecuteTool
-# Returns: verdict (ALLOW/DENY/ESCALATE), result, denial_reason
+# Returns: verdict (ALLOW/DENY/ESCALATE), action_id
+
+# After executing the tool locally, report the result
+grpcurl -plaintext \
+  -H "x-sandbox-id: <sandbox_id>" \
+  -d '{
+    "action_id": "<action_id from above>",
+    "success": true,
+    "result": {"content": "...invoice data..."}
+  }' localhost:50052 platform.runtime.v1.AgentAPIService/ReportActionResult
+```
+
+**Using the Python SDK** — the `@tool` decorator handles this cycle transparently:
+
+```python
+from bulkhead import BulkheadAgent, tool, Verdict
+
+@tool("read_file", description="Read a file from disk")
+def read_file(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+with BulkheadAgent(tools=[read_file]) as agent:
+    result = agent.execute_tool("read_file", {"path": "/data/inv-001.json"})
+    if result.verdict == Verdict.ALLOW:
+        print(result.result)
 ```
 
 ### 6. Human-in-the-Loop Escalation
@@ -378,7 +411,7 @@ bulkhead/
 │   │   ├── middleware/             #     Auth + logging interceptors
 │   │   ├── models/                 #     Domain types
 │   │   └── <service>/             #     repository.go, service.go, handler.go
-│   ├── migrations/                 #   SQL schema migrations (6 files)
+│   ├── migrations/                 #   SQL schema migrations (7 files)
 │   └── pkg/gen/                    #   Generated protobuf Go code
 │
 ├── runtime/                        # Rust data-plane
@@ -387,11 +420,16 @@ bulkhead/
 │       │   └── src/
 │       │       ├── main.rs         #     Entry point, service wiring
 │       │       ├── server.rs       #     RuntimeService (control API)
-│       │       ├── agent_api.rs    #     AgentAPIService (agent-facing)
-│       │       ├── sandbox/        #     SandboxManager, SandboxState
-│       │       └── tools/          #     ToolInterceptor
+│       │       ├── agent_api.rs    #     AgentAPIService (policy-only)
+│       │       ├── container.rs    #     ContainerRuntime trait + Docker
+│       │       └── sandbox/        #     SandboxManager, SandboxState
 │       ├── guardrails-eval/        #   Policy evaluator library
 │       └── proto-gen/              #   Generated protobuf Rust code
+│
+├── sdk/                            # Language SDKs
+│   └── python/                     #   Python SDK (bulkhead-sdk)
+│       ├── bulkhead/               #     Client, @tool decorator, types
+│       └── examples/               #     Basic agent, LangChain integration
 │
 ├── deploy/
 │   ├── docker-compose.yml          # Full stack (11 services)

@@ -1,0 +1,5 @@
+BEGIN;
+
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS container_image TEXT NOT NULL DEFAULT '';
+
+COMMIT;

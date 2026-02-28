@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 use guardrails_eval::Evaluator;
 
+use crate::container::ContainerRuntime;
+
 /// Status of a sandbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SandboxStatus {
@@ -45,6 +47,7 @@ pub struct CreateSandboxParams {
     pub allowed_tools: Vec<String>,
     pub env_vars: HashMap<String, String>,
     pub compiled_guardrails: Vec<u8>,
+    pub container_image: String,
 }
 
 /// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
@@ -64,6 +67,10 @@ pub struct SandboxState {
     pub allowed_tools: Vec<String>,
     /// Environment variables injected into the sandbox.
     pub env_vars: HashMap<String, String>,
+    /// Docker image for the sandbox container.
+    pub container_image: String,
+    /// Container ID if a container was started for this sandbox.
+    pub container_id: Mutex<Option<String>>,
     /// Counter of actions executed in this sandbox.
     pub actions_executed: AtomicU32,
     /// Broadcast sender for sandbox events (subscribe for StreamEvents).
@@ -90,23 +97,49 @@ impl std::fmt::Debug for SandboxState {
 #[derive(Debug, Clone)]
 pub struct SandboxManager {
     sandboxes: Arc<Mutex<HashMap<String, Arc<SandboxState>>>>,
+    container_runtime: Arc<dyn ContainerRuntime>,
 }
 
 impl SandboxManager {
-    /// Create a new, empty sandbox manager.
-    pub fn new() -> Self {
+    /// Create a new sandbox manager with the given container runtime.
+    pub fn new(container_runtime: Arc<dyn ContainerRuntime>) -> Self {
         Self {
             sandboxes: Arc::new(Mutex::new(HashMap::new())),
+            container_runtime,
         }
     }
 
-    /// Provision a new sandbox with full state.
-    pub fn create(&self, params: CreateSandboxParams) -> Result<Arc<SandboxState>> {
+    /// Provision a new sandbox with full state, optionally starting a container.
+    pub async fn create(&self, params: CreateSandboxParams) -> Result<Arc<SandboxState>> {
         let evaluator = Evaluator::load(&params.compiled_guardrails)
             .map_err(|e| anyhow!("failed to load guardrails: {e}"))?;
 
         let id = Uuid::new_v4().to_string();
         let (event_tx, _) = broadcast::channel(256);
+
+        // Start container if an image is specified
+        let container_id = if !params.container_image.is_empty() {
+            let memory_bytes = 512 * 1024 * 1024; // default 512MB
+            let cpu_quota = 100_000; // default 1 CPU
+            match self
+                .container_runtime
+                .start_container(
+                    &id,
+                    &params.container_image,
+                    params.env_vars.clone(),
+                    memory_bytes,
+                    cpu_quota,
+                )
+                .await
+            {
+                Ok(cid) => Some(cid),
+                Err(e) => {
+                    return Err(anyhow!("failed to start container: {e}"));
+                }
+            }
+        } else {
+            None
+        };
 
         let state = Arc::new(SandboxState {
             id: id.clone(),
@@ -116,6 +149,8 @@ impl SandboxManager {
             evaluator: RwLock::new(evaluator),
             allowed_tools: params.allowed_tools,
             env_vars: params.env_vars,
+            container_image: params.container_image,
+            container_id: Mutex::new(container_id),
             actions_executed: AtomicU32::new(0),
             event_tx: event_tx.clone(),
             created_at: SystemTime::now(),
@@ -143,28 +178,46 @@ impl SandboxManager {
         Ok(state)
     }
 
-    /// Destroy (tear down) a sandbox by ID.
-    pub fn destroy(&self, sandbox_id: &str) -> Result<()> {
-        let mut sandboxes = self
-            .sandboxes
-            .lock()
-            .map_err(|e| anyhow!("lock poisoned: {e}"))?;
+    /// Destroy (tear down) a sandbox by ID, stopping its container if one exists.
+    pub async fn destroy(&self, sandbox_id: &str) -> Result<()> {
+        let state = {
+            let mut sandboxes = self
+                .sandboxes
+                .lock()
+                .map_err(|e| anyhow!("lock poisoned: {e}"))?;
+            sandboxes
+                .remove(sandbox_id)
+                .ok_or_else(|| anyhow!("sandbox not found: {sandbox_id}"))?
+        };
 
-        if let Some(state) = sandboxes.remove(sandbox_id) {
-            // Update status
-            if let Ok(mut status) = state.status.lock() {
-                *status = SandboxStatus::Stopped;
+        // Stop container if one was started
+        let container_id = state
+            .container_id
+            .lock()
+            .map_err(|e| anyhow!("lock poisoned: {e}"))?
+            .clone();
+        if let Some(cid) = container_id {
+            if let Err(e) = self.container_runtime.stop_container(&cid).await {
+                tracing::warn!(
+                    error = %e,
+                    container_id = %cid,
+                    sandbox_id = %sandbox_id,
+                    "failed to stop container — proceeding with sandbox teardown"
+                );
             }
-            // Send lifecycle stopped event
-            let _ = state.event_tx.send(SandboxEvent::Lifecycle {
-                new_state: "stopped".into(),
-                reason: "sandbox destroyed".into(),
-            });
-            info!(sandbox_id = %sandbox_id, "sandbox destroyed");
-            Ok(())
-        } else {
-            Err(anyhow!("sandbox not found: {sandbox_id}"))
         }
+
+        // Update status
+        if let Ok(mut status) = state.status.lock() {
+            *status = SandboxStatus::Stopped;
+        }
+        // Send lifecycle stopped event
+        let _ = state.event_tx.send(SandboxEvent::Lifecycle {
+            new_state: "stopped".into(),
+            reason: "sandbox destroyed".into(),
+        });
+        info!(sandbox_id = %sandbox_id, "sandbox destroyed");
+        Ok(())
     }
 
     /// Retrieve sandbox state by ID.
@@ -217,16 +270,21 @@ impl SandboxManager {
 
 impl Default for SandboxManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(crate::container::NoopContainerRuntime))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::container::NoopContainerRuntime;
 
     fn empty_policy_bytes() -> Vec<u8> {
         serde_json::to_vec(&guardrails_eval::CompiledPolicy { rules: vec![] }).unwrap()
+    }
+
+    fn test_mgr() -> SandboxManager {
+        SandboxManager::new(Arc::new(NoopContainerRuntime))
     }
 
     fn test_params(workspace_id: &str, agent_id: &str) -> CreateSandboxParams {
@@ -236,13 +294,14 @@ mod tests {
             allowed_tools: vec!["read_file".to_string(), "write_file".to_string()],
             env_vars: HashMap::from([("ENV".to_string(), "test".to_string())]),
             compiled_guardrails: empty_policy_bytes(),
+            container_image: String::new(),
         }
     }
 
-    #[test]
-    fn create_and_destroy_sandbox() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-001", "agent-001")).unwrap();
+    #[tokio::test]
+    async fn create_and_destroy_sandbox() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-001", "agent-001")).await.unwrap();
         assert_eq!(*state.status.lock().unwrap(), SandboxStatus::Running);
         assert_eq!(state.workspace_id, "ws-001");
         assert_eq!(state.agent_id, "agent-001");
@@ -251,22 +310,21 @@ mod tests {
         let fetched = mgr.get_sandbox(&state.id).unwrap();
         assert_eq!(fetched.id, state.id);
 
-        mgr.destroy(&state.id).unwrap();
+        mgr.destroy(&state.id).await.unwrap();
         assert!(mgr.get_sandbox(&state.id).is_err());
     }
 
-    #[test]
-    fn destroy_nonexistent_returns_error() {
-        let mgr = SandboxManager::new();
-        assert!(mgr.destroy("no-such-sandbox").is_err());
+    #[tokio::test]
+    async fn destroy_nonexistent_returns_error() {
+        let mgr = test_mgr();
+        assert!(mgr.destroy("no-such-sandbox").await.is_err());
     }
 
-    #[test]
-    fn sandbox_has_event_channel() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-002", "agent-002")).unwrap();
+    #[tokio::test]
+    async fn sandbox_has_event_channel() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-002", "agent-002")).await.unwrap();
 
-        // Subscribe and verify we can receive events
         let mut rx = state.event_tx.subscribe();
         let _ = state.event_tx.send(SandboxEvent::Progress {
             message: "test".into(),
@@ -280,22 +338,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn actions_executed_counter() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-003", "agent-003")).unwrap();
+    #[tokio::test]
+    async fn actions_executed_counter() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-003", "agent-003")).await.unwrap();
 
         assert_eq!(state.actions_executed.load(Ordering::Relaxed), 0);
         state.actions_executed.fetch_add(1, Ordering::Relaxed);
         assert_eq!(state.actions_executed.load(Ordering::Relaxed), 1);
     }
 
-    #[test]
-    fn update_guardrails_replaces_policy() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-005", "agent-005")).unwrap();
+    #[tokio::test]
+    async fn update_guardrails_replaces_policy() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-005", "agent-005")).await.unwrap();
 
-        // Build a policy with one deny rule
         let policy_with_rule = serde_json::to_vec(&guardrails_eval::CompiledPolicy {
             rules: vec![guardrails_eval::CompiledRule {
                 id: "r1".to_string(),
@@ -311,7 +368,6 @@ mod tests {
 
         mgr.update_guardrails(&state.id, &policy_with_rule).unwrap();
 
-        // Verify the new policy is active by evaluating
         let ctx = guardrails_eval::EvalContext {
             tool_name: "dangerous_tool".to_string(),
             parameters: serde_json::Value::Null,
@@ -324,23 +380,23 @@ mod tests {
 
     #[test]
     fn update_guardrails_nonexistent_sandbox() {
-        let mgr = SandboxManager::new();
+        let mgr = test_mgr();
         let result = mgr.update_guardrails("no-such-sandbox", &empty_policy_bytes());
         assert!(result.is_err());
     }
 
-    #[test]
-    fn update_guardrails_invalid_bytes() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-006", "agent-006")).unwrap();
+    #[tokio::test]
+    async fn update_guardrails_invalid_bytes() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-006", "agent-006")).await.unwrap();
         let result = mgr.update_guardrails(&state.id, b"not valid json");
         assert!(result.is_err());
     }
 
-    #[test]
-    fn update_guardrails_emits_lifecycle_event() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-007", "agent-007")).unwrap();
+    #[tokio::test]
+    async fn update_guardrails_emits_lifecycle_event() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-007", "agent-007")).await.unwrap();
 
         let mut rx = state.event_tx.subscribe();
         mgr.update_guardrails(&state.id, &empty_policy_bytes()).unwrap();
@@ -352,18 +408,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn destroy_sends_stopped_event() {
-        let mgr = SandboxManager::new();
-        let state = mgr.create(test_params("ws-004", "agent-004")).unwrap();
+    #[tokio::test]
+    async fn destroy_sends_stopped_event() {
+        let mgr = test_mgr();
+        let state = mgr.create(test_params("ws-004", "agent-004")).await.unwrap();
 
         let mut rx = state.event_tx.subscribe();
-        mgr.destroy(&state.id).unwrap();
+        mgr.destroy(&state.id).await.unwrap();
 
         let event = rx.try_recv().unwrap();
         match event {
             SandboxEvent::Lifecycle { new_state, .. } => assert_eq!(new_state, "stopped"),
             _ => panic!("expected lifecycle event"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_with_container_image() {
+        let mgr = test_mgr();
+        let mut params = test_params("ws-010", "agent-010");
+        params.container_image = "python:3.12".to_string();
+        let state = mgr.create(params).await.unwrap();
+
+        let container_id = state.container_id.lock().unwrap().clone();
+        assert!(container_id.is_some(), "container should be started for non-empty image");
+        assert!(container_id.unwrap().starts_with("noop-"));
     }
 }

@@ -75,6 +75,7 @@ message TaskWorkspaceConfig {
   int64 max_duration_secs = 6;
   repeated string allowed_tools = 7;
   map<string, string> env_vars = 8;
+  string container_image = 9;       // Docker image to run (e.g. "ghcr.io/org/agent:latest")
 }
 
 // HumanInteractionConfig defines how the task interacts with humans.

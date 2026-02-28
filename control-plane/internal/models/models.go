@@ -155,6 +155,7 @@ type WorkspaceSpec struct {
 	AllowedTools      []string
 	GuardrailPolicyID string
 	EnvVars           map[string]string
+	ContainerImage    string
 }
 
 // Workspace represents an isolated execution environment for an agent.
@@ -301,8 +302,9 @@ type TaskWorkspaceConfig struct {
 	CpuMillicores int32            `json:"cpu_millicores,omitempty"`
 	DiskMb        int64             `json:"disk_mb,omitempty"`
 	MaxDurationSecs int64          `json:"max_duration_secs,omitempty"`
-	AllowedTools  []string          `json:"allowed_tools,omitempty"`
-	EnvVars       map[string]string `json:"env_vars,omitempty"`
+	AllowedTools    []string          `json:"allowed_tools,omitempty"`
+	EnvVars         map[string]string `json:"env_vars,omitempty"`
+	ContainerImage  string            `json:"container_image,omitempty"`
 }
 
 // TaskHumanInteractionConfig defines how a task interacts with humans.

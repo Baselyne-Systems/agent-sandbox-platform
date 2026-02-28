@@ -140,24 +140,28 @@ A stateless service for content classification and data loss prevention. Classif
 
 ### Sandbox Runtime (Data Plane)
 
-A Rust binary that runs on each host in the fleet. It exposes two gRPC services: **RuntimeService** (called by the control plane to manage sandboxes) and **AgentAPIService** (called by agents to execute tools). Each sandbox contains its own guardrails evaluator, allowed tool list, and environment variables. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`.
+A Rust binary that runs on each host in the fleet. It exposes two gRPC services: **RuntimeService** (called by the control plane to manage sandboxes) and **AgentAPIService** (called by agents for guardrail evaluation). The Runtime is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents execute tools locally inside their Docker container and report results via `ReportActionResult` for the audit trail.
+
+Each sandbox manages its own guardrails evaluator, Docker container lifecycle, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`. Container management uses the bollard crate, enabled via `ENABLE_DOCKER=true`.
 
 **Responsibilities:**
 - Sandbox lifecycle management (create, destroy, status, events)
-- Guardrails evaluation in the hot path (RwLock for concurrent reads)
+- Docker container lifecycle (start, stop, resource limits)
+- Guardrails evaluation in the hot path (RwLock for concurrent reads, <50ms)
 - Hot-reload of guardrails policies without sandbox restart
-- Tool interception and execution
-- Budget checking before tool execution (optional, via Economics Service)
-- Activity recording after tool execution (optional, via Activity Store)
+- Policy-only `ExecuteTool` — returns verdict + action_id, no tool execution
+- `ReportActionResult` — records agent-reported tool outcomes for audit trail
+- Budget checking before tool evaluation (optional, via Economics Service)
+- Activity recording (optional, via Activity Store)
 - Human interaction forwarding (optional, via HIS)
 
 ---
 
 ## Core Flows
 
-### Flow 1: Action Evaluation (Hot Path)
+### Flow 1: Action Evaluation (Policy-Only Hot Path)
 
-This is the most performance-critical flow — executed on every tool call an agent makes. Target latency: <50ms for guardrails evaluation.
+This is the most performance-critical flow — executed on every tool call an agent makes. Target latency: <50ms for guardrails evaluation. The Runtime is **policy-only**: it evaluates but does not execute tools.
 
 ```mermaid
 sequenceDiagram
@@ -172,15 +176,19 @@ sequenceDiagram
     Runtime->>Economics: 3. CheckBudget
     Economics-->>Runtime: allowed / denied
     Note over Runtime: 4. Guardrails eval (RwLock read)<br/>Allow / Deny(reason) / Escalate(id)
-    Note over Runtime: 5. Tool execution (if allowed)
+    Note over Runtime: 5. Generate action_id (UUID)
     Note over Runtime: 6. Increment action counter (atomic)
     Note over Runtime: 7. Emit action event (broadcast)
-    Runtime-->>Agent: verdict, result, denial_reason
-    Runtime-)Activity: 8. Record action (fire-and-forget)
+    Runtime-->>Agent: verdict, action_id, denial_reason
+    Runtime-)Activity: 8. Record evaluation (fire-and-forget)
     Runtime-)Economics: 9. Record usage (fire-and-forget)
+
+    Note over Agent: 10. Execute tool locally (inside container)
+    Agent->>Runtime: ReportActionResult (action_id, success, result)
+    Runtime-)Activity: 11. Record execution result (fire-and-forget)
 ```
 
-Steps 8 and 9 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent.
+Steps 8, 9, and 11 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The Python SDK's `@tool` decorator handles steps 10-11 transparently.
 
 ### Flow 2: Human Interaction (Non-Blocking)
 
@@ -313,7 +321,9 @@ erDiagram
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Control Plane | Go 1.24 | 9 microservices with gRPC APIs |
-| Data Plane | Rust 1.83 | Per-host sandbox runtime, <50ms evaluation |
+| Data Plane | Rust 1.83 | Per-host policy engine, <50ms evaluation, Docker container lifecycle |
+| Python SDK | Python 3.10+ | `@tool` decorator, evaluate → execute → report cycle |
+| Container Runtime | bollard (Rust) / Docker | Agent container lifecycle (opt-in via `ENABLE_DOCKER`) |
 | Database | PostgreSQL 16 | Shared persistence for all control-plane services |
 | RPC Framework | gRPC / Protocol Buffers | Inter-service communication |
 | Build (Go) | `go build`, buf (proto) | Standard Go toolchain |

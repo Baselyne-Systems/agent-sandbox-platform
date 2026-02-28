@@ -393,7 +393,7 @@ Called by the control-plane Workspace Service to manage sandboxes on a host.
 
 | RPC | Description |
 |-----|-------------|
-| `CreateSandbox` | Provision a sandbox with workspace/agent IDs, compiled guardrails, allowed tools, and env vars. Returns sandbox_id and agent API endpoint. |
+| `CreateSandbox` | Provision a sandbox with workspace/agent IDs, compiled guardrails, allowed tools, env vars, and `container_image`. Starts a Docker container if an image is specified. Returns sandbox_id and agent API endpoint. |
 | `DestroySandbox` | Tear down a sandbox. Sends lifecycle stopped event. |
 | `GetSandboxStatus` | Get sandbox state, resource usage, and action count. |
 | `StreamEvents` | Server-streaming RPC. Subscribe to sandbox events (action verdicts, lifecycle changes). |
@@ -408,14 +408,34 @@ Called by the control-plane Workspace Service to manage sandboxes on a host.
 
 Called by agents running inside sandboxes. Requires `x-sandbox-id` metadata header.
 
+The Agent API is **policy-only**: `ExecuteTool` evaluates guardrails and budget but does NOT execute tools. The agent executes tools locally inside its container, then calls `ReportActionResult` to record the outcome for the audit trail.
+
 ### RPCs
 
 | RPC | Description |
 |-----|-------------|
-| `ExecuteTool` | Execute a tool. Evaluates budget, guardrails, then runs the tool. Returns verdict (allow/deny/escalate), result, or denial reason. |
+| `ExecuteTool` | Evaluate guardrails and budget for a tool call. Returns verdict (ALLOW/DENY/ESCALATE) and an `action_id`. Does NOT execute the tool — the agent is responsible for execution. |
+| `ReportActionResult` | Record the outcome of an agent-executed tool call. Links to the `action_id` from `ExecuteTool` for the audit trail. |
 | `RequestHumanInput` | Submit a question/approval/escalation to a human. Returns immediately with a request_id (non-blocking). |
 | `CheckHumanRequest` | Poll for the status of a human request. Returns status (pending/responded/expired), response, and responder_id. |
 | `ReportProgress` | Report task progress (message + percent complete). Emits a progress event on the sandbox channel. |
+
+### Python SDK
+
+The Python SDK (`bulkhead-sdk`) handles the evaluate → execute → report cycle transparently:
+
+```python
+from bulkhead import BulkheadAgent, tool, Verdict
+
+@tool("read_file")
+def read_file(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+with BulkheadAgent(tools=[read_file]) as agent:
+    result = agent.execute_tool("read_file", {"path": "/data/file.json"})
+    # SDK calls ExecuteTool → runs read_file → calls ReportActionResult
+```
 
 ---
 

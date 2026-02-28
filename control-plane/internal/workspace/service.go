@@ -197,11 +197,12 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 		WorkspaceId: ws.ID,
 		AgentId:     ws.AgentID,
 		Spec: &runtimepb.SandboxSpec{
-			MemoryMb:      ws.Spec.MemoryMb,
-			CpuMillicores: ws.Spec.CpuMillicores,
-			DiskMb:        ws.Spec.DiskMb,
-			AllowedTools:  ws.Spec.AllowedTools,
-			EnvVars:       ws.Spec.EnvVars,
+			MemoryMb:       ws.Spec.MemoryMb,
+			CpuMillicores:  ws.Spec.CpuMillicores,
+			DiskMb:         ws.Spec.DiskMb,
+			AllowedTools:   ws.Spec.AllowedTools,
+			EnvVars:        ws.Spec.EnvVars,
+			ContainerImage: ws.Spec.ContainerImage,
 		},
 		CompiledGuardrails: compiledGuardrails,
 	})
