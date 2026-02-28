@@ -129,6 +129,17 @@ type GuardrailRule struct {
 	UpdatedAt   time.Time
 }
 
+// GuardrailSet is a named, reusable collection of guardrail rules.
+type GuardrailSet struct {
+	ID          string
+	Name        string
+	Description string
+	RuleIDs     []string
+	Labels      map[string]string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 // UsageRecord represents a single unit of resource consumption.
 type UsageRecord struct {
 	ID           string

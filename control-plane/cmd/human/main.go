@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -15,9 +16,12 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/human"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/identity"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	activitypb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/activity/v1"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/human/v1"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
@@ -45,6 +49,18 @@ func main() {
 
 	repo := human.NewPostgresRepository(db)
 	svc := human.NewService(repo)
+
+	// Optional: wire Activity Store logger if ACTIVITY_ENDPOINT is set.
+	if ep := os.Getenv("ACTIVITY_ENDPOINT"); ep != "" {
+		logger.Info("connecting to Activity Store", zap.String("endpoint", ep))
+		activityConn, err := grpc.NewClient(ep, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Fatalf("failed to connect to Activity Store: %v", err)
+		}
+		defer activityConn.Close()
+		svc.SetActivityLogger(&activityAdapter{client: activitypb.NewActivityServiceClient(activityConn)})
+	}
+
 	handler := human.NewHandler(svc)
 
 	authCfg := middleware.AuthConfig{
@@ -86,6 +102,24 @@ func main() {
 	workerCancel()
 	logger.Info("shutting down Human Interaction Service")
 	srv.GracefulStop()
+}
+
+// activityAdapter adapts ActivityServiceClient to the human.ActivityLogger interface.
+type activityAdapter struct {
+	client activitypb.ActivityServiceClient
+}
+
+func (a *activityAdapter) RecordAction(ctx context.Context, record *models.ActionRecord) error {
+	_, err := a.client.RecordAction(ctx, &activitypb.RecordActionRequest{
+		Record: &activitypb.ActionRecord{
+			WorkspaceId: record.WorkspaceID,
+			AgentId:     record.AgentID,
+			TaskId:      record.TaskID,
+			ToolName:    record.ToolName,
+			Outcome:     activitypb.ActionOutcome(activitypb.ActionOutcome_value["ACTION_OUTCOME_"+strings.ToUpper(string(record.Outcome))]),
+		},
+	})
+	return err
 }
 
 func newLogger(level string) (*zap.Logger, error) {

@@ -197,6 +197,16 @@ func copyOptions(s []string) []string {
 	return cp
 }
 
+// mockActivityLogger records calls to RecordAction for test assertions.
+type mockActivityLogger struct {
+	records []*models.ActionRecord
+}
+
+func (m *mockActivityLogger) RecordAction(_ context.Context, record *models.ActionRecord) error {
+	m.records = append(m.records, record)
+	return nil
+}
+
 func TestCreateRequest_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "Approve invoice?", []string{"yes", "no"}, "Invoice #123", 300, "", "", "")
@@ -540,5 +550,62 @@ func TestGetTimeoutPolicy_NotFound(t *testing.T) {
 	_, err := svc.GetTimeoutPolicy(context.Background(), "agent", "no-such-id")
 	if !errors.Is(err, ErrTimeoutPolicyNotFound) {
 		t.Errorf("expected ErrTimeoutPolicyNotFound, got: %v", err)
+	}
+}
+
+func TestCreateRequest_LogsToActivityStore(t *testing.T) {
+	activity := &mockActivityLogger{}
+	svc := NewService(newMockRepo())
+	svc.SetActivityLogger(activity)
+
+	_, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "Approve?", nil, "", 300, "", "", "task-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activity.records) != 1 {
+		t.Fatalf("expected 1 activity record, got %d", len(activity.records))
+	}
+	rec := activity.records[0]
+	if rec.ToolName != "his.create_request" {
+		t.Errorf("expected tool_name 'his.create_request', got %q", rec.ToolName)
+	}
+	if rec.WorkspaceID != "ws-1" {
+		t.Errorf("expected workspace_id 'ws-1', got %q", rec.WorkspaceID)
+	}
+	if rec.AgentID != "agent-1" {
+		t.Errorf("expected agent_id 'agent-1', got %q", rec.AgentID)
+	}
+	if rec.TaskID != "task-1" {
+		t.Errorf("expected task_id 'task-1', got %q", rec.TaskID)
+	}
+}
+
+func TestRespondToRequest_LogsToActivityStore(t *testing.T) {
+	activity := &mockActivityLogger{}
+	svc := NewService(newMockRepo())
+	svc.SetActivityLogger(activity)
+
+	ctx := context.Background()
+	req, _ := svc.CreateRequest(ctx, "ws-1", "agent-1", "Approve?", nil, "", 300, "", "", "")
+	activity.records = nil // reset after create
+
+	if err := svc.RespondToRequest(ctx, req.ID, "approved", "human-1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(activity.records) != 1 {
+		t.Fatalf("expected 1 activity record, got %d", len(activity.records))
+	}
+	rec := activity.records[0]
+	if rec.ToolName != "his.respond_to_request" {
+		t.Errorf("expected tool_name 'his.respond_to_request', got %q", rec.ToolName)
+	}
+}
+
+func TestCreateRequest_NoActivityLogger_NoPanic(t *testing.T) {
+	// Ensure no panic when activity logger is nil.
+	svc := NewService(newMockRepo())
+	_, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "q", nil, "", 300, "", "", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

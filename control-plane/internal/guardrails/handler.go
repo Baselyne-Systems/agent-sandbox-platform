@@ -130,6 +130,59 @@ func (h *Handler) GetBehaviorReport(ctx context.Context, req *pb.GetBehaviorRepo
 	}, nil
 }
 
+// --- GuardrailSet RPCs ---
+
+func (h *Handler) CreateGuardrailSet(ctx context.Context, req *pb.CreateGuardrailSetRequest) (*pb.CreateGuardrailSetResponse, error) {
+	set, err := h.svc.CreateSet(ctx, req.GetName(), req.GetDescription(), req.GetRuleIds(), req.GetLabels())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.CreateGuardrailSetResponse{Set: setToProto(set)}, nil
+}
+
+func (h *Handler) GetGuardrailSet(ctx context.Context, req *pb.GetGuardrailSetRequest) (*pb.GetGuardrailSetResponse, error) {
+	set, err := h.svc.GetSet(ctx, req.GetSetId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.GetGuardrailSetResponse{Set: setToProto(set)}, nil
+}
+
+func (h *Handler) ListGuardrailSets(ctx context.Context, req *pb.ListGuardrailSetsRequest) (*pb.ListGuardrailSetsResponse, error) {
+	sets, nextToken, err := h.svc.ListSets(ctx, int(req.GetPageSize()), req.GetPageToken())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	pbSets := make([]*pb.GuardrailSet, len(sets))
+	for i := range sets {
+		pbSets[i] = setToProto(&sets[i])
+	}
+	return &pb.ListGuardrailSetsResponse{
+		Sets:          pbSets,
+		NextPageToken: nextToken,
+	}, nil
+}
+
+func (h *Handler) UpdateGuardrailSet(ctx context.Context, req *pb.UpdateGuardrailSetRequest) (*pb.UpdateGuardrailSetResponse, error) {
+	pbSet := req.GetSet()
+	if pbSet == nil {
+		return nil, status.Error(codes.InvalidArgument, "set is required")
+	}
+	set := protoToSet(pbSet)
+	updated, err := h.svc.UpdateSet(ctx, set)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.UpdateGuardrailSetResponse{Set: setToProto(updated)}, nil
+}
+
+func (h *Handler) DeleteGuardrailSet(ctx context.Context, req *pb.DeleteGuardrailSetRequest) (*pb.DeleteGuardrailSetResponse, error) {
+	if err := h.svc.DeleteSet(ctx, req.GetSetId()); err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.DeleteGuardrailSetResponse{}, nil
+}
+
 // --- converters ---
 
 func ruleToProto(r *models.GuardrailRule) *pb.GuardrailRule {
@@ -248,9 +301,33 @@ func protoRuleActionToModel(a pb.RuleAction) models.RuleAction {
 	}
 }
 
+func setToProto(s *models.GuardrailSet) *pb.GuardrailSet {
+	return &pb.GuardrailSet{
+		SetId:       s.ID,
+		Name:        s.Name,
+		Description: s.Description,
+		RuleIds:     s.RuleIDs,
+		Labels:      s.Labels,
+		CreatedAt:   timestamppb.New(s.CreatedAt),
+		UpdatedAt:   timestamppb.New(s.UpdatedAt),
+	}
+}
+
+func protoToSet(p *pb.GuardrailSet) *models.GuardrailSet {
+	return &models.GuardrailSet{
+		ID:          p.GetSetId(),
+		Name:        p.GetName(),
+		Description: p.GetDescription(),
+		RuleIDs:     p.GetRuleIds(),
+		Labels:      p.GetLabels(),
+	}
+}
+
 func toGRPCError(err error) error {
 	switch {
 	case errors.Is(err, ErrRuleNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrSetNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())

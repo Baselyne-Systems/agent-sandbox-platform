@@ -2,6 +2,7 @@ package human
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -22,14 +23,25 @@ const (
 	defaultTimeoutSecs = 3600 // 1 hour
 )
 
+// ActivityLogger records HIS events to the Activity Store.
+type ActivityLogger interface {
+	RecordAction(ctx context.Context, record *models.ActionRecord) error
+}
+
 // Service implements human interaction business logic on top of a Repository.
 type Service struct {
 	repo      Repository
 	deliverer Deliverer
+	activity  ActivityLogger
 }
 
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
+}
+
+// SetActivityLogger attaches an Activity Store logger for audit trail.
+func (s *Service) SetActivityLogger(a ActivityLogger) {
+	s.activity = a
 }
 
 // SetDeliverer attaches a delivery adapter for sending notifications.
@@ -80,6 +92,10 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, quest
 	// Best-effort notification delivery.
 	s.notifyChannels(ctx, req)
 
+	// Fire-and-forget: log to Activity Store.
+	s.logHISEvent(ctx, req.WorkspaceID, req.AgentID, req.TaskID, "his.create_request",
+		map[string]string{"request_id": req.ID, "type": string(req.Type), "urgency": string(req.Urgency)}, nil)
+
 	return req, nil
 }
 
@@ -113,7 +129,26 @@ func (s *Service) RespondToRequest(ctx context.Context, id, response, responderI
 	if responderID == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.RespondToRequest(ctx, id, response, responderID)
+
+	// Fetch the request first so we have workspace/agent context for the audit log.
+	req, err := s.repo.GetRequest(ctx, id)
+	if err != nil {
+		return err
+	}
+	if req == nil {
+		return ErrRequestNotPending
+	}
+
+	if err := s.repo.RespondToRequest(ctx, id, response, responderID); err != nil {
+		return err
+	}
+
+	// Fire-and-forget: log to Activity Store.
+	s.logHISEvent(ctx, req.WorkspaceID, req.AgentID, req.TaskID, "his.respond_to_request",
+		map[string]string{"request_id": id, "responder_id": responderID},
+		map[string]string{"response": response})
+
+	return nil
 }
 
 func (s *Service) ListRequests(ctx context.Context, workspaceID string, status models.HumanRequestStatus, pageSize int, pageToken string) ([]models.HumanRequest, string, error) {
@@ -224,6 +259,30 @@ func (s *Service) GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (
 		return nil, ErrTimeoutPolicyNotFound
 	}
 	return policy, nil
+}
+
+// logHISEvent records a human interaction event to the Activity Store.
+// It is best-effort: errors are silently ignored.
+func (s *Service) logHISEvent(ctx context.Context, workspaceID, agentID, taskID, toolName string, params, result map[string]string) {
+	if s.activity == nil {
+		return
+	}
+	paramsJSON, _ := json.Marshal(params)
+	var resultJSON json.RawMessage
+	if result != nil {
+		resultJSON, _ = json.Marshal(result)
+	}
+	record := &models.ActionRecord{
+		WorkspaceID: workspaceID,
+		AgentID:     agentID,
+		TaskID:      taskID,
+		ToolName:    toolName,
+		Parameters:  paramsJSON,
+		Result:      resultJSON,
+		Outcome:     models.ActionOutcomeAllowed,
+	}
+	// Best-effort: ignore errors.
+	_ = s.activity.RecordAction(ctx, record)
 }
 
 func encodePageToken(id string) string {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -40,6 +39,7 @@ type ComputePlacer interface {
 // PolicyCompiler compiles guardrail rules into bytes for the Host Agent evaluator.
 type PolicyCompiler interface {
 	CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error)
+	ResolveRuleIDs(ctx context.Context, policyID string) ([]string, error)
 }
 
 // HostAgentDialer creates a gRPC connection to a Host Agent and returns a client.
@@ -229,12 +229,12 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 	}
 
 	// 3. Compile guardrail policy if policy ID is set.
+	// Supports "set:<name>" (named GuardrailSet) or "id1,id2,id3" (direct rule IDs).
 	var compiledGuardrails []byte
 	if ws.Spec.GuardrailPolicyID != "" && s.guardrails != nil {
-		// GuardrailPolicyID is treated as a comma-separated list of rule IDs.
-		ruleIDs := strings.Split(ws.Spec.GuardrailPolicyID, ",")
-		for i := range ruleIDs {
-			ruleIDs[i] = strings.TrimSpace(ruleIDs[i])
+		ruleIDs, err := s.guardrails.ResolveRuleIDs(ctx, ws.Spec.GuardrailPolicyID)
+		if err != nil {
+			return fmt.Errorf("resolve guardrail policy %q: %w", ws.Spec.GuardrailPolicyID, err)
 		}
 		compiled, _, err := s.guardrails.CompilePolicy(ctx, ruleIDs)
 		if err != nil {

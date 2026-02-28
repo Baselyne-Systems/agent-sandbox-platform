@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/config"
@@ -166,4 +167,27 @@ func (a *guardrailsAdapter) CompilePolicy(ctx context.Context, ruleIDs []string)
 		return nil, 0, err
 	}
 	return resp.GetCompiledPolicy(), int(resp.GetRuleCount()), nil
+}
+
+func (a *guardrailsAdapter) ResolveRuleIDs(ctx context.Context, policyID string) ([]string, error) {
+	if strings.HasPrefix(policyID, "set:") {
+		setName := strings.TrimPrefix(policyID, "set:")
+		// Look up set by iterating ListGuardrailSets (name is unique).
+		listResp, err := a.client.ListGuardrailSets(ctx, &guardrailspb.ListGuardrailSetsRequest{PageSize: 100})
+		if err != nil {
+			return nil, fmt.Errorf("list guardrail sets: %w", err)
+		}
+		for _, s := range listResp.GetSets() {
+			if s.GetName() == setName {
+				return s.GetRuleIds(), nil
+			}
+		}
+		return nil, fmt.Errorf("guardrail set %q not found", setName)
+	}
+	// Comma-separated rule IDs (existing format).
+	ids := strings.Split(policyID, ",")
+	for i := range ids {
+		ids[i] = strings.TrimSpace(ids[i])
+	}
+	return ids, nil
 }

@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrRuleNotFound = errors.New("rule not found")
+	ErrSetNotFound  = errors.New("guardrail set not found")
 	ErrInvalidInput = errors.New("invalid input")
 )
 
@@ -332,6 +333,135 @@ func (s *Service) SimulatePolicy(ctx context.Context, ruleIDs []string, toolName
 		Verdict: "allow",
 		Reason:  "no matching rule",
 	}, nil
+}
+
+// --- GuardrailSet CRUD ---
+
+func (s *Service) CreateSet(ctx context.Context, name, description string, ruleIDs []string, labels map[string]string) (*models.GuardrailSet, error) {
+	if name == "" {
+		return nil, ErrInvalidInput
+	}
+	if len(ruleIDs) == 0 {
+		return nil, ErrInvalidInput
+	}
+	if labels == nil {
+		labels = map[string]string{}
+	}
+	set := &models.GuardrailSet{
+		Name:        name,
+		Description: description,
+		RuleIDs:     ruleIDs,
+		Labels:      labels,
+	}
+	if err := s.repo.CreateSet(ctx, set); err != nil {
+		return nil, err
+	}
+	return set, nil
+}
+
+func (s *Service) GetSet(ctx context.Context, id string) (*models.GuardrailSet, error) {
+	if id == "" {
+		return nil, ErrInvalidInput
+	}
+	set, err := s.repo.GetSet(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if set == nil {
+		return nil, ErrSetNotFound
+	}
+	return set, nil
+}
+
+func (s *Service) GetSetByName(ctx context.Context, name string) (*models.GuardrailSet, error) {
+	if name == "" {
+		return nil, ErrInvalidInput
+	}
+	set, err := s.repo.GetSetByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if set == nil {
+		return nil, ErrSetNotFound
+	}
+	return set, nil
+}
+
+func (s *Service) UpdateSet(ctx context.Context, set *models.GuardrailSet) (*models.GuardrailSet, error) {
+	if set.ID == "" {
+		return nil, ErrInvalidInput
+	}
+	if set.Name == "" {
+		return nil, ErrInvalidInput
+	}
+	if len(set.RuleIDs) == 0 {
+		return nil, ErrInvalidInput
+	}
+	if set.Labels == nil {
+		set.Labels = map[string]string{}
+	}
+	if err := s.repo.UpdateSet(ctx, set); err != nil {
+		return nil, err
+	}
+	return set, nil
+}
+
+func (s *Service) DeleteSet(ctx context.Context, id string) error {
+	if id == "" {
+		return ErrInvalidInput
+	}
+	return s.repo.DeleteSet(ctx, id)
+}
+
+func (s *Service) ListSets(ctx context.Context, pageSize int, pageToken string) ([]models.GuardrailSet, string, error) {
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+
+	afterID, err := decodePageToken(pageToken)
+	if err != nil {
+		return nil, "", ErrInvalidInput
+	}
+
+	sets, err := s.repo.ListSets(ctx, afterID, pageSize+1)
+	if err != nil {
+		return nil, "", err
+	}
+
+	var nextToken string
+	if len(sets) > pageSize {
+		sets = sets[:pageSize]
+		nextToken = encodePageToken(sets[pageSize-1].ID)
+	}
+
+	return sets, nextToken, nil
+}
+
+// ResolveRuleIDs resolves a guardrail_policy_id string to a list of rule IDs.
+// Supports two formats:
+//   - "set:<name>" — looks up a named GuardrailSet and returns its rule IDs.
+//   - "id1,id2,id3" — returns the comma-separated IDs directly (existing behavior).
+func (s *Service) ResolveRuleIDs(ctx context.Context, policyID string) ([]string, error) {
+	if strings.HasPrefix(policyID, "set:") {
+		setName := strings.TrimPrefix(policyID, "set:")
+		set, err := s.repo.GetSetByName(ctx, setName)
+		if err != nil {
+			return nil, err
+		}
+		if set == nil {
+			return nil, ErrSetNotFound
+		}
+		return set.RuleIDs, nil
+	}
+	// Comma-separated rule IDs (existing format).
+	ruleIDs := strings.Split(policyID, ",")
+	for i := range ruleIDs {
+		ruleIDs[i] = strings.TrimSpace(ruleIDs[i])
+	}
+	return ruleIDs, nil
 }
 
 func encodePageToken(id string) string {

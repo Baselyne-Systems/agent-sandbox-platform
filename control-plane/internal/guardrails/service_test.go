@@ -15,12 +15,16 @@ import (
 // mockRepo is a hand-written in-memory Repository for testing.
 type mockRepo struct {
 	rules  map[string]*models.GuardrailRule
+	sets   map[string]*models.GuardrailSet
+	setsByName map[string]string // name -> ID
 	nextID int
 }
 
 func newMockRepo() *mockRepo {
 	return &mockRepo{
-		rules: make(map[string]*models.GuardrailRule),
+		rules:      make(map[string]*models.GuardrailRule),
+		sets:       make(map[string]*models.GuardrailSet),
+		setsByName: make(map[string]string),
 	}
 }
 
@@ -90,6 +94,90 @@ func (m *mockRepo) ListRules(_ context.Context, ruleType models.RuleType, enable
 		result = result[:limit]
 	}
 	return result, nil
+}
+
+func (m *mockRepo) CreateSet(_ context.Context, set *models.GuardrailSet) error {
+	set.ID = m.nextUUID()
+	set.CreatedAt = time.Now()
+	set.UpdatedAt = set.CreatedAt
+	cp := *set
+	cp.RuleIDs = copyStringSlice(set.RuleIDs)
+	cp.Labels = copyLabels(set.Labels)
+	m.sets[set.ID] = &cp
+	m.setsByName[set.Name] = set.ID
+	return nil
+}
+
+func (m *mockRepo) GetSet(_ context.Context, id string) (*models.GuardrailSet, error) {
+	s, ok := m.sets[id]
+	if !ok {
+		return nil, nil
+	}
+	cp := *s
+	cp.RuleIDs = copyStringSlice(s.RuleIDs)
+	cp.Labels = copyLabels(s.Labels)
+	return &cp, nil
+}
+
+func (m *mockRepo) GetSetByName(_ context.Context, name string) (*models.GuardrailSet, error) {
+	id, ok := m.setsByName[name]
+	if !ok {
+		return nil, nil
+	}
+	return m.GetSet(context.Background(), id)
+}
+
+func (m *mockRepo) UpdateSet(_ context.Context, set *models.GuardrailSet) error {
+	existing, ok := m.sets[set.ID]
+	if !ok {
+		return ErrSetNotFound
+	}
+	// Remove old name mapping if name changed.
+	delete(m.setsByName, existing.Name)
+	set.UpdatedAt = time.Now()
+	cp := *set
+	cp.RuleIDs = copyStringSlice(set.RuleIDs)
+	cp.Labels = copyLabels(set.Labels)
+	m.sets[set.ID] = &cp
+	m.setsByName[set.Name] = set.ID
+	return nil
+}
+
+func (m *mockRepo) DeleteSet(_ context.Context, id string) error {
+	s, ok := m.sets[id]
+	if !ok {
+		return ErrSetNotFound
+	}
+	delete(m.setsByName, s.Name)
+	delete(m.sets, id)
+	return nil
+}
+
+func (m *mockRepo) ListSets(_ context.Context, afterID string, limit int) ([]models.GuardrailSet, error) {
+	var result []models.GuardrailSet
+	for _, s := range m.sets {
+		if afterID != "" && s.ID <= afterID {
+			continue
+		}
+		cp := *s
+		cp.RuleIDs = copyStringSlice(s.RuleIDs)
+		cp.Labels = copyLabels(s.Labels)
+		result = append(result, cp)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func copyStringSlice(s []string) []string {
+	if s == nil {
+		return nil
+	}
+	cp := make([]string, len(s))
+	copy(cp, s)
+	return cp
 }
 
 func copyLabels(m map[string]string) map[string]string {
@@ -461,5 +549,180 @@ func TestSimulatePolicy_EmptyToolName(t *testing.T) {
 	_, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "", nil, "agent-1")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
+	}
+}
+
+// --- GuardrailSet tests ---
+
+func TestCreateSet_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	set, err := svc.CreateSet(context.Background(), "invoice-rules", "Rules for invoice processing", []string{"rule-1", "rule-2"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if set.ID == "" {
+		t.Error("expected set ID to be set")
+	}
+	if set.Name != "invoice-rules" {
+		t.Errorf("expected name 'invoice-rules', got %q", set.Name)
+	}
+	if len(set.RuleIDs) != 2 {
+		t.Errorf("expected 2 rule IDs, got %d", len(set.RuleIDs))
+	}
+}
+
+func TestCreateSet_Validation(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	if _, err := svc.CreateSet(ctx, "", "desc", []string{"r1"}, nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
+	}
+	if _, err := svc.CreateSet(ctx, "name", "desc", nil, nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for nil rule_ids, got: %v", err)
+	}
+	if _, err := svc.CreateSet(ctx, "name", "desc", []string{}, nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty rule_ids, got: %v", err)
+	}
+}
+
+func TestGetSet_Found(t *testing.T) {
+	svc := NewService(newMockRepo())
+	created, _ := svc.CreateSet(context.Background(), "test-set", "", []string{"r1"}, nil)
+	got, err := svc.GetSet(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("expected ID %q, got %q", created.ID, got.ID)
+	}
+}
+
+func TestGetSet_NotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.GetSet(context.Background(), "nonexistent-id")
+	if !errors.Is(err, ErrSetNotFound) {
+		t.Errorf("expected ErrSetNotFound, got: %v", err)
+	}
+}
+
+func TestGetSetByName_Found(t *testing.T) {
+	svc := NewService(newMockRepo())
+	created, _ := svc.CreateSet(context.Background(), "my-set", "", []string{"r1"}, nil)
+	got, err := svc.GetSetByName(context.Background(), "my-set")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != created.ID {
+		t.Errorf("expected ID %q, got %q", created.ID, got.ID)
+	}
+}
+
+func TestGetSetByName_NotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.GetSetByName(context.Background(), "no-such-set")
+	if !errors.Is(err, ErrSetNotFound) {
+		t.Errorf("expected ErrSetNotFound, got: %v", err)
+	}
+}
+
+func TestUpdateSet_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	created, _ := svc.CreateSet(ctx, "s", "", []string{"r1"}, nil)
+
+	created.Name = "updated"
+	created.RuleIDs = []string{"r1", "r2", "r3"}
+	updated, err := svc.UpdateSet(ctx, created)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if updated.Name != "updated" {
+		t.Errorf("expected name 'updated', got %q", updated.Name)
+	}
+	if len(updated.RuleIDs) != 3 {
+		t.Errorf("expected 3 rule IDs, got %d", len(updated.RuleIDs))
+	}
+}
+
+func TestDeleteSet_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	set, _ := svc.CreateSet(ctx, "s", "", []string{"r1"}, nil)
+	if err := svc.DeleteSet(ctx, set.ID); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	_, err := svc.GetSet(ctx, set.ID)
+	if !errors.Is(err, ErrSetNotFound) {
+		t.Errorf("expected ErrSetNotFound after delete, got: %v", err)
+	}
+}
+
+func TestListSets_Pagination(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		svc.CreateSet(ctx, fmt.Sprintf("set-%d", i), "", []string{"r1"}, nil)
+	}
+
+	sets, nextToken, err := svc.ListSets(ctx, 3, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sets) != 3 {
+		t.Fatalf("expected 3 sets, got %d", len(sets))
+	}
+	if nextToken == "" {
+		t.Error("expected a next page token")
+	}
+
+	sets2, nextToken2, err := svc.ListSets(ctx, 3, nextToken)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(sets2) != 2 {
+		t.Fatalf("expected 2 sets on second page, got %d", len(sets2))
+	}
+	if nextToken2 != "" {
+		t.Error("expected no next page token on last page")
+	}
+}
+
+func TestResolveRuleIDs_SetPrefix(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+	svc.CreateSet(ctx, "invoice-rules", "", []string{"rule-a", "rule-b", "rule-c"}, nil)
+
+	ids, err := svc.ResolveRuleIDs(ctx, "set:invoice-rules")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Errorf("expected 3 rule IDs, got %d", len(ids))
+	}
+	if ids[0] != "rule-a" {
+		t.Errorf("expected first ID 'rule-a', got %q", ids[0])
+	}
+}
+
+func TestResolveRuleIDs_CommaSeparated(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ids, err := svc.ResolveRuleIDs(context.Background(), "r1, r2, r3")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 3 {
+		t.Errorf("expected 3 rule IDs, got %d", len(ids))
+	}
+	if ids[1] != "r2" {
+		t.Errorf("expected second ID 'r2', got %q", ids[1])
+	}
+}
+
+func TestResolveRuleIDs_SetNotFound(t *testing.T) {
+	svc := NewService(newMockRepo())
+	_, err := svc.ResolveRuleIDs(context.Background(), "set:nonexistent")
+	if !errors.Is(err, ErrSetNotFound) {
+		t.Errorf("expected ErrSetNotFound, got: %v", err)
 	}
 }

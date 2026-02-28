@@ -31,6 +31,21 @@ service GuardrailsService {
   // GetBehaviorReport returns a behavior analysis report for an agent over a
   // time window, produced by the considered evaluation tier.
   rpc GetBehaviorReport(GetBehaviorReportRequest) returns (GetBehaviorReportResponse);
+
+  // CreateGuardrailSet creates a named collection of rules.
+  rpc CreateGuardrailSet(CreateGuardrailSetRequest) returns (CreateGuardrailSetResponse);
+
+  // GetGuardrailSet retrieves a guardrail set by ID.
+  rpc GetGuardrailSet(GetGuardrailSetRequest) returns (GetGuardrailSetResponse);
+
+  // ListGuardrailSets returns all guardrail sets.
+  rpc ListGuardrailSets(ListGuardrailSetsRequest) returns (ListGuardrailSetsResponse);
+
+  // UpdateGuardrailSet updates an existing guardrail set.
+  rpc UpdateGuardrailSet(UpdateGuardrailSetRequest) returns (UpdateGuardrailSetResponse);
+
+  // DeleteGuardrailSet removes a guardrail set.
+  rpc DeleteGuardrailSet(DeleteGuardrailSetRequest) returns (DeleteGuardrailSetResponse);
 }
 
 // RuleScope restricts which agents, tools, trust levels, or data classifications
@@ -174,3 +189,57 @@ message GetBehaviorReportRequest {
 message GetBehaviorReportResponse {
   BehaviorReport report = 1;
 }
+
+// GuardrailSet is a named, reusable collection of guardrail rules.
+message GuardrailSet {
+  string set_id = 1;
+  string name = 2;
+  string description = 3;
+  repeated string rule_ids = 4;
+  map<string, string> labels = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message CreateGuardrailSetRequest {
+  string name = 1;
+  string description = 2;
+  repeated string rule_ids = 3;
+  map<string, string> labels = 4;
+}
+
+message CreateGuardrailSetResponse {
+  GuardrailSet set = 1;
+}
+
+message GetGuardrailSetRequest {
+  string set_id = 1;
+}
+
+message GetGuardrailSetResponse {
+  GuardrailSet set = 1;
+}
+
+message ListGuardrailSetsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListGuardrailSetsResponse {
+  repeated GuardrailSet sets = 1;
+  string next_page_token = 2;
+}
+
+message UpdateGuardrailSetRequest {
+  GuardrailSet set = 1;
+}
+
+message UpdateGuardrailSetResponse {
+  GuardrailSet set = 1;
+}
+
+message DeleteGuardrailSetRequest {
+  string set_id = 1;
+}
+
+message DeleteGuardrailSetResponse {}

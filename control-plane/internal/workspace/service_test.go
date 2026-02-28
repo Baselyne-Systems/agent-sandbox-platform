@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -192,6 +193,15 @@ type mockPolicyCompiler struct {
 
 func (m *mockPolicyCompiler) CompilePolicy(_ context.Context, _ []string) ([]byte, int, error) {
 	return m.compiled, m.count, m.err
+}
+
+func (m *mockPolicyCompiler) ResolveRuleIDs(_ context.Context, policyID string) ([]string, error) {
+	// Simple mock: split on comma, same as legacy behavior.
+	ids := strings.Split(policyID, ",")
+	for i := range ids {
+		ids[i] = strings.TrimSpace(ids[i])
+	}
+	return ids, nil
 }
 
 // mockHostAgentServiceClient implements hostagentpb.HostAgentServiceClient for testing.

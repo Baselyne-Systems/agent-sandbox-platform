@@ -88,8 +88,16 @@ services:
       dockerfile: deploy/docker/Dockerfile.control-plane
       args:
         SERVICE: human
+    environment:
+      <<: *go-env
+      ACTIVITY_ENDPOINT: activity:50051
     ports:
       - "50063:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      activity:
+        condition: service_healthy
 
   governance:
     <<: *go-service

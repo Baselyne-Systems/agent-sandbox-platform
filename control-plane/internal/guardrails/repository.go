@@ -9,13 +9,20 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
 
-// Repository defines persistence operations for guardrail rules.
+// Repository defines persistence operations for guardrail rules and sets.
 type Repository interface {
 	CreateRule(ctx context.Context, rule *models.GuardrailRule) error
 	GetRule(ctx context.Context, id string) (*models.GuardrailRule, error)
 	UpdateRule(ctx context.Context, rule *models.GuardrailRule) error
 	DeleteRule(ctx context.Context, id string) error
 	ListRules(ctx context.Context, ruleType models.RuleType, enabledOnly bool, afterID string, limit int) ([]models.GuardrailRule, error)
+
+	CreateSet(ctx context.Context, set *models.GuardrailSet) error
+	GetSet(ctx context.Context, id string) (*models.GuardrailSet, error)
+	GetSetByName(ctx context.Context, name string) (*models.GuardrailSet, error)
+	UpdateSet(ctx context.Context, set *models.GuardrailSet) error
+	DeleteSet(ctx context.Context, id string) error
+	ListSets(ctx context.Context, afterID string, limit int) ([]models.GuardrailSet, error)
 }
 
 // PostgresRepository implements Repository backed by PostgreSQL.
@@ -149,4 +156,121 @@ func (r *PostgresRepository) ListRules(ctx context.Context, ruleType models.Rule
 		rules = append(rules, rule)
 	}
 	return rules, rows.Err()
+}
+
+func (r *PostgresRepository) CreateSet(ctx context.Context, set *models.GuardrailSet) error {
+	ruleIDsJSON, err := json.Marshal(set.RuleIDs)
+	if err != nil {
+		return fmt.Errorf("marshal rule_ids: %w", err)
+	}
+	labelsJSON, err := json.Marshal(set.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels: %w", err)
+	}
+	return r.db.QueryRowContext(ctx,
+		`INSERT INTO guardrail_sets (name, description, rule_ids, labels)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, created_at, updated_at`,
+		set.Name, set.Description, ruleIDsJSON, labelsJSON,
+	).Scan(&set.ID, &set.CreatedAt, &set.UpdatedAt)
+}
+
+func (r *PostgresRepository) GetSet(ctx context.Context, id string) (*models.GuardrailSet, error) {
+	return r.scanSet(ctx, `SELECT id, name, description, rule_ids, labels, created_at, updated_at FROM guardrail_sets WHERE id = $1`, id)
+}
+
+func (r *PostgresRepository) GetSetByName(ctx context.Context, name string) (*models.GuardrailSet, error) {
+	return r.scanSet(ctx, `SELECT id, name, description, rule_ids, labels, created_at, updated_at FROM guardrail_sets WHERE name = $1`, name)
+}
+
+func (r *PostgresRepository) scanSet(ctx context.Context, query string, arg any) (*models.GuardrailSet, error) {
+	var set models.GuardrailSet
+	var ruleIDsJSON, labelsJSON []byte
+	err := r.db.QueryRowContext(ctx, query, arg).Scan(
+		&set.ID, &set.Name, &set.Description, &ruleIDsJSON, &labelsJSON, &set.CreatedAt, &set.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(ruleIDsJSON, &set.RuleIDs); err != nil {
+		return nil, fmt.Errorf("unmarshal rule_ids: %w", err)
+	}
+	if err := json.Unmarshal(labelsJSON, &set.Labels); err != nil {
+		return nil, fmt.Errorf("unmarshal labels: %w", err)
+	}
+	return &set, nil
+}
+
+func (r *PostgresRepository) UpdateSet(ctx context.Context, set *models.GuardrailSet) error {
+	ruleIDsJSON, err := json.Marshal(set.RuleIDs)
+	if err != nil {
+		return fmt.Errorf("marshal rule_ids: %w", err)
+	}
+	labelsJSON, err := json.Marshal(set.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels: %w", err)
+	}
+	return r.db.QueryRowContext(ctx,
+		`UPDATE guardrail_sets
+		 SET name = $1, description = $2, rule_ids = $3, labels = $4, updated_at = now()
+		 WHERE id = $5
+		 RETURNING updated_at`,
+		set.Name, set.Description, ruleIDsJSON, labelsJSON, set.ID,
+	).Scan(&set.UpdatedAt)
+}
+
+func (r *PostgresRepository) DeleteSet(ctx context.Context, id string) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM guardrail_sets WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrSetNotFound
+	}
+	return nil
+}
+
+func (r *PostgresRepository) ListSets(ctx context.Context, afterID string, limit int) ([]models.GuardrailSet, error) {
+	query := `SELECT id, name, description, rule_ids, labels, created_at, updated_at FROM guardrail_sets WHERE 1=1`
+	args := []any{}
+	argIdx := 1
+
+	if afterID != "" {
+		query += fmt.Sprintf(" AND id > $%d", argIdx)
+		args = append(args, afterID)
+		argIdx++
+	}
+	query += " ORDER BY id ASC"
+	query += fmt.Sprintf(" LIMIT $%d", argIdx)
+	args = append(args, limit)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var sets []models.GuardrailSet
+	for rows.Next() {
+		var set models.GuardrailSet
+		var ruleIDsJSON, labelsJSON []byte
+		if err := rows.Scan(&set.ID, &set.Name, &set.Description, &ruleIDsJSON, &labelsJSON, &set.CreatedAt, &set.UpdatedAt); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(ruleIDsJSON, &set.RuleIDs); err != nil {
+			return nil, fmt.Errorf("unmarshal rule_ids: %w", err)
+		}
+		if err := json.Unmarshal(labelsJSON, &set.Labels); err != nil {
+			return nil, fmt.Errorf("unmarshal labels: %w", err)
+		}
+		sets = append(sets, set)
+	}
+	return sets, rows.Err()
 }

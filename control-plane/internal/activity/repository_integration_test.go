@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -286,6 +287,58 @@ func TestInteg_QueryActions_Pagination(t *testing.T) {
 	}
 	if len(page3) != 1 {
 		t.Fatalf("page3 len = %d, want 1", len(page3))
+	}
+}
+
+func TestInteg_ImmutableActions_UpdateRejected(t *testing.T) {
+	repo, db := setup(t)
+	ctx := context.Background()
+	agentID := testutil.SeedAgent(t, db, "immutable-agent")
+
+	rec := &models.ActionRecord{
+		WorkspaceID: wsUUID(50),
+		AgentID:     agentID,
+		ToolName:    "test",
+		Outcome:     models.ActionOutcomeAllowed,
+		Parameters:  json.RawMessage(`{}`),
+	}
+	if err := repo.InsertAction(ctx, rec); err != nil {
+		t.Fatalf("InsertAction: %v", err)
+	}
+
+	// Attempt to UPDATE — should be rejected by the immutability trigger.
+	_, err := db.ExecContext(ctx, `UPDATE action_records SET tool_name = 'hacked' WHERE id = $1`, rec.ID)
+	if err == nil {
+		t.Fatal("expected UPDATE to be rejected by immutability trigger, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "immutable") {
+		t.Errorf("expected error to mention 'immutable', got: %v", err)
+	}
+}
+
+func TestInteg_ImmutableActions_DeleteRejected(t *testing.T) {
+	repo, db := setup(t)
+	ctx := context.Background()
+	agentID := testutil.SeedAgent(t, db, "immutable-agent-2")
+
+	rec := &models.ActionRecord{
+		WorkspaceID: wsUUID(51),
+		AgentID:     agentID,
+		ToolName:    "test",
+		Outcome:     models.ActionOutcomeAllowed,
+		Parameters:  json.RawMessage(`{}`),
+	}
+	if err := repo.InsertAction(ctx, rec); err != nil {
+		t.Fatalf("InsertAction: %v", err)
+	}
+
+	// Attempt to DELETE — should be rejected by the immutability trigger.
+	_, err := db.ExecContext(ctx, `DELETE FROM action_records WHERE id = $1`, rec.ID)
+	if err == nil {
+		t.Fatal("expected DELETE to be rejected by immutability trigger, but it succeeded")
+	}
+	if !strings.Contains(err.Error(), "immutable") {
+		t.Errorf("expected error to mention 'immutable', got: %v", err)
 	}
 }
 
