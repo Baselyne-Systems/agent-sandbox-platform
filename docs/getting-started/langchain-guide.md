@@ -1,18 +1,12 @@
 # LangChain Integration Guide
 
-This guide shows how to wrap Bulkhead tools as LangChain `StructuredTool` instances so that every LangChain tool call goes through Bulkhead's guardrail evaluation, budget checking, and audit trail.
+You already have a LangChain agent. Bulkhead adds guardrails, budget enforcement, egress control, and a complete audit trail — without rewriting your tools.
 
 > **See also:** [Agent Developer Guide](agent-guide.md) | [API Reference](../api-reference.md)
 
 ---
 
-## Why
-
-LangChain agents call tools autonomously. Without guardrails, a misbehaving agent can execute any tool with any parameters. By wrapping tools through Bulkhead, every invocation is evaluated against your guardrail policy before execution — and the outcome is recorded in the audit trail.
-
----
-
-## Prerequisites
+## Install
 
 ```bash
 pip install bulkhead-sdk langchain-core
@@ -20,106 +14,134 @@ pip install bulkhead-sdk langchain-core
 
 ---
 
-## The Adapter Pattern
+## Wrap Your Tools
 
-The key function is `bulkhead_tool_to_langchain` — it wraps a `@tool`-decorated function into a LangChain `StructuredTool` that routes calls through the Bulkhead SDK:
+Take your existing LangChain tools and wrap them with `wrap_langchain_tools`. Every tool call now goes through Bulkhead's guardrail evaluation before execution:
 
 ```python
-from typing import Any
+from langchain_core.tools import tool
 
-from langchain_core.tools import StructuredTool
+# Your existing LangChain tools — no changes needed
+@tool
+def search_docs(query: str) -> str:
+    """Search internal documents."""
+    return f"Results for {query}"
 
-from bulkhead import BulkheadAgent, Verdict, tool
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email."""
+    return f"Sent to {to}"
 
+# Wrap them with Bulkhead guardrails
+from bulkhead import BulkheadAgent
+from bulkhead.langchain import wrap_langchain_tools
 
-def bulkhead_tool_to_langchain(
-    agent: BulkheadAgent, func: Any
-) -> StructuredTool:
-    """Wrap a @tool-decorated function as a LangChain StructuredTool.
+with BulkheadAgent() as agent:
+    guarded_tools = wrap_langchain_tools(agent, [search_docs, send_email])
 
-    Every invocation goes through Bulkhead's evaluate -> execute -> report
-    cycle, so guardrails and budget are enforced transparently.
-    """
-    defn = func._bulkhead_tool
-
-    def _run(**kwargs: Any) -> Any:
-        result = agent.execute_tool(defn.name, kwargs)
-        if result.verdict == Verdict.DENY:
-            return f"DENIED: {result.denial_reason}"
-        if result.verdict == Verdict.ESCALATE:
-            return f"ESCALATED: awaiting human approval ({result.escalation_id})"
-        return result.result
-
-    return StructuredTool.from_function(
-        func=_run,
-        name=defn.name,
-        description=defn.description,
-    )
+    # Use guarded_tools in your LangChain agent as normal
+    # agent_executor = create_react_agent(llm, guarded_tools)
+    # agent_executor.invoke({"input": "Find Q4 revenue docs"})
 ```
+
+That's it. `wrap_langchain_tools` preserves each tool's name, description, and parameter schema — your LLM's function-calling behavior is unchanged.
 
 ---
 
-## Full Working Example
+## How It Works
+
+When a wrapped tool is invoked, the wrapper runs the evaluate → execute → report cycle:
+
+```mermaid
+sequenceDiagram
+    participant LC as LangChain Agent
+    participant Wrapper as Bulkhead Wrapper
+    participant HA as Host Agent (Rust)
+    participant Tool as Original Tool
+
+    LC->>Wrapper: invoke(tool_name, args)
+    Wrapper->>HA: evaluate(tool_name, args)
+    Note over HA: Guardrails + budget check
+
+    alt ALLOW
+        HA-->>Wrapper: verdict: ALLOW, action_id
+        Wrapper->>Tool: _run(**args)
+        Tool-->>Wrapper: result
+        Wrapper->>HA: report_result(action_id, success, result)
+        Wrapper-->>LC: result
+    else DENY
+        HA-->>Wrapper: verdict: DENY, reason
+        Wrapper-->>LC: "DENIED: reason"
+    else ESCALATE
+        HA-->>Wrapper: verdict: ESCALATE, escalation_id
+        Wrapper-->>LC: "ESCALATED: awaiting human approval (id)"
+    end
+```
+
+The wrapper calls two methods on `BulkheadAgent`:
+
+1. **`evaluate(name, params)`** — Calls the Host Agent's `ExecuteTool` RPC to check guardrails and budget. Returns a verdict without executing anything.
+2. **`report_result(action_id, success, result)`** — Records the tool execution outcome for the audit trail.
+
+---
+
+## What the Agent Sees
+
+When a tool is denied or escalated, the LangChain agent receives a string response it can reason about:
+
+| Bulkhead Verdict | LangChain Tool Output | Agent Behavior |
+|------------------|-----------------------|----------------|
+| `ALLOW` | The tool's actual return value | Normal |
+| `DENY` | `"DENIED: <reason>"` | Agent sees the denial and can try an alternative |
+| `ESCALATE` | `"ESCALATED: awaiting human approval (<id>)"` | Agent sees the escalation and can wait or continue other work |
+
+---
+
+## Full Example
 
 ```python
-"""Wrapping Bulkhead tools as LangChain tools."""
+"""Bring an existing LangChain agent to Bulkhead."""
 from __future__ import annotations
 
-from typing import Any
+from langchain_core.tools import tool
 
-from langchain_core.tools import StructuredTool
+from bulkhead import BulkheadAgent
+from bulkhead.langchain import wrap_langchain_tools
 
-from bulkhead import BulkheadAgent, Verdict, tool
 
-
-@tool("search_docs", description="Search internal documents")
+# Standard LangChain tools — no Bulkhead decorator needed
+@tool
 def search_docs(query: str, max_results: int = 5) -> dict:
-    # Your real search implementation here
+    """Search internal documents."""
     return {"results": [f"doc about {query}"], "count": 1}
 
 
-@tool("send_email", description="Send an email (requires guardrail approval)")
+@tool
 def send_email(to: str, subject: str, body: str) -> dict:
-    # Your real email implementation here
+    """Send an email."""
     return {"sent": True, "to": to}
 
 
-def bulkhead_tool_to_langchain(
-    agent: BulkheadAgent, func: Any
-) -> StructuredTool:
-    defn = func._bulkhead_tool
-
-    def _run(**kwargs: Any) -> Any:
-        result = agent.execute_tool(defn.name, kwargs)
-        if result.verdict == Verdict.DENY:
-            return f"DENIED: {result.denial_reason}"
-        if result.verdict == Verdict.ESCALATE:
-            return f"ESCALATED: awaiting human approval ({result.escalation_id})"
-        return result.result
-
-    return StructuredTool.from_function(
-        func=_run,
-        name=defn.name,
-        description=defn.description,
-    )
-
-
 def main():
-    with BulkheadAgent(tools=[search_docs, send_email]) as agent:
-        # Create LangChain tools that are guardrail-aware
-        lc_search = bulkhead_tool_to_langchain(agent, search_docs)
-        lc_email = bulkhead_tool_to_langchain(agent, send_email)
+    with BulkheadAgent() as agent:
+        # Wrap tools with guardrail enforcement
+        guarded_tools = wrap_langchain_tools(agent, [search_docs, send_email])
 
-        # Use them like any LangChain tool
-        result = lc_search.invoke({"query": "Q4 revenue", "max_results": 3})
+        # Use them directly
+        result = guarded_tools[0].invoke({"query": "Q4 revenue", "max_results": 3})
         print(f"Search result: {result}")
 
-        result = lc_email.invoke({
+        result = guarded_tools[1].invoke({
             "to": "finance@example.com",
             "subject": "Q4 Report",
             "body": "Please review attached.",
         })
         print(f"Email result: {result}")
+
+        # Or pass to a LangChain agent:
+        # from langgraph.prebuilt import create_react_agent
+        # agent_executor = create_react_agent(llm, guarded_tools)
+        # agent_executor.invoke({"input": "Find and email Q4 revenue docs"})
 
 
 if __name__ == "__main__":
@@ -128,28 +150,35 @@ if __name__ == "__main__":
 
 ---
 
-## How Verdicts Map to LangChain Responses
+## What You Get
 
-| Bulkhead Verdict | LangChain Tool Return |
-|------------------|-----------------------|
-| `ALLOW` | The tool's actual return value |
-| `DENY` | `"DENIED: <reason>"` (string) |
-| `ESCALATE` | `"ESCALATED: awaiting human approval (<id>)"` (string) |
+By wrapping your LangChain tools with Bulkhead, every tool call is:
 
-Your LangChain agent (or chain) can inspect the string prefix to detect denied/escalated calls and adjust its behavior accordingly.
+- **Guardrail-evaluated** — compiled policy rules checked in <50ms (ALLOW / DENY / ESCALATE)
+- **Budget-checked** — per-agent spending limits enforced before execution
+- **Audit-trailed** — every evaluation and execution recorded immutably in the Activity Store
+- **Egress-controlled** — your container's outbound network is restricted to an operator-defined allowlist (see [Network Egress](agent-guide.md#network-egress))
+- **Human-in-the-loop ready** — ESCALATE verdicts can trigger human approval flows
+
+The guardrail policy, budget, egress allowlist, and container image are all configured by the operator when creating the task — your agent code doesn't need to know about them.
 
 ---
 
-## Limitations
+## Environment Variables
 
-- The adapter is synchronous — it blocks on the gRPC call to the Host Agent. For high-throughput scenarios, consider an async adapter using `aiogrpc`.
-- LangChain's `StructuredTool.from_function` infers parameter schemas from the `_run` signature. Since the wrapper uses `**kwargs`, you may want to add explicit parameter schemas for better LLM function-calling accuracy.
-- The `_bulkhead_tool` attribute is set by the `@tool` decorator — only decorated functions can be wrapped.
+Inside a Bulkhead sandbox container, these are auto-injected:
+
+| Variable | Description |
+|----------|-------------|
+| `BULKHEAD_ENDPOINT` | gRPC endpoint of the Host Agent (e.g., `host-agent:50052`) |
+| `BULKHEAD_SANDBOX_ID` | Your sandbox's unique identifier |
+
+`BulkheadAgent()` reads these automatically — no manual configuration needed.
 
 ---
 
 ## Next Steps
 
-- [Agent Developer Guide](agent-guide.md) — full Python SDK tutorial with `@tool`, verdicts, and human interaction
-- [Operator Guide](operator-guide.md) — deploy the stack and configure guardrails
+- [Agent Developer Guide](agent-guide.md) — build agents from scratch with the Python SDK's `@tool` decorator
+- [Operator Guide](operator-guide.md) — deploy the stack and configure guardrails, budgets, and egress
 - [API Reference](../api-reference.md) — complete RPC reference

@@ -82,6 +82,68 @@ class BulkheadAgent:
             self._channel.close()
             self._channel = None
 
+    def evaluate(self, name: str, params: dict[str, Any] | None = None) -> ToolResult:
+        """Evaluate guardrails and budget for a tool call without executing it.
+
+        Calls the Host Agent's ``ExecuteTool`` RPC and returns the verdict.
+        Use this when you manage tool execution yourself (e.g., LangChain tools)
+        and only need the guardrail decision. Call :meth:`report_result` after
+        execution to record the outcome for the audit trail.
+
+        Args:
+            name: Name of the tool to evaluate.
+            params: Parameters the tool will be called with.
+
+        Returns:
+            ToolResult with the verdict and action_id.
+        """
+        if self._stub is None:
+            raise RuntimeError("Not connected — call connect() or use as context manager")
+
+        params = params or {}
+
+        parameters_struct = _dict_to_struct(params, self._pb2)
+        request = self._pb2.ExecuteToolRequest(
+            tool_name=name,
+            parameters=parameters_struct,
+            justification="",
+        )
+        resp = self._stub.ExecuteTool(request, metadata=self._metadata)
+
+        verdict_map = {
+            self._pb2.ACTION_VERDICT_ALLOW: Verdict.ALLOW,
+            self._pb2.ACTION_VERDICT_DENY: Verdict.DENY,
+            self._pb2.ACTION_VERDICT_ESCALATE: Verdict.ESCALATE,
+        }
+        verdict = verdict_map.get(resp.verdict, Verdict.DENY)
+
+        return ToolResult(
+            verdict=verdict,
+            denial_reason=resp.denial_reason,
+            escalation_id=resp.escalation_id,
+            action_id=resp.action_id,
+        )
+
+    def report_result(
+        self,
+        action_id: str,
+        success: bool,
+        result: Any = None,
+        error: str = "",
+    ) -> None:
+        """Record the outcome of a tool execution for the audit trail.
+
+        Call this after executing a tool that was evaluated with :meth:`evaluate`.
+        Links the execution result to the ``action_id`` from the evaluation.
+
+        Args:
+            action_id: The action_id from :meth:`evaluate`.
+            success: Whether the tool executed successfully.
+            result: The tool's return value (on success).
+            error: Error message (on failure).
+        """
+        self._report_result(action_id, success, result, error)
+
     def execute_tool(self, name: str, params: dict[str, Any] | None = None) -> ToolResult:
         """Execute a tool through the evaluate → execute → report cycle.
 
@@ -96,63 +158,31 @@ class BulkheadAgent:
         Returns:
             ToolResult with the verdict and (if allowed) the handler's output.
         """
-        if self._stub is None:
-            raise RuntimeError("Not connected — call connect() or use as context manager")
+        evaluation = self.evaluate(name, params)
+
+        if evaluation.verdict != Verdict.ALLOW:
+            return evaluation
 
         params = params or {}
 
-        # 1. Evaluate via gRPC
-        parameters_struct = _dict_to_struct(params, self._pb2)
-        request = self._pb2.ExecuteToolRequest(
-            tool_name=name,
-            parameters=parameters_struct,
-            justification="",
-        )
-        resp = self._stub.ExecuteTool(request, metadata=self._metadata)
-
-        # Map proto verdict enum
-        verdict_map = {
-            self._pb2.ACTION_VERDICT_ALLOW: Verdict.ALLOW,
-            self._pb2.ACTION_VERDICT_DENY: Verdict.DENY,
-            self._pb2.ACTION_VERDICT_ESCALATE: Verdict.ESCALATE,
-        }
-        verdict = verdict_map.get(resp.verdict, Verdict.DENY)
-
-        if verdict == Verdict.DENY:
-            return ToolResult(
-                verdict=Verdict.DENY,
-                denial_reason=resp.denial_reason,
-                action_id=resp.action_id,
-            )
-
-        if verdict == Verdict.ESCALATE:
-            return ToolResult(
-                verdict=Verdict.ESCALATE,
-                escalation_id=resp.escalation_id,
-                action_id=resp.action_id,
-            )
-
-        # 2. Execute locally via registered handler
+        # Execute locally via registered handler
         handler_def = self._tools.get(name)
         if handler_def is None:
-            # Report failure — no handler registered
-            self._report_result(resp.action_id, success=False, error="no handler registered")
+            self._report_result(evaluation.action_id, success=False, error="no handler registered")
             raise ValueError(f"No handler registered for tool '{name}'")
 
         try:
             result = handler_def.handler(**params)
         except Exception as exc:
-            # 3a. Report failure
-            self._report_result(resp.action_id, success=False, error=str(exc))
+            self._report_result(evaluation.action_id, success=False, error=str(exc))
             raise
 
-        # 3b. Report success
-        self._report_result(resp.action_id, success=True, result=result)
+        self._report_result(evaluation.action_id, success=True, result=result)
 
         return ToolResult(
             verdict=Verdict.ALLOW,
             result=result,
-            action_id=resp.action_id,
+            action_id=evaluation.action_id,
         )
 
     def request_human_input(
