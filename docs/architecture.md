@@ -140,9 +140,9 @@ A stateless service for content classification and data loss prevention. Classif
 
 ### Sandbox Runtime (Data Plane)
 
-A Rust binary that runs on each host in the fleet. It exposes two gRPC services: **RuntimeService** (called by the control plane to manage sandboxes) and **AgentAPIService** (called by agents for guardrail evaluation). The Runtime is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents execute tools locally inside their Docker container and report results via `ReportActionResult` for the audit trail.
+A Rust binary that runs on each host in the fleet, **outside** the agent containers. It exposes two gRPC services: **RuntimeService** (called by the control plane to manage sandboxes) and **AgentAPIService** (called by agents running inside containers for guardrail evaluation). The Runtime is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents run inside Docker containers, execute tools locally, and call back to the Runtime via `ReportActionResult` to record outcomes for the audit trail.
 
-Each sandbox manages its own guardrails evaluator, Docker container lifecycle, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`. Container management uses the bollard crate, enabled via `ENABLE_DOCKER=true`.
+The Runtime manages the full lifecycle of agent containers (create, resource-limit, destroy) via the bollard crate (enabled via `ENABLE_DOCKER=true`). Each sandbox tracks its own guardrails evaluator, container ID, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`.
 
 **Responsibilities:**
 - Sandbox lifecycle management (create, destroy, status, events)

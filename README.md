@@ -35,19 +35,20 @@ graph TB
         PG[("PostgreSQL")]
     end
 
-    subgraph DP["Data Plane (Rust, per host)"]
-        subgraph Sandbox["Sandbox Runtime (Policy Engine)"]
-            Evaluator["Guardrails Evaluator"]
-            Container["Docker Container"]
-        end
+    subgraph DP["Data Plane (per host)"]
+        Runtime["Sandbox Runtime (Rust)"]
+        Evaluator["Guardrails Evaluator"]
+        Container["Agent Container (Docker)"]
     end
 
     Operator -->|gRPC| CP
-    Agent -->|gRPC| Sandbox
-    Workspace -->|"create sandbox"| Sandbox
+    Agent -->|runs inside| Container
+    Container -->|gRPC| Runtime
+    Workspace -->|"create sandbox"| Runtime
+    Runtime --- Evaluator
 ```
 
-The control plane handles setup and orchestration; the data plane handles agent execution. See [Core Flows](#core-flows) below for how data moves between components.
+The control plane handles setup and orchestration. The Sandbox Runtime (Rust) runs on each host and manages agent Docker containers — it evaluates guardrails and budget as a policy engine while agents execute tools inside their containers. See [Core Flows](#core-flows) below for how data moves between components.
 
 ### Services
 
