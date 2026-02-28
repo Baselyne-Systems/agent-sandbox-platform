@@ -23,6 +23,79 @@ use crate::agent_api::HostAgentApiServiceImpl;
 use crate::sandbox::SandboxManager;
 use crate::server::HostAgentServiceImpl;
 
+/// Resolves a gRPC endpoint: individual env var takes priority,
+/// then CONTROL_PLANE + well-known port, then None.
+fn resolve_endpoint(env_key: &str, control_plane: &Option<String>, default_port: u16) -> Option<String> {
+    if let Ok(endpoint) = std::env::var(env_key) {
+        return Some(endpoint);
+    }
+    control_plane
+        .as_ref()
+        .map(|cp| format!("http://{}:{}", cp, default_port))
+}
+
+/// Auto-detects host resources, with env var overrides.
+fn detect_resources() -> (i64, i32, i64) {
+    let detected_memory_mb = {
+        let sys = sysinfo::System::new_with_specifics(
+            sysinfo::RefreshKind::nothing()
+                .with_memory(sysinfo::MemoryRefreshKind::everything()),
+        );
+        (sys.total_memory() / (1024 * 1024)) as i64
+    };
+
+    let detected_cpu_millicores = std::thread::available_parallelism()
+        .map(|n| n.get() as i32 * 1000)
+        .unwrap_or(4000);
+
+    let detected_disk_mb = {
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        disks
+            .iter()
+            .find(|d| d.mount_point() == std::path::Path::new("/"))
+            .map(|d| (d.total_space() / (1024 * 1024)) as i64)
+            .unwrap_or(102400)
+    };
+
+    let total_memory_mb = std::env::var("TOTAL_MEMORY_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(detected_memory_mb);
+
+    let total_cpu_millicores = std::env::var("TOTAL_CPU_MILLICORES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(detected_cpu_millicores);
+
+    let total_disk_mb = std::env::var("TOTAL_DISK_MB")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(detected_disk_mb);
+
+    (total_memory_mb, total_cpu_millicores, total_disk_mb)
+}
+
+/// Auto-detects the local IP via the OS routing table.
+/// Routes toward CONTROL_PLANE (or 8.8.8.8) to find the right interface.
+fn detect_advertise_address(control_plane: &Option<String>) -> String {
+    if let Ok(addr) = std::env::var("ADVERTISE_ADDRESS") {
+        return addr;
+    }
+
+    let target = control_plane
+        .as_ref()
+        .map(|cp| format!("{}:80", cp))
+        .unwrap_or_else(|| "8.8.8.8:80".to_string());
+
+    std::net::UdpSocket::bind("0.0.0.0:0")
+        .and_then(|socket| {
+            socket.connect(&target)?;
+            socket.local_addr()
+        })
+        .map(|local| local.ip().to_string())
+        .unwrap_or_else(|_| "localhost".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing with env-filter support (e.g. RUST_LOG=debug).
@@ -40,54 +113,58 @@ async fn main() -> Result<()> {
 
     let addr: SocketAddr = format!("0.0.0.0:{port}").parse()?;
 
-    // Optional HIS endpoint for human interaction forwarding.
-    let his_client = match std::env::var("HIS_ENDPOINT") {
-        Ok(endpoint) => {
+    // CONTROL_PLANE: single address that derives all service endpoints.
+    let control_plane: Option<String> = std::env::var("CONTROL_PLANE").ok();
+    if let Some(ref cp) = control_plane {
+        info!(control_plane = %cp, "deriving service endpoints from well-known ports");
+    }
+
+    // Connect to control-plane services. Each checks its individual env var
+    // first, then falls back to CONTROL_PLANE + well-known port.
+    let his_client = match resolve_endpoint("HIS_ENDPOINT", &control_plane, 50063) {
+        Some(endpoint) => {
             info!(endpoint = %endpoint, "connecting to HIS");
             let client = HumanInteractionServiceClient::connect(endpoint).await?;
             Some(client)
         }
-        Err(_) => {
-            info!("HIS_ENDPOINT not set — RequestHumanInput will return unavailable");
+        None => {
+            info!("HIS endpoint not configured — RequestHumanInput will return unavailable");
             None
         }
     };
 
-    // Optional Activity Store endpoint for persisting action records.
-    let activity_client = match std::env::var("ACTIVITY_ENDPOINT") {
-        Ok(endpoint) => {
+    let activity_client = match resolve_endpoint("ACTIVITY_ENDPOINT", &control_plane, 50065) {
+        Some(endpoint) => {
             info!(endpoint = %endpoint, "connecting to Activity Store");
             let client = ActivityServiceClient::connect(endpoint).await?;
             Some(client)
         }
-        Err(_) => {
-            info!("ACTIVITY_ENDPOINT not set — action records will not be persisted");
+        None => {
+            info!("Activity endpoint not configured — action records will not be persisted");
             None
         }
     };
 
-    // Optional Economics Service endpoint for budget enforcement.
-    let economics_client = match std::env::var("ECONOMICS_ENDPOINT") {
-        Ok(endpoint) => {
+    let economics_client = match resolve_endpoint("ECONOMICS_ENDPOINT", &control_plane, 50066) {
+        Some(endpoint) => {
             info!(endpoint = %endpoint, "connecting to Economics Service");
             let client = EconomicsServiceClient::connect(endpoint).await?;
             Some(client)
         }
-        Err(_) => {
-            info!("ECONOMICS_ENDPOINT not set — budget enforcement disabled");
+        None => {
+            info!("Economics endpoint not configured — budget enforcement disabled");
             None
         }
     };
 
-    // Optional Governance Service endpoint for DLP egress inspection.
-    let governance_client = match std::env::var("GOVERNANCE_ENDPOINT") {
-        Ok(endpoint) => {
+    let governance_client = match resolve_endpoint("GOVERNANCE_ENDPOINT", &control_plane, 50064) {
+        Some(endpoint) => {
             info!(endpoint = %endpoint, "connecting to Governance Service");
             let client = DataGovernanceServiceClient::connect(endpoint).await?;
             Some(client)
         }
-        Err(_) => {
-            info!("GOVERNANCE_ENDPOINT not set — DLP egress inspection disabled");
+        None => {
+            info!("Governance endpoint not configured — DLP egress inspection disabled");
             None
         }
     };
@@ -109,29 +186,30 @@ async fn main() -> Result<()> {
     };
     info!(supported_tiers = ?supported_tiers, "isolation tiers available");
 
-    let advertise_addr = std::env::var("ADVERTISE_ADDRESS").unwrap_or_else(|_| "localhost".to_string());
+    let advertise_addr = detect_advertise_address(&control_plane);
     let advertise_endpoint = format!("{advertise_addr}:{port}");
-    info!(advertise_endpoint = %advertise_endpoint, "agent API advertise endpoint");
+    info!(
+        advertise_endpoint = %advertise_endpoint,
+        source = if std::env::var("ADVERTISE_ADDRESS").is_ok() { "env" } else { "auto-detected" },
+        "advertise address"
+    );
 
-    // Host resource configuration (from env vars, with sensible defaults).
-    let total_memory_mb: i64 = std::env::var("TOTAL_MEMORY_MB")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(16384);
-    let total_cpu_millicores: i32 = std::env::var("TOTAL_CPU_MILLICORES")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(8000);
-    let total_disk_mb: i64 = std::env::var("TOTAL_DISK_MB")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(102400);
-    info!(total_memory_mb, total_cpu_millicores, total_disk_mb, "host resource configuration");
+    // Host resource configuration (auto-detected from system, env vars override).
+    let (total_memory_mb, total_cpu_millicores, total_disk_mb) = detect_resources();
+    info!(
+        total_memory_mb,
+        total_cpu_millicores,
+        total_disk_mb,
+        memory_source = if std::env::var("TOTAL_MEMORY_MB").is_ok() { "env" } else { "auto-detected" },
+        cpu_source = if std::env::var("TOTAL_CPU_MILLICORES").is_ok() { "env" } else { "auto-detected" },
+        disk_source = if std::env::var("TOTAL_DISK_MB").is_ok() { "env" } else { "auto-detected" },
+        "host resource configuration"
+    );
 
-    // Optional Compute Plane endpoint for host self-registration and heartbeats.
+    // Compute Plane for host self-registration and heartbeats.
     let compute_registration: Option<(String, ComputePlaneServiceClient<tonic::transport::Channel>)> =
-        match std::env::var("COMPUTE_ENDPOINT") {
-            Ok(endpoint) => {
+        match resolve_endpoint("COMPUTE_ENDPOINT", &control_plane, 50067) {
+            Some(endpoint) => {
                 info!(endpoint = %endpoint, "connecting to Compute Plane");
                 match ComputePlaneServiceClient::connect(endpoint).await {
                     Ok(mut client) => {
@@ -166,8 +244,8 @@ async fn main() -> Result<()> {
                     }
                 }
             }
-            Err(_) => {
-                info!("COMPUTE_ENDPOINT not set — host registration and heartbeats disabled");
+            None => {
+                info!("Compute endpoint not configured — host registration and heartbeats disabled");
                 None
             }
         };

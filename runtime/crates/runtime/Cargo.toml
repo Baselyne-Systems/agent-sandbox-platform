@@ -24,3 +24,4 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 bollard.workspace = true
 async-trait.workspace = true
 futures-util.workspace = true
+sysinfo.workspace = true

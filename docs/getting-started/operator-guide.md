@@ -27,6 +27,87 @@ docker compose -f deploy/docker-compose.yml ps
 
 All services should show `healthy` status. PostgreSQL starts first, then control-plane services, then the Host Agent.
 
+> **Docker Compose note:** The compose stack bundles a single Host Agent that is pre-configured to register with the Compute Plane automatically. If you only need a single-machine setup, skip ahead to step 2. The next section explains how to add additional hosts (e.g., EC2 instances) to the fleet.
+
+---
+
+## 1b. Add Hosts to the Fleet
+
+In a production deployment, you run the control plane services centrally and deploy Host Agents on separate machines. Each Host Agent **self-registers** with the Compute Plane on startup and sends **heartbeats every 30 seconds** with its current resource availability. If a host stops heartbeating for 3 minutes, the Compute Plane automatically marks it offline and stops routing workspaces to it.
+
+### Deploy a Host Agent on an EC2 instance
+
+Each host needs Docker installed and the Host Agent binary (or container image). The minimal configuration is just two environment variables:
+
+```bash
+CONTROL_PLANE=10.0.0.5 ENABLE_DOCKER=true ./host-agent
+```
+
+`CONTROL_PLANE` is the IP or DNS name of your control plane (e.g., an NLB address). The Host Agent derives all service endpoints from it using well-known ports, auto-detects memory/CPU/disk from the host system, and auto-detects its own advertise address from the network interface.
+
+On startup, the Host Agent will:
+1. Derive all service endpoints from `CONTROL_PLANE` (HIS :50063, Governance :50064, Activity :50065, Economics :50066, Compute :50067)
+2. Auto-detect host resources (memory, CPU cores, disk)
+3. Auto-detect its local IP from the routing table
+4. Self-register with the Compute Plane and log its assigned `host_id`
+5. Begin sending heartbeats every 30 seconds
+
+#### Advanced overrides
+
+Individual environment variables override any auto-detected or derived values:
+
+```bash
+export CONTROL_PLANE=10.0.0.5
+export ENABLE_DOCKER=true
+
+# Override advertise address (e.g., for hosts behind a load balancer)
+export ADVERTISE_ADDRESS=lb.internal.example.com
+
+# Reserve memory for the OS (auto-detected total minus 4 GB)
+export TOTAL_MEMORY_MB=28672
+
+# Override a specific service endpoint
+export ACTIVITY_ENDPOINT=http://activity-us-east.internal:50065
+
+# Enable gVisor isolated tier
+export ISOLATED_RUNTIME=runsc
+
+./host-agent
+```
+
+For Kubernetes or ECS deployments where each service has its own DNS name, skip `CONTROL_PLANE` and set individual endpoints instead.
+
+### Verify hosts are registered
+
+```bash
+# List all hosts in the fleet
+grpcurl -plaintext -d '{}' \
+  localhost:50067 platform.compute.v1.ComputePlaneService/ListHosts
+
+# List only hosts that are ready for placement
+grpcurl -plaintext -d '{"status": "HOST_STATUS_READY"}' \
+  localhost:50067 platform.compute.v1.ComputePlaneService/ListHosts
+```
+
+Each host entry shows its `host_id`, `address`, `status`, `total_resources`, `available_resources`, `active_sandboxes`, `last_heartbeat`, and `supported_tiers`.
+
+### Host lifecycle
+
+| Status | Meaning |
+|--------|---------|
+| `READY` | Healthy and eligible for workspace placement |
+| `DRAINING` | Set by operator — no new workspaces placed, existing ones continue |
+| `OFFLINE` | Automatically set after 3 minutes without a heartbeat |
+
+To drain a host for maintenance, use `DeregisterHost`:
+
+```bash
+grpcurl -plaintext -d '{"host_id": "<host_id>"}' \
+  localhost:50067 platform.compute.v1.ComputePlaneService/DeregisterHost
+```
+
+When the host comes back and its Host Agent restarts, it will re-register and return to `READY` status.
+
 ---
 
 ## 2. Register an Agent and Mint Credentials
@@ -398,15 +479,20 @@ docker compose -f deploy/docker-compose.yml down
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CONTROL_PLANE` | (not set) | Control plane IP or hostname. Derives all service endpoints using well-known ports (HIS :50063, Governance :50064, Activity :50065, Economics :50066, Compute :50067). Individual endpoint vars override. |
 | `GRPC_PORT` | `50052` | gRPC listen port |
-| `ADVERTISE_ADDRESS` | `localhost` | Address agents use to reach the Host Agent |
-| `HIS_ENDPOINT` | (not set) | HIS gRPC endpoint for human interaction forwarding |
-| `ACTIVITY_ENDPOINT` | (not set) | Activity Store gRPC endpoint for audit trail |
-| `ECONOMICS_ENDPOINT` | (not set) | Economics Service gRPC endpoint for budget checks |
-| `GOVERNANCE_ENDPOINT` | (not set) | Governance Service gRPC endpoint for DLP egress inspection |
+| `ADVERTISE_ADDRESS` | auto-detected | Address other services use to reach this Host Agent. Auto-detected from routing table if not set. |
+| `TOTAL_MEMORY_MB` | auto-detected | Total memory (MB) advertised to Compute Plane. Auto-detected from host system if not set. |
+| `TOTAL_CPU_MILLICORES` | auto-detected | Total CPU (millicores) advertised to Compute Plane. Auto-detected (cores × 1000) if not set. |
+| `TOTAL_DISK_MB` | auto-detected | Total disk (MB) advertised to Compute Plane. Auto-detected from root mount if not set. |
+| `COMPUTE_ENDPOINT` | from `CONTROL_PLANE` | Compute Plane gRPC endpoint. Enables self-registration and heartbeats. |
+| `HIS_ENDPOINT` | from `CONTROL_PLANE` | HIS gRPC endpoint for human interaction forwarding |
+| `ACTIVITY_ENDPOINT` | from `CONTROL_PLANE` | Activity Store gRPC endpoint for audit trail |
+| `ECONOMICS_ENDPOINT` | from `CONTROL_PLANE` | Economics Service gRPC endpoint for budget checks |
+| `GOVERNANCE_ENDPOINT` | from `CONTROL_PLANE` | Governance Service gRPC endpoint for DLP egress inspection |
 | `ENABLE_DOCKER` | `false` | Enable Docker container lifecycle management |
 | `SUPPORTED_TIERS` | `standard,hardened` | Isolation tiers this host supports (comma-separated) |
-| `ISOLATED_RUNTIME` | (not set) | Docker runtime for isolated tier (e.g., `runsc`, `kata`) |
+| `ISOLATED_RUNTIME` | (not set) | Docker runtime for isolated tier (e.g., `runsc`, `kata`). Automatically adds `isolated` to supported tiers. |
 | `RUST_LOG` | `info` | Logging level |
 
 ### Snapshot Backends

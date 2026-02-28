@@ -181,19 +181,33 @@ healthcheck:
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
+| `CONTROL_PLANE` | — | Control plane IP or hostname. Derives all service endpoints using well-known ports (see table below). Individual endpoint vars override. |
 | `GRPC_PORT` | `50052` | Port for HostAgentService and HostAgentAPIService |
-| `ADVERTISE_ADDRESS` | `localhost` | Hostname/IP returned to agents as the API endpoint |
-| `HIS_ENDPOINT` | — | gRPC endpoint for Human Interaction Service (e.g., `http://human:50051`). If unset, `RequestHumanInput` returns `UNAVAILABLE`. |
-| `ACTIVITY_ENDPOINT` | — | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
-| `ECONOMICS_ENDPOINT` | — | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
+| `ADVERTISE_ADDRESS` | auto-detected | Hostname/IP returned to agents as the API endpoint. Auto-detected from OS routing table if not set. |
+| `HIS_ENDPOINT` | from `CONTROL_PLANE` :50063 | gRPC endpoint for Human Interaction Service (e.g., `http://human:50051`). If neither this nor `CONTROL_PLANE` is set, `RequestHumanInput` returns `UNAVAILABLE`. |
+| `ACTIVITY_ENDPOINT` | from `CONTROL_PLANE` :50065 | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
+| `ECONOMICS_ENDPOINT` | from `CONTROL_PLANE` :50066 | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
+| `GOVERNANCE_ENDPOINT` | from `CONTROL_PLANE` :50064 | gRPC endpoint for Data Governance Service (e.g., `http://governance:50051`). If unset, DLP egress inspection is disabled. |
+| `COMPUTE_ENDPOINT` | from `CONTROL_PLANE` :50067 | gRPC endpoint for Compute Plane (e.g., `http://compute:50051`). Enables host self-registration and periodic heartbeats. |
+| `TOTAL_MEMORY_MB` | auto-detected | Total memory (MB) advertised to Compute Plane. Auto-detected from host system if not set. |
+| `TOTAL_CPU_MILLICORES` | auto-detected | Total CPU (millicores) advertised to Compute Plane. Auto-detected (cores × 1000) if not set. |
+| `TOTAL_DISK_MB` | auto-detected | Total disk (MB) advertised to Compute Plane. Auto-detected from root mount if not set. |
 | `ENABLE_DOCKER` | `false` | Set to `true` to enable Docker container management via bollard. Requires Docker socket access. |
-| `COMPUTE_ENDPOINT` | (not set) | gRPC endpoint for Compute Plane (e.g., `http://compute:50051`). Enables host self-registration and periodic heartbeats. If unset, the host must be registered manually. |
-| `TOTAL_MEMORY_MB` | `16384` | Total memory (MB) advertised to Compute Plane for placement. |
-| `TOTAL_CPU_MILLICORES` | `8000` | Total CPU (millicores) advertised to Compute Plane for placement. |
-| `TOTAL_DISK_MB` | `102400` | Total disk (MB) advertised to Compute Plane for placement. |
 | `SUPPORTED_TIERS` | `standard,hardened` | Comma-separated isolation tiers this host supports. Options: `standard`, `hardened`, `isolated`. |
 | `ISOLATED_RUNTIME` | (not set) | Docker runtime for the `isolated` tier (e.g., `runsc` for gVisor, `kata` for Kata Containers). Setting this automatically adds `isolated` to supported tiers. |
 | `RUST_LOG` | `info` | Tracing filter (e.g., `debug`, `host_agent=trace,tower=warn`) |
+
+#### CONTROL_PLANE Well-Known Ports
+
+When `CONTROL_PLANE` is set, the Host Agent derives service endpoints by combining the address with these ports (matching the Docker Compose external port mappings):
+
+| Service | Port | Env Var Override |
+|---------|------|-----------------|
+| Human Interaction (HIS) | 50063 | `HIS_ENDPOINT` |
+| Data Governance | 50064 | `GOVERNANCE_ENDPOINT` |
+| Activity Store | 50065 | `ACTIVITY_ENDPOINT` |
+| Economics | 50066 | `ECONOMICS_ENDPOINT` |
+| Compute Plane | 50067 | `COMPUTE_ENDPOINT` |
 
 ### Docker Compose Environment
 
