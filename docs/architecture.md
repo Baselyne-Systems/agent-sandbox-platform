@@ -78,6 +78,92 @@ Manages the fleet of runtime hosts and handles workspace placement. Hosts regist
 - Best-fit workspace placement with `FOR UPDATE SKIP LOCKED` and tier filtering
 - Host status management (ready/draining/offline)
 
+#### Host Discovery & Lifecycle
+
+Hosts self-register with the Compute Plane on startup and maintain liveness through periodic heartbeats:
+
+```mermaid
+sequenceDiagram
+    participant HA as Host Agent (Rust)
+    participant CP as Compute Plane (Go)
+    participant DB as PostgreSQL
+
+    Note over HA: Startup
+    HA->>CP: RegisterHost (address, resources, tiers)
+    CP->>DB: INSERT hosts (status=ready)
+    CP-->>HA: host_id
+
+    loop Every 30 seconds
+        HA->>CP: Heartbeat (host_id, available resources, sandbox count)
+        CP->>DB: UPDATE hosts SET available_*, last_heartbeat=now()
+        CP-->>HA: status (ready / draining)
+    end
+
+    Note over CP: Liveness worker (every 60s)
+    CP->>DB: UPDATE hosts SET status=offline WHERE last_heartbeat < cutoff
+
+    Note over HA: Shutdown (ctrl+c)
+    Note over HA: Heartbeat loop stops
+    Note over CP: Liveness worker marks host offline after ~3 min
+```
+
+**Host Status Transitions:**
+
+| From | To | Trigger |
+|------|----|---------|
+| (none) | `ready` | `RegisterHost` RPC |
+| `ready` | `draining` | Operator calls `DeregisterHost` or sets status via API |
+| `ready` | `offline` | Liveness worker detects missed heartbeats (default: 3 min timeout) |
+| `draining` | `offline` | Operator finalizes decommission |
+
+Only `ready` hosts are eligible for workspace placement. Draining hosts reject new placements but continue running existing sandboxes. Offline hosts are excluded from all operations.
+
+**Configuration:**
+
+| Env Var (Host Agent) | Default | Purpose |
+|---------------------|---------|---------|
+| `COMPUTE_ENDPOINT` | (none) | Compute Plane gRPC endpoint. Enables registration + heartbeats. |
+| `TOTAL_MEMORY_MB` | 16384 | Memory capacity advertised to Compute Plane |
+| `TOTAL_CPU_MILLICORES` | 8000 | CPU capacity advertised to Compute Plane |
+| `TOTAL_DISK_MB` | 102400 | Disk capacity advertised to Compute Plane |
+
+| Env Var (Compute Plane) | Default | Purpose |
+|------------------------|---------|---------|
+| `HEARTBEAT_TIMEOUT_SECS` | 180 | Seconds without a heartbeat before marking host offline |
+
+#### Placement Algorithm
+
+When a workspace needs a host, `PlaceWorkspace` runs a single atomic SQL query that selects, reserves, and returns the best candidate:
+
+```sql
+UPDATE hosts SET
+  available_memory_mb = available_memory_mb - $requested,
+  active_sandboxes = active_sandboxes + 1
+WHERE id = (
+  SELECT id FROM hosts
+  WHERE status = 'ready'
+    AND available_memory_mb >= $requested_memory
+    AND available_cpu_millicores >= $requested_cpu
+    AND available_disk_mb >= $requested_disk
+    AND ($tier = '' OR supported_tiers @> ARRAY[$tier]::text[])
+  ORDER BY array_length(supported_tiers, 1) ASC,
+           available_memory_mb ASC
+  LIMIT 1
+  FOR UPDATE SKIP LOCKED
+)
+RETURNING ...
+```
+
+**Key properties:**
+
+1. **Atomic reservation** — `FOR UPDATE SKIP LOCKED` acquires a row lock on the selected host, preventing concurrent requests from double-booking the same resources. `SKIP LOCKED` means if one request is in-flight, the next request skips to the next-best host instead of blocking.
+
+2. **Tier filtering** — `supported_tiers @> ARRAY[$tier]` uses PostgreSQL array containment to match only hosts that support the requested isolation tier. An empty tier matches all hosts.
+
+3. **Tier-aware best-fit** — Hosts are sorted first by `array_length(supported_tiers)` ascending (fewest capabilities first), then by `available_memory_mb` ascending (least available memory first). This preserves specialized hosts (e.g., gVisor-capable) for workloads that actually need them, while directing standard workloads to simpler hosts.
+
+4. **Resource correction via heartbeats** — Heartbeats continuously update the host's available resources from the host's perspective, correcting any drift between the control plane's bookkeeping and actual resource consumption.
+
 ### Guardrails Service
 
 Manages guardrail rules and compiles them into binary policies consumed by the Rust evaluator. Rules define conditions (tool name patterns, parameter checks) and actions (allow, deny, escalate, log) with priority ordering. The `CompilePolicy` RPC produces a JSON-serialized `CompiledPolicy` that the runtime deserializes into its evaluator. `SimulatePolicy` provides dry-run testing.

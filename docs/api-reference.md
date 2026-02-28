@@ -201,11 +201,11 @@ Manages runtime hosts and handles workspace placement.
 
 | RPC | Description |
 |-----|-------------|
-| `RegisterHost` | Register a new runtime host with address, total resource capacity, and supported isolation tiers. |
-| `DeregisterHost` | Set a host to offline status. |
-| `ListHosts` | List hosts with optional status filter. |
-| `PlaceWorkspace` | Select a host for a workspace. Uses best-fit algorithm with atomic resource reservation and isolation tier filtering. Returns host_id and address. |
-| `Heartbeat` | Host reports current resource availability and active sandbox count. Returns the host's current status (so control plane can signal drain). |
+| `RegisterHost` | Register a new runtime host with address, total resource capacity, and supported isolation tiers. Called by Host Agent on startup when `COMPUTE_ENDPOINT` is set. Returns the assigned host_id. |
+| `DeregisterHost` | Set a host to offline status. Used by operators to decommission a host. |
+| `ListHosts` | List hosts with optional status filter (`ready`, `draining`, `offline`). |
+| `PlaceWorkspace` | Select a host for a workspace. Uses tier-aware best-fit algorithm with atomic resource reservation (`FOR UPDATE SKIP LOCKED`). Returns host_id and address. |
+| `Heartbeat` | Host reports current resource availability, active sandbox count, and supported tiers. Sent every 30s by the Host Agent. Returns the host's current status (so control plane can signal drain). Hosts that miss heartbeats for `HEARTBEAT_TIMEOUT_SECS` (default 180s) are automatically marked offline by the liveness worker. |
 
 ### Key Messages
 

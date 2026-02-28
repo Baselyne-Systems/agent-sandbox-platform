@@ -165,6 +165,12 @@ healthcheck:
 | `COMPUTE_ENDPOINT` | — | gRPC endpoint for Compute Plane (e.g., `compute:50051`). If unset, orchestration is disabled. |
 | `GUARDRAILS_ENDPOINT` | — | gRPC endpoint for Guardrails Service (e.g., `guardrails:50051`). If unset, empty policies are used. |
 
+**Compute Plane Service:**
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `HEARTBEAT_TIMEOUT_SECS` | `180` | Seconds without a heartbeat before a host is marked offline. The liveness worker checks every 60 seconds. |
+
 **Task Service:**
 
 | Environment Variable | Default | Description |
@@ -181,6 +187,10 @@ healthcheck:
 | `ACTIVITY_ENDPOINT` | — | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
 | `ECONOMICS_ENDPOINT` | — | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
 | `ENABLE_DOCKER` | `false` | Set to `true` to enable Docker container management via bollard. Requires Docker socket access. |
+| `COMPUTE_ENDPOINT` | (not set) | gRPC endpoint for Compute Plane (e.g., `http://compute:50051`). Enables host self-registration and periodic heartbeats. If unset, the host must be registered manually. |
+| `TOTAL_MEMORY_MB` | `16384` | Total memory (MB) advertised to Compute Plane for placement. |
+| `TOTAL_CPU_MILLICORES` | `8000` | Total CPU (millicores) advertised to Compute Plane for placement. |
+| `TOTAL_DISK_MB` | `102400` | Total disk (MB) advertised to Compute Plane for placement. |
 | `SUPPORTED_TIERS` | `standard,hardened` | Comma-separated isolation tiers this host supports. Options: `standard`, `hardened`, `isolated`. |
 | `ISOLATED_RUNTIME` | (not set) | Docker runtime for the `isolated` tier (e.g., `runsc` for gVisor, `kata` for Kata Containers). Setting this automatically adds `isolated` to supported tiers. |
 | `RUST_LOG` | `info` | Tracing filter (e.g., `debug`, `host_agent=trace,tower=warn`) |
@@ -208,6 +218,10 @@ WORKSPACE_ENDPOINT: workspace:50051
 HIS_ENDPOINT: http://human:50051
 ACTIVITY_ENDPOINT: http://activity:50051
 ECONOMICS_ENDPOINT: http://economics:50051
+COMPUTE_ENDPOINT: http://compute:50051
+TOTAL_MEMORY_MB: "16384"
+TOTAL_CPU_MILLICORES: "8000"
+TOTAL_DISK_MB: "102400"
 ENABLE_DOCKER: "true"
 SUPPORTED_TIERS: "standard,hardened"
 # ISOLATED_RUNTIME: "runsc"  # Uncomment if gVisor is installed on the host

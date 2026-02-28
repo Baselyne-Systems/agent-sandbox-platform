@@ -160,6 +160,10 @@ services:
       ACTIVITY_ENDPOINT: http://activity:50051
       ECONOMICS_ENDPOINT: http://economics:50051
       GOVERNANCE_ENDPOINT: http://governance:50051
+      COMPUTE_ENDPOINT: http://compute:50051
+      TOTAL_MEMORY_MB: "16384"
+      TOTAL_CPU_MILLICORES: "8000"
+      TOTAL_DISK_MB: "102400"
       ENABLE_DOCKER: "true"
       RUST_LOG: info
     volumes:
@@ -174,6 +178,8 @@ services:
       economics:
         condition: service_healthy
       governance:
+        condition: service_healthy
+      compute:
         condition: service_healthy
     networks:
       - bulkhead

@@ -276,6 +276,11 @@ impl SandboxManager {
         Ok(())
     }
 
+    /// Returns the number of currently active sandboxes.
+    pub fn active_count(&self) -> usize {
+        self.sandboxes.lock().map(|s| s.len()).unwrap_or(0)
+    }
+
     /// Look up a sandbox ID from gRPC request metadata.
     pub fn lookup_by_metadata<T>(&self, request: &tonic::Request<T>) -> Result<Arc<SandboxState>> {
         let sandbox_id = request
@@ -470,5 +475,23 @@ mod tests {
         let container_id = state.container_id.lock().unwrap().clone();
         assert!(container_id.is_some(), "container should be started for non-empty image");
         assert!(container_id.unwrap().starts_with("noop-"));
+    }
+
+    #[tokio::test]
+    async fn active_count_tracks_sandboxes() {
+        let mgr = test_mgr();
+        assert_eq!(mgr.active_count(), 0);
+
+        let s1 = mgr.create(test_params("ws-100", "agent-100")).await.unwrap();
+        assert_eq!(mgr.active_count(), 1);
+
+        let s2 = mgr.create(test_params("ws-101", "agent-101")).await.unwrap();
+        assert_eq!(mgr.active_count(), 2);
+
+        mgr.destroy(&s1.id).await.unwrap();
+        assert_eq!(mgr.active_count(), 1);
+
+        mgr.destroy(&s2.id).await.unwrap();
+        assert_eq!(mgr.active_count(), 0);
     }
 }

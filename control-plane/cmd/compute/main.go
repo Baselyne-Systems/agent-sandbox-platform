@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/compute"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/config"
@@ -45,6 +48,23 @@ func main() {
 	svc := compute.NewService(repo)
 	handler := compute.NewHandler(svc)
 
+	// Parse heartbeat timeout from environment.
+	heartbeatTimeoutSecs := 180 // default: 3 minutes
+	if v := os.Getenv("HEARTBEAT_TIMEOUT_SECS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			heartbeatTimeoutSecs = parsed
+		}
+	}
+
+	// Start host liveness detection worker.
+	workerCtx, workerCancel := context.WithCancel(context.Background())
+	livenessWorker := compute.NewLivenessWorker(repo, compute.LivenessWorkerConfig{
+		Interval:         60 * time.Second,
+		HeartbeatTimeout: time.Duration(heartbeatTimeoutSecs) * time.Second,
+		Logger:           logger,
+	})
+	go livenessWorker.Run(workerCtx)
+
 	authCfg := middleware.AuthConfig{
 		Credentials:   &middleware.PostgresCredentialLookup{DB: db},
 		TokenHashFunc: identity.HashToken,
@@ -73,6 +93,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
+	workerCancel()
 	logger.Info("shutting down Compute Plane Service")
 	srv.GracefulStop()
 }

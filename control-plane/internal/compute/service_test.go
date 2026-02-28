@@ -112,6 +112,18 @@ func (m *mockRepo) PlaceAndDecrement(_ context.Context, memoryMb int64, cpuMilli
 	return &cp, nil
 }
 
+func (m *mockRepo) MarkStaleHostsOffline(_ context.Context, timeout time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-timeout)
+	var count int64
+	for _, h := range m.hosts {
+		if h.Status == models.HostStatusReady && h.LastHeartbeat.Before(cutoff) {
+			h.Status = models.HostStatusOffline
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (m *mockRepo) UpdateHeartbeat(_ context.Context, hostID string, resources models.HostResources, activeSandboxes int32, supportedTiers []string) (*models.Host, error) {
 	h, ok := m.hosts[hostID]
 	if !ok {

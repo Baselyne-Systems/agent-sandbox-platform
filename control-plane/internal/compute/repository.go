@@ -17,6 +17,7 @@ type Repository interface {
 	SetHostStatus(ctx context.Context, id string, status models.HostStatus) error
 	PlaceAndDecrement(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64, isolationTier string) (*models.Host, error)
 	UpdateHeartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32, supportedTiers []string) (*models.Host, error)
+	MarkStaleHostsOffline(ctx context.Context, timeout time.Duration) (int64, error)
 }
 
 // PostgresRepository implements Repository using PostgreSQL.
@@ -175,4 +176,17 @@ func (r *PostgresRepository) UpdateHeartbeat(ctx context.Context, hostID string,
 		return nil, err
 	}
 	return &h, nil
+}
+
+func (r *PostgresRepository) MarkStaleHostsOffline(ctx context.Context, timeout time.Duration) (int64, error) {
+	cutoff := time.Now().Add(-timeout)
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE hosts SET status = 'offline'
+		 WHERE status = 'ready'
+		   AND last_heartbeat < $1`,
+		cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

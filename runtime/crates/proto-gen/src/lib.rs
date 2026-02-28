@@ -42,4 +42,9 @@ pub mod platform {
             include!("gen/platform.governance.v1.rs");
         }
     }
+    pub mod compute {
+        pub mod v1 {
+            include!("gen/platform.compute.v1.rs");
+        }
+    }
 }
