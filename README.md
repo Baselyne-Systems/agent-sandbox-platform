@@ -4,7 +4,8 @@ Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It
 
 ## Key Features
 
-- **Sandboxed Execution** — Each agent runs in an isolated Docker container with resource limits, allowed tool lists, and environment variable injection. Specify a `container_image` per workspace to bring your own runtime environment
+- **Sandboxed Execution** — Each agent runs in an isolated Docker container with resource limits, allowed tool lists, egress allowlists, and environment variable injection. Specify a `container_image` per workspace to bring your own runtime environment
+- **Egress Allowlist** — Per-sandbox network egress control via iptables. Specify approved destination hosts/CIDRs and all other outbound traffic is dropped at the kernel level
 - **Policy-Only Runtime** — The Runtime is a pure policy engine. `ExecuteTool` evaluates guardrails and budget, returning a verdict (ALLOW/DENY/ESCALATE) and an `action_id`. Agents execute tools locally inside their container, then report results via `ReportActionResult` for the audit trail
 - **Python SDK with `@tool` Decorator** — Register tool handlers with `@tool("name")` and the SDK transparently handles the evaluate → execute → report cycle. Integrates with LangChain and other frameworks
 - **Real-Time Guardrails** — Every tool call is evaluated against compiled policy rules in <50ms. Rules can deny, allow, escalate, or log actions based on tool names, parameters, and agent identity
@@ -86,9 +87,9 @@ sequenceDiagram
     Compute-->>WS: host_id, address (atomic reservation)
     WS->>Guard: CompilePolicy (rule IDs)
     Guard-->>WS: compiled_policy (binary bytes)
-    WS->>RT: CreateSandbox (agent_id, compiled_policy, allowed_tools, env_vars, container_image)
+    WS->>RT: CreateSandbox (agent_id, compiled_policy, allowed_tools, env_vars, container_image, egress_allowlist)
     RT-->>WS: sandbox_id, agent_api_endpoint
-    Note over RT: Docker container started (if image specified)
+    Note over RT: Docker container started + iptables egress rules applied
     WS-->>Task: workspace_id
 
     Note over RT: Sandbox is now running — agent can connect
@@ -290,7 +291,8 @@ grpcurl -plaintext -d '{
     "disk_mb": 2048,
     "max_duration_secs": 3600,
     "allowed_tools": ["read_file", "write_file", "http_request"],
-    "container_image": "myregistry/invoice-agent:latest"
+    "container_image": "myregistry/invoice-agent:latest",
+    "egress_allowlist": ["api.internal.example.com", "10.0.0.0/8"]
   },
   "guardrail_policy_id": "<rule_id_1>,<rule_id_2>",
   "budget_config": {

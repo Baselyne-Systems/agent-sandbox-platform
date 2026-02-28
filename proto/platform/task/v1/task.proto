@@ -76,6 +76,7 @@ message TaskWorkspaceConfig {
   repeated string allowed_tools = 7;
   map<string, string> env_vars = 8;
   string container_image = 9;       // Docker image to run (e.g. "ghcr.io/org/agent:latest")
+  repeated string egress_allowlist = 10;  // approved destination hosts/CIDRs
 }
 
 // HumanInteractionConfig defines how the task interacts with humans.

@@ -51,11 +51,16 @@ impl RuntimeService for RuntimeServiceImpl {
             "creating sandbox"
         );
 
-        let (allowed_tools, env_vars, container_image) = req
+        let (allowed_tools, env_vars, container_image, egress_allowlist) = req
             .spec
             .as_ref()
-            .map(|s| (s.allowed_tools.clone(), s.env_vars.clone(), s.container_image.clone()))
-            .unwrap_or_else(|| (vec![], HashMap::new(), String::new()));
+            .map(|s| (
+                s.allowed_tools.clone(),
+                s.env_vars.clone(),
+                s.container_image.clone(),
+                s.egress_allowlist.clone(),
+            ))
+            .unwrap_or_else(|| (vec![], HashMap::new(), String::new(), vec![]));
 
         let params = CreateSandboxParams {
             workspace_id: req.workspace_id.clone(),
@@ -64,6 +69,7 @@ impl RuntimeService for RuntimeServiceImpl {
             env_vars,
             compiled_guardrails: req.compiled_guardrails,
             container_image,
+            egress_allowlist,
         };
 
         let state = self

@@ -170,6 +170,7 @@ func modelWSConfigToProto(c *models.TaskWorkspaceConfig) *pb.TaskWorkspaceConfig
 		AllowedTools:    c.AllowedTools,
 		EnvVars:         c.EnvVars,
 		ContainerImage:  c.ContainerImage,
+		EgressAllowlist: c.EgressAllowlist,
 	}
 }
 
@@ -184,6 +185,7 @@ func protoWSConfigToModel(c *pb.TaskWorkspaceConfig) models.TaskWorkspaceConfig 
 		AllowedTools:    c.GetAllowedTools(),
 		EnvVars:         c.GetEnvVars(),
 		ContainerImage:  c.GetContainerImage(),
+		EgressAllowlist: c.GetEgressAllowlist(),
 	}
 }
 

@@ -156,6 +156,7 @@ type WorkspaceSpec struct {
 	GuardrailPolicyID string
 	EnvVars           map[string]string
 	ContainerImage    string
+	EgressAllowlist   []string
 }
 
 // Workspace represents an isolated execution environment for an agent.
@@ -305,6 +306,7 @@ type TaskWorkspaceConfig struct {
 	AllowedTools    []string          `json:"allowed_tools,omitempty"`
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
 	ContainerImage  string            `json:"container_image,omitempty"`
+	EgressAllowlist []string          `json:"egress_allowlist,omitempty"`
 }
 
 // TaskHumanInteractionConfig defines how a task interacts with humans.

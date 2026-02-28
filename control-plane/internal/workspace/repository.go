@@ -40,15 +40,20 @@ func (r *PostgresRepository) CreateWorkspace(ctx context.Context, ws *models.Wor
 	if err != nil {
 		return fmt.Errorf("marshal env_vars: %w", err)
 	}
+	egressAllowlistJSON, err := json.Marshal(ws.Spec.EgressAllowlist)
+	if err != nil {
+		return fmt.Errorf("marshal egress_allowlist: %w", err)
+	}
 	return r.db.QueryRowContext(ctx,
 		`INSERT INTO workspaces (agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
-		   max_duration_secs, allowed_tools, guardrail_policy_id, env_vars, host_id, host_address, sandbox_id, expires_at, container_image)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+		   max_duration_secs, allowed_tools, guardrail_policy_id, env_vars, host_id, host_address, sandbox_id, expires_at, container_image, egress_allowlist)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 		 RETURNING id, created_at, updated_at`,
 		ws.AgentID, ws.TaskID, string(ws.Status),
 		ws.Spec.MemoryMb, ws.Spec.CpuMillicores, ws.Spec.DiskMb,
 		ws.Spec.MaxDurationSecs, allowedToolsJSON, ws.Spec.GuardrailPolicyID, envVarsJSON,
 		ws.HostID, ws.HostAddress, ws.SandboxID, ws.ExpiresAt, ws.Spec.ContainerImage,
+		egressAllowlistJSON,
 	).Scan(&ws.ID, &ws.CreatedAt, &ws.UpdatedAt)
 }
 
@@ -57,16 +62,17 @@ func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*mode
 	var allowedToolsJSON, envVarsJSON []byte
 	var expiresAt sql.NullTime
 
+	var egressAllowlistJSON []byte
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 			max_duration_secs, allowed_tools, guardrail_policy_id, env_vars,
-			host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image
+			host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist
 		 FROM workspaces WHERE id = $1`, id,
 	).Scan(&ws.ID, &ws.AgentID, &ws.TaskID, &ws.Status,
 		&ws.Spec.MemoryMb, &ws.Spec.CpuMillicores, &ws.Spec.DiskMb,
 		&ws.Spec.MaxDurationSecs, &allowedToolsJSON, &ws.Spec.GuardrailPolicyID, &envVarsJSON,
 		&ws.HostID, &ws.HostAddress, &ws.SandboxID, &ws.CreatedAt, &ws.UpdatedAt, &expiresAt,
-		&ws.Spec.ContainerImage)
+		&ws.Spec.ContainerImage, &egressAllowlistJSON)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -83,13 +89,16 @@ func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*mode
 	if err := json.Unmarshal(envVarsJSON, &ws.Spec.EnvVars); err != nil {
 		return nil, fmt.Errorf("unmarshal env_vars: %w", err)
 	}
+	if err := json.Unmarshal(egressAllowlistJSON, &ws.Spec.EgressAllowlist); err != nil {
+		return nil, fmt.Errorf("unmarshal egress_allowlist: %w", err)
+	}
 	return &ws, nil
 }
 
 func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
 	query := `SELECT id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 		max_duration_secs, allowed_tools, guardrail_policy_id, env_vars,
-		host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image
+		host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist
 		FROM workspaces WHERE 1=1`
 	args := []any{}
 	argIdx := 1
@@ -122,14 +131,14 @@ func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string,
 	var workspaces []models.Workspace
 	for rows.Next() {
 		var ws models.Workspace
-		var allowedToolsJSON, envVarsJSON []byte
+		var allowedToolsJSON, envVarsJSON, egressAllowlistJSON []byte
 		var expiresAt sql.NullTime
 
 		if err := rows.Scan(&ws.ID, &ws.AgentID, &ws.TaskID, &ws.Status,
 			&ws.Spec.MemoryMb, &ws.Spec.CpuMillicores, &ws.Spec.DiskMb,
 			&ws.Spec.MaxDurationSecs, &allowedToolsJSON, &ws.Spec.GuardrailPolicyID, &envVarsJSON,
 			&ws.HostID, &ws.HostAddress, &ws.SandboxID, &ws.CreatedAt, &ws.UpdatedAt, &expiresAt,
-			&ws.Spec.ContainerImage); err != nil {
+			&ws.Spec.ContainerImage, &egressAllowlistJSON); err != nil {
 			return nil, err
 		}
 		if expiresAt.Valid {
@@ -140,6 +149,9 @@ func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string,
 		}
 		if err := json.Unmarshal(envVarsJSON, &ws.Spec.EnvVars); err != nil {
 			return nil, fmt.Errorf("unmarshal env_vars: %w", err)
+		}
+		if err := json.Unmarshal(egressAllowlistJSON, &ws.Spec.EgressAllowlist); err != nil {
+			return nil, fmt.Errorf("unmarshal egress_allowlist: %w", err)
 		}
 		workspaces = append(workspaces, ws)
 	}

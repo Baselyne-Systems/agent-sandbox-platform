@@ -61,6 +61,7 @@ message SandboxSpec {
   repeated string allowed_tools = 4;
   map<string, string> env_vars = 5;
   string container_image = 6;       // Docker image for sandbox container
+  repeated string egress_allowlist = 7;  // approved destination hosts/CIDRs
 }
 
 message CreateSandboxResponse {

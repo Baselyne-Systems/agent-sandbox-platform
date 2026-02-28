@@ -17,10 +17,36 @@ pub trait ContainerRuntime: Send + Sync + std::fmt::Debug {
         env_vars: HashMap<String, String>,
         memory_bytes: i64,
         cpu_quota: i64,
+        egress_allowlist: &[String],
     ) -> Result<String>;
 
     /// Stop and remove a container.
     async fn stop_container(&self, container_id: &str) -> Result<()>;
+
+    /// Clean up any network/egress rules associated with this sandbox.
+    async fn cleanup_egress_rules(&self, sandbox_id: &str) -> Result<()>;
+}
+
+/// Derive a short chain name from a sandbox ID (iptables chain names max 28 chars).
+/// Format: BH-{first 12 chars of sandbox_id}
+fn chain_name(sandbox_id: &str) -> String {
+    let short = &sandbox_id[..sandbox_id.len().min(12)];
+    format!("BH-{short}")
+}
+
+/// Run an iptables command. Returns Ok(()) on success, Err on failure.
+async fn run_iptables(args: &[&str]) -> Result<()> {
+    let output = tokio::process::Command::new("iptables")
+        .args(args)
+        .output()
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to run iptables: {e}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("iptables {:?} failed: {}", args, stderr.trim()));
+    }
+    Ok(())
 }
 
 /// Docker-based container runtime using bollard.
@@ -36,6 +62,90 @@ impl DockerRuntime {
         info!("connected to Docker daemon");
         Ok(Self { client })
     }
+
+    /// Apply iptables egress rules for a sandbox container.
+    /// Creates a per-sandbox chain with ACCEPT rules for allowed destinations
+    /// and a default DROP at the end.
+    async fn apply_egress_rules(
+        &self,
+        sandbox_id: &str,
+        container_id: &str,
+        egress_allowlist: &[String],
+    ) -> Result<()> {
+        // Get container IP from Docker inspect
+        let inspect = self
+            .client
+            .inspect_container(container_id, None)
+            .await
+            .map_err(|e| anyhow::anyhow!("failed to inspect container: {e}"))?;
+
+        let container_ip = inspect
+            .network_settings
+            .as_ref()
+            .and_then(|ns| ns.ip_address.as_deref())
+            .unwrap_or("");
+
+        if container_ip.is_empty() {
+            warn!(
+                sandbox_id = %sandbox_id,
+                "container has no IP address, skipping egress rules"
+            );
+            return Ok(());
+        }
+
+        let chain = chain_name(sandbox_id);
+        info!(
+            sandbox_id = %sandbox_id,
+            chain = %chain,
+            container_ip = %container_ip,
+            rules = egress_allowlist.len(),
+            "applying egress allowlist rules"
+        );
+
+        // 1. Create the per-sandbox chain
+        if let Err(e) = run_iptables(&["-N", &chain]).await {
+            warn!(error = %e, chain = %chain, "chain may already exist");
+        }
+
+        // 2. Add jump rule on FORWARD chain for traffic from this container
+        if let Err(e) = run_iptables(&[
+            "-I", "FORWARD", "-s", container_ip, "-j", &chain,
+        ]).await {
+            warn!(error = %e, "failed to add FORWARD jump rule");
+        }
+
+        // 3. Allow established/related connections (return traffic)
+        let _ = run_iptables(&[
+            "-A", &chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT",
+        ]).await;
+
+        // 4. Allow DNS (UDP and TCP port 53)
+        let _ = run_iptables(&["-A", &chain, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]).await;
+        let _ = run_iptables(&["-A", &chain, "-p", "tcp", "--dport", "53", "-j", "ACCEPT"]).await;
+
+        // 5. Allow traffic to the Runtime endpoint (so the SDK can call back)
+        if let Ok(advertise) = std::env::var("ADVERTISE_ADDRESS") {
+            let port = std::env::var("GRPC_PORT").unwrap_or_else(|_| "50052".to_string());
+            let _ = run_iptables(&[
+                "-A", &chain, "-d", &advertise, "-p", "tcp", "--dport", &port, "-j", "ACCEPT",
+            ]).await;
+        }
+
+        // 6. Add ACCEPT rules for each allowed destination
+        for dest in egress_allowlist {
+            if let Err(e) = run_iptables(&["-A", &chain, "-d", dest, "-j", "ACCEPT"]).await {
+                warn!(error = %e, dest = %dest, "failed to add egress ACCEPT rule");
+            }
+        }
+
+        // 7. Default DROP at end of chain
+        if let Err(e) = run_iptables(&["-A", &chain, "-j", "DROP"]).await {
+            warn!(error = %e, "failed to add default DROP rule");
+        }
+
+        info!(sandbox_id = %sandbox_id, chain = %chain, "egress rules applied");
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -47,6 +157,7 @@ impl ContainerRuntime for DockerRuntime {
         env_vars: HashMap<String, String>,
         memory_bytes: i64,
         cpu_quota: i64,
+        egress_allowlist: &[String],
     ) -> Result<String> {
         // 1. Pull image (best-effort — may already exist locally)
         use futures_util::StreamExt;
@@ -118,6 +229,18 @@ impl ContainerRuntime for DockerRuntime {
             .map_err(|e| anyhow::anyhow!("failed to start container: {e}"))?;
 
         info!(container_id = %container_id, sandbox_id = %sandbox_id, "container started");
+
+        // 5. Apply egress allowlist rules if specified
+        if !egress_allowlist.is_empty() {
+            if let Err(e) = self.apply_egress_rules(sandbox_id, &container_id, egress_allowlist).await {
+                warn!(
+                    error = %e,
+                    sandbox_id = %sandbox_id,
+                    "failed to apply egress rules — container running without network restrictions"
+                );
+            }
+        }
+
         Ok(container_id)
     }
 
@@ -148,6 +271,24 @@ impl ContainerRuntime for DockerRuntime {
         info!(container_id = %container_id, "container removed");
         Ok(())
     }
+
+    async fn cleanup_egress_rules(&self, sandbox_id: &str) -> Result<()> {
+        let chain = chain_name(sandbox_id);
+        info!(sandbox_id = %sandbox_id, chain = %chain, "cleaning up egress rules");
+
+        // Remove the FORWARD jump rule (best-effort, may not exist)
+        let _ = run_iptables(&["-D", "FORWARD", "-j", &chain]).await;
+
+        // Flush the chain
+        let _ = run_iptables(&["-F", &chain]).await;
+
+        // Delete the chain
+        if let Err(e) = run_iptables(&["-X", &chain]).await {
+            warn!(error = %e, chain = %chain, "failed to delete iptables chain");
+        }
+
+        Ok(())
+    }
 }
 
 /// No-op container runtime for testing or deployments without Docker.
@@ -163,6 +304,7 @@ impl ContainerRuntime for NoopContainerRuntime {
         _env_vars: HashMap<String, String>,
         _memory_bytes: i64,
         _cpu_quota: i64,
+        _egress_allowlist: &[String],
     ) -> Result<String> {
         info!(
             sandbox_id = %sandbox_id,
@@ -179,6 +321,14 @@ impl ContainerRuntime for NoopContainerRuntime {
         );
         Ok(())
     }
+
+    async fn cleanup_egress_rules(&self, sandbox_id: &str) -> Result<()> {
+        info!(
+            sandbox_id = %sandbox_id,
+            "noop container runtime — skipping egress rule cleanup"
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -189,10 +339,29 @@ mod tests {
     async fn noop_runtime_start_stop() {
         let runtime = NoopContainerRuntime;
         let container_id = runtime
-            .start_container("sb-001", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000)
+            .start_container("sb-001", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &[])
             .await
             .unwrap();
         assert!(container_id.contains("sb-001"));
         runtime.stop_container(&container_id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn noop_runtime_with_egress_allowlist() {
+        let runtime = NoopContainerRuntime;
+        let allowlist = vec!["api.example.com".to_string(), "10.0.0.0/8".to_string()];
+        let container_id = runtime
+            .start_container("sb-002", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &allowlist)
+            .await
+            .unwrap();
+        assert!(container_id.contains("sb-002"));
+        runtime.cleanup_egress_rules("sb-002").await.unwrap();
+        runtime.stop_container(&container_id).await.unwrap();
+    }
+
+    #[test]
+    fn chain_name_truncates() {
+        assert_eq!(chain_name("abcdef123456789"), "BH-abcdef123456");
+        assert_eq!(chain_name("short"), "BH-short");
     }
 }

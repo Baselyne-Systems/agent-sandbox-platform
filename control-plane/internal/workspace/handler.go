@@ -116,6 +116,7 @@ func modelSpecToProto(s *models.WorkspaceSpec) *pb.WorkspaceSpec {
 		GuardrailPolicyId: s.GuardrailPolicyID,
 		EnvVars:           s.EnvVars,
 		ContainerImage:    s.ContainerImage,
+		EgressAllowlist:   s.EgressAllowlist,
 	}
 }
 
@@ -128,6 +129,7 @@ func protoSpecToModel(s *pb.WorkspaceSpec) *models.WorkspaceSpec {
 		GuardrailPolicyID: s.GetGuardrailPolicyId(),
 		EnvVars:           s.GetEnvVars(),
 		ContainerImage:    s.GetContainerImage(),
+		EgressAllowlist:   s.GetEgressAllowlist(),
 	}
 	if s.GetMaxDuration() != nil {
 		spec.MaxDurationSecs = int64(s.GetMaxDuration().AsDuration().Seconds())

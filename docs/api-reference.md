@@ -119,6 +119,8 @@ message WorkspaceSpec {
   repeated string allowed_tools = 5;
   string guardrail_policy_id = 6;   // Comma-separated rule IDs
   map<string, string> env_vars = 7;
+  string container_image = 8;       // Docker image for sandbox container
+  repeated string egress_allowlist = 9;  // Approved destination hosts/CIDRs
 }
 ```
 

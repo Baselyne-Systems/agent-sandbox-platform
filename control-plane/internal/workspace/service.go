@@ -121,6 +121,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, agentID, taskID string, s
 	if ws.Spec.EnvVars == nil {
 		ws.Spec.EnvVars = map[string]string{}
 	}
+	if ws.Spec.EgressAllowlist == nil {
+		ws.Spec.EgressAllowlist = []string{}
+	}
 
 	expiresAt := time.Now().Add(time.Duration(ws.Spec.MaxDurationSecs) * time.Second)
 	ws.ExpiresAt = &expiresAt
@@ -202,7 +205,8 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 			DiskMb:         ws.Spec.DiskMb,
 			AllowedTools:   ws.Spec.AllowedTools,
 			EnvVars:        ws.Spec.EnvVars,
-			ContainerImage: ws.Spec.ContainerImage,
+			ContainerImage:  ws.Spec.ContainerImage,
+			EgressAllowlist: ws.Spec.EgressAllowlist,
 		},
 		CompiledGuardrails: compiledGuardrails,
 	})

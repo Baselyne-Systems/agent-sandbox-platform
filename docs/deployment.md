@@ -247,6 +247,7 @@ Migration files in `control-plane/migrations/` are automatically executed on fir
 | `005_task_enrichment.sql` | Extended task spec: goal, workspace_config, budget_config, HIS config, labels. Agent enhancements: purpose, trust_level, capabilities |
 | `006_missing_tables.sql` | HIS extensions: delivery_channels, timeout_policies. Workspace snapshot_id column |
 | `007_container_image.sql` | Adds `container_image` column to workspaces table |
+| `008_egress_allowlist.sql` | Adds `egress_allowlist` JSONB column to workspaces table |
 
 ### Migration Idempotency
 

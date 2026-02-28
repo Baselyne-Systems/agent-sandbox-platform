@@ -147,6 +147,7 @@ The Runtime manages the full lifecycle of agent containers (create, resource-lim
 **Responsibilities:**
 - Sandbox lifecycle management (create, destroy, status, events)
 - Docker container lifecycle (start, stop, resource limits)
+- Per-sandbox egress allowlist enforcement via iptables (FORWARD chain rules)
 - Guardrails evaluation in the hot path (RwLock for concurrent reads, <50ms)
 - Hot-reload of guardrails policies without sandbox restart
 - Policy-only `ExecuteTool` — returns verdict + action_id, no tool execution
@@ -154,6 +155,15 @@ The Runtime manages the full lifecycle of agent containers (create, resource-lim
 - Budget checking before tool evaluation (optional, via Economics Service)
 - Activity recording (optional, via Activity Store)
 - Human interaction forwarding (optional, via HIS)
+
+**Layered Security Model:**
+
+| Layer | Enforces | Mechanism |
+|-------|----------|-----------|
+| Guardrails | Intent (what agent requests) | Policy eval in Rust (<50ms) |
+| Egress allowlist | Network behavior (actual traffic) | iptables FORWARD rules per container |
+| Container isolation | Process boundary | Docker namespaces, cgroups |
+| Image allowlist | Deployment policy | Organizational image registry |
 
 ---
 

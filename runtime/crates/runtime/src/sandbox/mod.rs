@@ -48,6 +48,7 @@ pub struct CreateSandboxParams {
     pub env_vars: HashMap<String, String>,
     pub compiled_guardrails: Vec<u8>,
     pub container_image: String,
+    pub egress_allowlist: Vec<String>,
 }
 
 /// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
@@ -69,6 +70,8 @@ pub struct SandboxState {
     pub env_vars: HashMap<String, String>,
     /// Docker image for the sandbox container.
     pub container_image: String,
+    /// Approved destination hosts/CIDRs for egress filtering.
+    pub egress_allowlist: Vec<String>,
     /// Container ID if a container was started for this sandbox.
     pub container_id: Mutex<Option<String>>,
     /// Counter of actions executed in this sandbox.
@@ -129,6 +132,7 @@ impl SandboxManager {
                     params.env_vars.clone(),
                     memory_bytes,
                     cpu_quota,
+                    &params.egress_allowlist,
                 )
                 .await
             {
@@ -150,6 +154,7 @@ impl SandboxManager {
             allowed_tools: params.allowed_tools,
             env_vars: params.env_vars,
             container_image: params.container_image,
+            egress_allowlist: params.egress_allowlist,
             container_id: Mutex::new(container_id),
             actions_executed: AtomicU32::new(0),
             event_tx: event_tx.clone(),
@@ -189,6 +194,15 @@ impl SandboxManager {
                 .remove(sandbox_id)
                 .ok_or_else(|| anyhow!("sandbox not found: {sandbox_id}"))?
         };
+
+        // Clean up egress rules before stopping the container
+        if let Err(e) = self.container_runtime.cleanup_egress_rules(sandbox_id).await {
+            tracing::warn!(
+                error = %e,
+                sandbox_id = %sandbox_id,
+                "failed to clean up egress rules — proceeding with sandbox teardown"
+            );
+        }
 
         // Stop container if one was started
         let container_id = state
@@ -295,6 +309,7 @@ mod tests {
             env_vars: HashMap::from([("ENV".to_string(), "test".to_string())]),
             compiled_guardrails: empty_policy_bytes(),
             container_image: String::new(),
+            egress_allowlist: vec![],
         }
     }
 
@@ -421,6 +436,18 @@ mod tests {
             SandboxEvent::Lifecycle { new_state, .. } => assert_eq!(new_state, "stopped"),
             _ => panic!("expected lifecycle event"),
         }
+    }
+
+    #[tokio::test]
+    async fn create_with_egress_allowlist() {
+        let mgr = test_mgr();
+        let mut params = test_params("ws-011", "agent-011");
+        params.egress_allowlist = vec!["api.example.com".to_string(), "10.0.0.0/8".to_string()];
+        let state = mgr.create(params).await.unwrap();
+
+        assert_eq!(state.egress_allowlist.len(), 2);
+        assert_eq!(state.egress_allowlist[0], "api.example.com");
+        assert_eq!(state.egress_allowlist[1], "10.0.0.0/8");
     }
 
     #[tokio::test]
