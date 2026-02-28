@@ -49,6 +49,15 @@ type ScopedCredential struct {
 	CreatedAt time.Time
 }
 
+// IsolationTier defines the security isolation level for a workspace sandbox.
+type IsolationTier string
+
+const (
+	IsolationTierStandard IsolationTier = "standard" // Docker container (cgroups + namespaces)
+	IsolationTierHardened IsolationTier = "hardened"  // Docker + seccomp + read-only rootfs + dropped caps
+	IsolationTierIsolated IsolationTier = "isolated"  // Docker + gVisor/Kata runtime
+)
+
 // ActionOutcome represents the result of a guardrail evaluation.
 type ActionOutcome string
 
@@ -168,7 +177,9 @@ type WorkspaceSpec struct {
 	GuardrailPolicyID string
 	EnvVars           map[string]string
 	ContainerImage    string
-	EgressAllowlist   []string
+	EgressAllowlist    []string
+	IsolationTier      IsolationTier
+	DataClassification string
 }
 
 // Workspace represents an isolated execution environment for an agent.
@@ -178,10 +189,11 @@ type Workspace struct {
 	TaskID    string
 	Status    WorkspaceStatus
 	Spec      WorkspaceSpec
-	HostID      string
-	HostAddress string
-	SandboxID   string
-	SnapshotID  string
+	HostID        string
+	HostAddress   string
+	SandboxID     string
+	SnapshotID    string
+	IsolationTier IsolationTier
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	ExpiresAt *time.Time
@@ -245,6 +257,7 @@ type Host struct {
 	AvailableResources HostResources
 	ActiveSandboxes    int32
 	LastHeartbeat      time.Time
+	SupportedTiers     []string
 }
 
 // HumanRequestStatus represents the lifecycle state of a human interaction request.

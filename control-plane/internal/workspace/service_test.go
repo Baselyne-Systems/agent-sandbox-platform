@@ -37,6 +37,8 @@ func (m *mockRepo) CreateWorkspace(_ context.Context, ws *models.Workspace) erro
 	cp := *ws
 	cp.Spec.AllowedTools = copyStrings(ws.Spec.AllowedTools)
 	cp.Spec.EnvVars = copyMap(ws.Spec.EnvVars)
+	cp.Spec.EgressAllowlist = copyStrings(ws.Spec.EgressAllowlist)
+	cp.IsolationTier = ws.IsolationTier
 	if ws.ExpiresAt != nil {
 		t := *ws.ExpiresAt
 		cp.ExpiresAt = &t
@@ -178,7 +180,7 @@ type mockComputePlacer struct {
 	err         error
 }
 
-func (m *mockComputePlacer) PlaceWorkspace(_ context.Context, _ int64, _ int32, _ int64) (string, string, error) {
+func (m *mockComputePlacer) PlaceWorkspace(_ context.Context, _ int64, _ int32, _ int64, _ string) (string, string, error) {
 	return m.hostID, m.hostAddress, m.err
 }
 
@@ -819,5 +821,116 @@ func TestCreateWorkspace_CredentialMintFailureContinues(t *testing.T) {
 	// No token should be set on the returned workspace.
 	if _, ok := ws.Spec.EnvVars["BULKHEAD_AGENT_TOKEN"]; ok {
 		t.Error("expected no BULKHEAD_AGENT_TOKEN after mint failure")
+	}
+}
+
+// --- Isolation tier auto-selection tests ---
+
+type mockIdentityQuerier struct {
+	agent *models.Agent
+	err   error
+}
+
+func (m *mockIdentityQuerier) GetAgent(_ context.Context, _ string) (*models.Agent, error) {
+	return m.agent, m.err
+}
+
+func TestCreateWorkspace_AutoSelectsTierForNewAgent(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
+	guardrails := &mockPolicyCompiler{compiled: []byte(`{"rules":[]}`), count: 0}
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{SandboxId: "sb-1", AgentApiEndpoint: "localhost:50052"},
+	}
+	identity := &mockIdentityQuerier{
+		agent: &models.Agent{
+			ID:         "agent-1",
+			TrustLevel: models.AgentTrustLevelNew,
+		},
+	}
+
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
+	}
+	svc := NewService(ServiceConfig{
+		Repo:          repo,
+		Compute:       compute,
+		Guardrails:    guardrails,
+		DialHostAgent: dialer,
+		Identity:      identity,
+	})
+
+	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// New agent + internal (default) classification → hardened
+	if ws.Spec.IsolationTier != models.IsolationTierHardened {
+		t.Errorf("expected isolation tier 'hardened', got %q", ws.Spec.IsolationTier)
+	}
+	if ws.IsolationTier != models.IsolationTierHardened {
+		t.Errorf("expected workspace isolation tier 'hardened', got %q", ws.IsolationTier)
+	}
+}
+
+func TestCreateWorkspace_ExplicitTierOverride(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
+	guardrails := &mockPolicyCompiler{compiled: []byte(`{"rules":[]}`), count: 0}
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{SandboxId: "sb-1", AgentApiEndpoint: "localhost:50052"},
+	}
+	identity := &mockIdentityQuerier{
+		agent: &models.Agent{
+			ID:         "agent-1",
+			TrustLevel: models.AgentTrustLevelNew,
+		},
+	}
+
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
+	}
+	svc := NewService(ServiceConfig{
+		Repo:          repo,
+		Compute:       compute,
+		Guardrails:    guardrails,
+		DialHostAgent: dialer,
+		Identity:      identity,
+	})
+
+	// Explicitly set tier to standard — should not be overridden.
+	spec := &models.WorkspaceSpec{IsolationTier: models.IsolationTierStandard}
+	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", spec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.Spec.IsolationTier != models.IsolationTierStandard {
+		t.Errorf("expected explicit tier 'standard' to be preserved, got %q", ws.Spec.IsolationTier)
+	}
+}
+
+func TestCreateWorkspace_DefaultsToStandardWithoutIdentity(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host1:50052"}
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{SandboxId: "sb-1", AgentApiEndpoint: "localhost:50052"},
+	}
+
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
+	}
+	// No identity querier — should default to standard.
+	svc := NewService(ServiceConfig{
+		Repo:          repo,
+		Compute:       compute,
+		DialHostAgent: dialer,
+	})
+
+	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.Spec.IsolationTier != models.IsolationTierStandard {
+		t.Errorf("expected default tier 'standard', got %q", ws.Spec.IsolationTier)
 	}
 }

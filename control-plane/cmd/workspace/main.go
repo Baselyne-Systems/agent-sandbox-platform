@@ -140,11 +140,12 @@ type computeAdapter struct {
 	client computepb.ComputePlaneServiceClient
 }
 
-func (a *computeAdapter) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (string, string, error) {
+func (a *computeAdapter) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64, isolationTier string) (string, string, error) {
 	resp, err := a.client.PlaceWorkspace(ctx, &computepb.PlaceWorkspaceRequest{
 		MemoryMb:      memoryMb,
 		CpuMillicores: cpuMillicores,
 		DiskMb:        diskMb,
+		IsolationTier: isolationTier,
 	})
 	if err != nil {
 		return "", "", err

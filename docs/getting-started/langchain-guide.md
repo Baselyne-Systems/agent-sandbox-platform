@@ -173,7 +173,7 @@ Inside a Bulkhead sandbox container, these are auto-injected:
 | `BULKHEAD_ENDPOINT` | gRPC endpoint of the Host Agent (e.g., `host-agent:50052`) |
 | `BULKHEAD_SANDBOX_ID` | Your sandbox's unique identifier |
 
-`BulkheadAgent()` reads these automatically — no manual configuration needed.
+`BulkheadAgent()` reads these automatically — no manual configuration needed. The container's isolation tier (standard, hardened, or isolated) is configured by the operator and is transparent to your code.
 
 ---
 

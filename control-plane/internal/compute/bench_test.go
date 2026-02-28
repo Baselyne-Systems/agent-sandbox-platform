@@ -15,7 +15,7 @@ func BenchmarkRegisterHost(b *testing.B) {
 	for b.Loop() {
 		_, err := svc.RegisterHost(ctx, "host1:9090", models.HostResources{
 			MemoryMb: 16384, CpuMillicores: 8000, DiskMb: 102400,
-		})
+		}, nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -27,10 +27,10 @@ func BenchmarkPlaceWorkspace(b *testing.B) {
 	ctx := context.Background()
 	svc.RegisterHost(ctx, "host1:9090", models.HostResources{
 		MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
-	})
+	}, nil)
 
 	for b.Loop() {
-		_, _, err := svc.PlaceWorkspace(ctx, 512, 500, 1024)
+		_, _, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -46,7 +46,7 @@ func BenchmarkListHosts_Scaling(b *testing.B) {
 			for i := 0; i < n; i++ {
 				svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
 					MemoryMb: 16384, CpuMillicores: 8000, DiskMb: 102400,
-				})
+				}, nil)
 			}
 
 			b.ResetTimer()
@@ -68,7 +68,7 @@ func BenchmarkDeregisterHost(b *testing.B) {
 		svc := NewService(newMockRepo())
 		host, _ := svc.RegisterHost(ctx, "host1:9090", models.HostResources{
 			MemoryMb: 16384, CpuMillicores: 8000, DiskMb: 102400,
-		})
+		}, nil)
 		b.StartTimer()
 
 		err := svc.DeregisterHost(ctx, host.ID)
@@ -85,12 +85,12 @@ func BenchmarkPlaceWorkspace_LargeFleet(b *testing.B) {
 	for i := 0; i < 1000; i++ {
 		svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
 			MemoryMb: int64(1024 + i), CpuMillicores: int32(1000 + i), DiskMb: int64(10240 + i),
-		})
+		}, nil)
 	}
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, _, err := svc.PlaceWorkspace(ctx, 512, 500, 1024)
+		_, _, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, "")
 		if err != nil {
 			b.Fatal(err)
 		}

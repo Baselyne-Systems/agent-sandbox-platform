@@ -30,7 +30,7 @@ func (h *Handler) RegisterHost(ctx context.Context, req *pb.RegisterHostRequest)
 		MemoryMb:      res.GetMemoryMb(),
 		CpuMillicores: res.GetCpuMillicores(),
 		DiskMb:        res.GetDiskMb(),
-	})
+	}, req.GetSupportedTiers())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -59,7 +59,7 @@ func (h *Handler) ListHosts(ctx context.Context, req *pb.ListHostsRequest) (*pb.
 }
 
 func (h *Handler) PlaceWorkspace(ctx context.Context, req *pb.PlaceWorkspaceRequest) (*pb.PlaceWorkspaceResponse, error) {
-	hostID, address, err := h.svc.PlaceWorkspace(ctx, req.GetMemoryMb(), req.GetCpuMillicores(), req.GetDiskMb())
+	hostID, address, err := h.svc.PlaceWorkspace(ctx, req.GetMemoryMb(), req.GetCpuMillicores(), req.GetDiskMb(), req.GetIsolationTier())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -74,7 +74,7 @@ func (h *Handler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.
 		MemoryMb:      req.GetAvailableMemoryMb(),
 		CpuMillicores: req.GetAvailableCpuMillicores(),
 		DiskMb:        req.GetAvailableDiskMb(),
-	}, req.GetActiveSandboxes())
+	}, req.GetActiveSandboxes(), req.GetSupportedTiers())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -102,6 +102,7 @@ func hostToProto(h *models.Host) *pb.Host {
 		},
 		ActiveSandboxes: h.ActiveSandboxes,
 		LastHeartbeat:   timestamppb.New(h.LastHeartbeat),
+		SupportedTiers:  h.SupportedTiers,
 	}
 }
 

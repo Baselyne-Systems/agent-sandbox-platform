@@ -34,7 +34,7 @@ const (
 
 // ComputePlacer selects a host for workspace placement.
 type ComputePlacer interface {
-	PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (hostID, hostAddress string, err error)
+	PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64, isolationTier string) (hostID, hostAddress string, err error)
 }
 
 // PolicyCompiler compiles guardrail rules into bytes for the Host Agent evaluator.
@@ -56,6 +56,11 @@ type CredentialMinter interface {
 	MintCredential(ctx context.Context, agentID string, scopes []string, ttlSeconds int64) (token string, err error)
 }
 
+// IdentityQuerier retrieves agent metadata for tier auto-selection.
+type IdentityQuerier interface {
+	GetAgent(ctx context.Context, agentID string) (*models.Agent, error)
+}
+
 // Service implements workspace business logic with Host Agent orchestration.
 type Service struct {
 	repo           Repository
@@ -64,6 +69,8 @@ type Service struct {
 	dialHostAgent    HostAgentDialer
 	snapshots      SnapshotStore
 	credentials    CredentialMinter
+	identity       IdentityQuerier
+	tierSelector   *TierSelector
 	logger         *zap.Logger
 }
 
@@ -77,6 +84,7 @@ type ServiceConfig struct {
 	DialHostAgent HostAgentDialer
 	Snapshots   SnapshotStore
 	Credentials CredentialMinter
+	Identity    IdentityQuerier
 	Logger      *zap.Logger
 }
 
@@ -86,13 +94,15 @@ func NewService(cfg ServiceConfig) *Service {
 		logger = zap.NewNop()
 	}
 	return &Service{
-		repo:        cfg.Repo,
-		compute:     cfg.Compute,
-		guardrails:  cfg.Guardrails,
+		repo:         cfg.Repo,
+		compute:      cfg.Compute,
+		guardrails:   cfg.Guardrails,
 		dialHostAgent: cfg.DialHostAgent,
-		snapshots:   cfg.Snapshots,
-		credentials: cfg.Credentials,
-		logger:      logger,
+		snapshots:    cfg.Snapshots,
+		credentials:  cfg.Credentials,
+		identity:     cfg.Identity,
+		tierSelector: NewTierSelector(),
+		logger:       logger,
 	}
 }
 
@@ -166,8 +176,32 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 	}
 	ws.Status = models.WorkspaceStatusCreating
 
+	// 1b. Auto-select isolation tier if not explicitly set.
+	if ws.Spec.IsolationTier == "" {
+		if s.identity != nil {
+			agent, err := s.identity.GetAgent(ctx, ws.AgentID)
+			if err != nil {
+				s.logger.Warn("failed to query agent for tier selection, defaulting to standard",
+					zap.String("agent_id", ws.AgentID),
+					zap.Error(err),
+				)
+			} else if agent != nil {
+				ws.Spec.IsolationTier = s.tierSelector.SelectTier(agent.TrustLevel, ws.Spec.DataClassification)
+				s.logger.Info("auto-selected isolation tier",
+					zap.String("workspace_id", ws.ID),
+					zap.String("trust_level", string(agent.TrustLevel)),
+					zap.String("isolation_tier", string(ws.Spec.IsolationTier)),
+				)
+			}
+		}
+		if ws.Spec.IsolationTier == "" {
+			ws.Spec.IsolationTier = models.IsolationTierStandard
+		}
+	}
+	ws.IsolationTier = ws.Spec.IsolationTier
+
 	// 2. Place workspace on a host via compute plane.
-	hostID, hostAddress, err := s.compute.PlaceWorkspace(ctx, ws.Spec.MemoryMb, ws.Spec.CpuMillicores, ws.Spec.DiskMb)
+	hostID, hostAddress, err := s.compute.PlaceWorkspace(ctx, ws.Spec.MemoryMb, ws.Spec.CpuMillicores, ws.Spec.DiskMb, string(ws.Spec.IsolationTier))
 	if err != nil {
 		return fmt.Errorf("place workspace: %w", err)
 	}
@@ -230,6 +264,7 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 			EnvVars:        ws.Spec.EnvVars,
 			ContainerImage:  ws.Spec.ContainerImage,
 			EgressAllowlist: ws.Spec.EgressAllowlist,
+			IsolationTier:   string(ws.Spec.IsolationTier),
 		},
 		CompiledGuardrails: compiledGuardrails,
 	})

@@ -123,8 +123,28 @@ message WorkspaceSpec {
   map<string, string> env_vars = 7;
   string container_image = 8;       // Docker image for sandbox container
   repeated string egress_allowlist = 9;  // Approved destination hosts/CIDRs
+  IsolationTier isolation_tier = 10;     // Explicit tier override (auto-selected if unset)
+  string data_classification = 11;      // Data sensitivity: public, internal, confidential, restricted (used for tier auto-selection)
 }
 ```
+
+**IsolationTier:**
+```protobuf
+enum IsolationTier {
+  ISOLATION_TIER_UNSPECIFIED = 0;  // Auto-select based on agent trust level + data classification
+  ISOLATION_TIER_STANDARD = 1;    // Docker container (cgroups + namespaces)
+  ISOLATION_TIER_HARDENED = 2;    // Docker + seccomp + read-only rootfs + dropped caps
+  ISOLATION_TIER_ISOLATED = 3;    // Docker + gVisor/Kata runtime
+}
+```
+
+When `ISOLATION_TIER_UNSPECIFIED`, the Workspace Service auto-selects based on agent trust level and data classification:
+
+| Trust \ Classification | public | internal | confidential | restricted |
+|----------------------|--------|----------|--------------|------------|
+| **trusted** | standard | standard | standard | isolated |
+| **established** | standard | standard | hardened | isolated |
+| **new** | hardened | hardened | isolated | isolated |
 
 ---
 
@@ -181,10 +201,10 @@ Manages runtime hosts and handles workspace placement.
 
 | RPC | Description |
 |-----|-------------|
-| `RegisterHost` | Register a new runtime host with address and total resource capacity. |
+| `RegisterHost` | Register a new runtime host with address, total resource capacity, and supported isolation tiers. |
 | `DeregisterHost` | Set a host to offline status. |
 | `ListHosts` | List hosts with optional status filter. |
-| `PlaceWorkspace` | Select a host for a workspace. Uses best-fit algorithm with atomic resource reservation. Returns host_id and address. |
+| `PlaceWorkspace` | Select a host for a workspace. Uses best-fit algorithm with atomic resource reservation and isolation tier filtering. Returns host_id and address. |
 | `Heartbeat` | Host reports current resource availability and active sandbox count. Returns the host's current status (so control plane can signal drain). |
 
 ### Key Messages
@@ -199,6 +219,7 @@ message Host {
   HostResources available_resources = 5;
   int32 active_sandboxes = 6;
   google.protobuf.Timestamp last_heartbeat = 7;
+  repeated string supported_tiers = 8;  // e.g., ["standard", "hardened", "isolated"]
 }
 ```
 
@@ -466,7 +487,7 @@ Called by the control-plane Workspace Service to manage sandboxes on a host.
 
 | RPC | Description |
 |-----|-------------|
-| `CreateSandbox` | Provision a sandbox with workspace/agent IDs, compiled guardrails, allowed tools, env vars, `container_image`, and `egress_allowlist`. Starts a Docker container if an image is specified and applies iptables egress rules. Returns sandbox_id and agent API endpoint. |
+| `CreateSandbox` | Provision a sandbox with workspace/agent IDs, compiled guardrails, allowed tools, env vars, `container_image`, `egress_allowlist`, and `isolation_tier`. Starts a Docker container with the tier-specific security profile and applies iptables egress rules. Returns sandbox_id and agent API endpoint. |
 | `DestroySandbox` | Tear down a sandbox. Sends lifecycle stopped event. |
 | `GetSandboxStatus` | Get sandbox state, resource usage, and action count. |
 | `StreamEvents` | Server-streaming RPC. Subscribe to sandbox events (action verdicts, lifecycle changes). |

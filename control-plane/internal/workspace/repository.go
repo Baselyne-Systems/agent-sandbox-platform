@@ -46,14 +46,14 @@ func (r *PostgresRepository) CreateWorkspace(ctx context.Context, ws *models.Wor
 	}
 	return r.db.QueryRowContext(ctx,
 		`INSERT INTO workspaces (agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
-		   max_duration_secs, allowed_tools, guardrail_policy_id, env_vars, host_id, host_address, sandbox_id, expires_at, container_image, egress_allowlist)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		   max_duration_secs, allowed_tools, guardrail_policy_id, env_vars, host_id, host_address, sandbox_id, expires_at, container_image, egress_allowlist, isolation_tier)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 		 RETURNING id, created_at, updated_at`,
 		ws.AgentID, ws.TaskID, string(ws.Status),
 		ws.Spec.MemoryMb, ws.Spec.CpuMillicores, ws.Spec.DiskMb,
 		ws.Spec.MaxDurationSecs, allowedToolsJSON, ws.Spec.GuardrailPolicyID, envVarsJSON,
 		ws.HostID, ws.HostAddress, ws.SandboxID, ws.ExpiresAt, ws.Spec.ContainerImage,
-		egressAllowlistJSON,
+		egressAllowlistJSON, string(ws.Spec.IsolationTier),
 	).Scan(&ws.ID, &ws.CreatedAt, &ws.UpdatedAt)
 }
 
@@ -63,16 +63,17 @@ func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*mode
 	var expiresAt sql.NullTime
 
 	var egressAllowlistJSON []byte
+	var isolationTier string
 	err := r.db.QueryRowContext(ctx,
 		`SELECT id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 			max_duration_secs, allowed_tools, guardrail_policy_id, env_vars,
-			host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist
+			host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist, isolation_tier
 		 FROM workspaces WHERE id = $1`, id,
 	).Scan(&ws.ID, &ws.AgentID, &ws.TaskID, &ws.Status,
 		&ws.Spec.MemoryMb, &ws.Spec.CpuMillicores, &ws.Spec.DiskMb,
 		&ws.Spec.MaxDurationSecs, &allowedToolsJSON, &ws.Spec.GuardrailPolicyID, &envVarsJSON,
 		&ws.HostID, &ws.HostAddress, &ws.SandboxID, &ws.CreatedAt, &ws.UpdatedAt, &expiresAt,
-		&ws.Spec.ContainerImage, &egressAllowlistJSON)
+		&ws.Spec.ContainerImage, &egressAllowlistJSON, &isolationTier)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -92,13 +93,15 @@ func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*mode
 	if err := json.Unmarshal(egressAllowlistJSON, &ws.Spec.EgressAllowlist); err != nil {
 		return nil, fmt.Errorf("unmarshal egress_allowlist: %w", err)
 	}
+	ws.Spec.IsolationTier = models.IsolationTier(isolationTier)
+	ws.IsolationTier = ws.Spec.IsolationTier
 	return &ws, nil
 }
 
 func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
 	query := `SELECT id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 		max_duration_secs, allowed_tools, guardrail_policy_id, env_vars,
-		host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist
+		host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist, isolation_tier
 		FROM workspaces WHERE 1=1`
 	args := []any{}
 	argIdx := 1
@@ -133,12 +136,13 @@ func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string,
 		var ws models.Workspace
 		var allowedToolsJSON, envVarsJSON, egressAllowlistJSON []byte
 		var expiresAt sql.NullTime
+		var isolationTier string
 
 		if err := rows.Scan(&ws.ID, &ws.AgentID, &ws.TaskID, &ws.Status,
 			&ws.Spec.MemoryMb, &ws.Spec.CpuMillicores, &ws.Spec.DiskMb,
 			&ws.Spec.MaxDurationSecs, &allowedToolsJSON, &ws.Spec.GuardrailPolicyID, &envVarsJSON,
 			&ws.HostID, &ws.HostAddress, &ws.SandboxID, &ws.CreatedAt, &ws.UpdatedAt, &expiresAt,
-			&ws.Spec.ContainerImage, &egressAllowlistJSON); err != nil {
+			&ws.Spec.ContainerImage, &egressAllowlistJSON, &isolationTier); err != nil {
 			return nil, err
 		}
 		if expiresAt.Valid {
@@ -153,6 +157,8 @@ func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string,
 		if err := json.Unmarshal(egressAllowlistJSON, &ws.Spec.EgressAllowlist); err != nil {
 			return nil, fmt.Errorf("unmarshal egress_allowlist: %w", err)
 		}
+		ws.Spec.IsolationTier = models.IsolationTier(isolationTier)
+		ws.IsolationTier = ws.Spec.IsolationTier
 		workspaces = append(workspaces, ws)
 	}
 	return workspaces, rows.Err()

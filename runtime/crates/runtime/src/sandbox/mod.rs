@@ -49,6 +49,7 @@ pub struct CreateSandboxParams {
     pub compiled_guardrails: Vec<u8>,
     pub container_image: String,
     pub egress_allowlist: Vec<String>,
+    pub isolation_tier: String,
 }
 
 /// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
@@ -72,6 +73,8 @@ pub struct SandboxState {
     pub container_image: String,
     /// Approved destination hosts/CIDRs for egress filtering.
     pub egress_allowlist: Vec<String>,
+    /// Security isolation tier (standard, hardened, isolated).
+    pub isolation_tier: String,
     /// Container ID if a container was started for this sandbox.
     pub container_id: Mutex<Option<String>>,
     /// Counter of actions executed in this sandbox.
@@ -124,6 +127,7 @@ impl SandboxManager {
         let container_id = if !params.container_image.is_empty() {
             let memory_bytes = 512 * 1024 * 1024; // default 512MB
             let cpu_quota = 100_000; // default 1 CPU
+            let tier = if params.isolation_tier.is_empty() { "standard" } else { &params.isolation_tier };
             match self
                 .container_runtime
                 .start_container(
@@ -133,6 +137,7 @@ impl SandboxManager {
                     memory_bytes,
                     cpu_quota,
                     &params.egress_allowlist,
+                    tier,
                 )
                 .await
             {
@@ -155,6 +160,7 @@ impl SandboxManager {
             env_vars: params.env_vars,
             container_image: params.container_image,
             egress_allowlist: params.egress_allowlist,
+            isolation_tier: params.isolation_tier,
             container_id: Mutex::new(container_id),
             actions_executed: AtomicU32::new(0),
             event_tx: event_tx.clone(),
@@ -310,6 +316,7 @@ mod tests {
             compiled_guardrails: empty_policy_bytes(),
             container_image: String::new(),
             egress_allowlist: vec![],
+            isolation_tier: "standard".to_string(),
         }
     }
 

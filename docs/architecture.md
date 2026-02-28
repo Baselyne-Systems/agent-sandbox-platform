@@ -2,7 +2,7 @@
 
 > **Getting started?** See the [Operator Guide](getting-started/operator-guide.md), [Agent Developer Guide](getting-started/agent-guide.md), or [LangChain Integration Guide](getting-started/langchain-guide.md).
 
-Bulkhead follows a control-plane / host-agent architecture. The **control plane** (Go) manages the lifecycle of agents, workspaces, tasks, guardrails, and budgets. The **Host Agent** (Rust) runs on each host and manages sandboxed Docker containers with real-time guardrails evaluation.
+Bulkhead follows a control-plane / host-agent architecture. The **control plane** (Go) manages the lifecycle of agents, workspaces, tasks, guardrails, and budgets. The **Host Agent** (Rust) runs on each host and manages sandboxed containers with configurable isolation tiers (standard, hardened, isolated) and real-time guardrails evaluation.
 
 ## Design Principles
 
@@ -70,12 +70,12 @@ stateDiagram-v2
 
 ### Compute Plane Service
 
-Manages the fleet of runtime hosts and handles workspace placement. Hosts register with their total resource capacity and report availability via heartbeats. Placement uses a best-fit algorithm — selecting the smallest host that can satisfy the request — with atomic resource reservation to prevent race conditions.
+Manages the fleet of runtime hosts and handles workspace placement. Hosts register with their total resource capacity, supported isolation tiers, and report availability via heartbeats. Placement uses a best-fit algorithm — selecting the smallest host that can satisfy the request and supports the requested isolation tier — with atomic resource reservation to prevent race conditions.
 
 **Responsibilities:**
-- Host registration and deregistration
-- Heartbeat processing (resource updates, active sandbox counts)
-- Best-fit workspace placement with `FOR UPDATE SKIP LOCKED`
+- Host registration and deregistration with supported isolation tiers
+- Heartbeat processing (resource updates, active sandbox counts, tier updates)
+- Best-fit workspace placement with `FOR UPDATE SKIP LOCKED` and tier filtering
 - Host status management (ready/draining/offline)
 
 ### Guardrails Service
@@ -173,9 +173,19 @@ A stateless service for content classification and data loss prevention. Classif
 
 ### Host Agent
 
-A Rust binary that runs on each host in the fleet, **outside** the agent containers. It exposes two gRPC services: **HostAgentService** (called by the control plane to manage sandboxes) and **HostAgentAPIService** (called by agents running inside containers for guardrail evaluation). The Host Agent is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents run inside Docker containers, execute tools locally, and call back to the Host Agent via `ReportActionResult` to record outcomes for the audit trail.
+A Rust binary that runs on each host in the fleet, **outside** the agent containers. It exposes two gRPC services: **HostAgentService** (called by the control plane to manage sandboxes) and **HostAgentAPIService** (called by agents running inside containers for guardrail evaluation). The Host Agent is a **policy-only engine** — it evaluates guardrails and budget but does NOT execute tools. Agents run inside Docker containers with configurable isolation tiers, execute tools locally, and call back to the Host Agent via `ReportActionResult` to record outcomes for the audit trail.
 
-The Host Agent manages the full lifecycle of agent containers (create, resource-limit, destroy) via the bollard crate (enabled via `ENABLE_DOCKER=true`). Each sandbox tracks its own guardrails evaluator, container ID, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`.
+The Host Agent manages the full lifecycle of agent containers (create, resource-limit, destroy) via the bollard crate (enabled via `ENABLE_DOCKER=true`). Each sandbox tracks its own guardrails evaluator, container ID, isolation tier, and allowed tool list. The evaluator uses `RwLock` for concurrent read access with support for hot-reload via `UpdateSandboxGuardrails`.
+
+**Isolation Tiers:**
+
+| Tier | Security Profile | Use Case |
+|------|-----------------|----------|
+| **standard** | Normal Docker (cgroups + namespaces) | Trusted agents, internal data |
+| **hardened** | Seccomp + read-only rootfs + no-new-privileges + dropped capabilities | New/untrusted agents, confidential data |
+| **isolated** | gVisor/Kata runtime + all hardened options | High-risk agents, restricted data |
+
+Tier auto-selection is based on agent trust level and data classification. Operators can override with an explicit tier in the workspace spec. Hosts declare their supported tiers (via `SUPPORTED_TIERS` env var), and compute placement filters by tier compatibility.
 
 **Responsibilities:**
 - Sandbox lifecycle management (create, destroy, status, events)
@@ -196,7 +206,7 @@ The Host Agent manages the full lifecycle of agent containers (create, resource-
 |-------|----------|-----------|
 | Guardrails | Intent (what agent requests) | Policy eval in Rust (<50ms) |
 | Egress allowlist | Network behavior (actual traffic) | iptables FORWARD rules per container |
-| Container isolation | Process boundary | Docker namespaces, cgroups |
+| Container isolation | Process boundary | Tiered: standard (cgroups), hardened (seccomp + caps), isolated (gVisor/Kata) |
 | Image allowlist | Deployment policy | Organizational image registry |
 
 ---
@@ -301,8 +311,8 @@ sequenceDiagram
     WS->>Guard: CompilePolicy
     Guard-->>WS: compiled_bytes (rules → binary)
 
-    WS->>HA: CreateSandbox (image, egress_allowlist, compiled_policy)
-    Note over HA: Start Docker container
+    WS->>HA: CreateSandbox (image, egress_allowlist, compiled_policy, isolation_tier)
+    Note over HA: Start Docker container (tier-specific security profile)
     Note over HA: Load guardrails evaluator
     Note over HA: Apply iptables egress rules
     HA-->>WS: sandbox_id, endpoint
@@ -311,7 +321,7 @@ sequenceDiagram
     WS-->>Task: workspace_id
 ```
 
-If any step fails, the workspace is marked as `failed` rather than throwing — the caller can inspect the workspace status to understand what went wrong. The `CreateSandbox` step sets up all three security layers: the guardrails evaluator (intent filtering), the egress enforcer (network filtering via iptables FORWARD chain rules), and container isolation (Docker namespaces + cgroups).
+If any step fails, the workspace is marked as `failed` rather than throwing — the caller can inspect the workspace status to understand what went wrong. The `CreateSandbox` step sets up all three security layers: the guardrails evaluator (intent filtering), the egress enforcer (network filtering via iptables FORWARD chain rules), and container isolation with the requested tier (standard: namespaces + cgroups, hardened: seccomp + read-only rootfs + dropped caps, isolated: gVisor/Kata runtime).
 
 ---
 
@@ -385,7 +395,7 @@ erDiagram
 | Control Plane | Go 1.24 | 9 microservices with gRPC APIs |
 | Host Agent | Rust 1.83 | Per-host policy engine, <50ms evaluation, Docker container lifecycle, iptables egress |
 | Python SDK | Python 3.10+ | `@tool` decorator, evaluate → execute → report cycle |
-| Container Runtime | bollard (Rust) / Docker | Agent container lifecycle (opt-in via `ENABLE_DOCKER`) |
+| Container Runtime | bollard (Rust) / Docker | Agent container lifecycle with isolation tiers (opt-in via `ENABLE_DOCKER`) |
 | Database | PostgreSQL 16 | Shared persistence for all control-plane services |
 | RPC Framework | gRPC / Protocol Buffers | Inter-service communication |
 | Build (Go) | `go build`, buf (proto) | Standard Go toolchain |

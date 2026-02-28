@@ -1,6 +1,6 @@
 # Agent Developer Guide
 
-This guide shows you how to build AI agents that run inside Bulkhead sandboxes using the Python SDK. Your agent code runs in a Docker container; the Host Agent (a separate Rust process on the host) evaluates guardrails, checks budgets, and records the audit trail.
+This guide shows you how to build AI agents that run inside Bulkhead sandboxes using the Python SDK. Your agent code runs in a Docker container with a configurable isolation tier (standard, hardened, or isolated); the Host Agent (a separate Rust process on the host) evaluates guardrails, checks budgets, and records the audit trail.
 
 > **See also:** [Operator Guide](operator-guide.md) | [API Reference](../api-reference.md) | [Architecture](../architecture.md)
 
@@ -8,7 +8,7 @@ This guide shows you how to build AI agents that run inside Bulkhead sandboxes u
 
 ## How It Works
 
-Your agent runs inside a Docker container (the "sandbox"). When it needs to use a tool, it first asks the Host Agent for permission via gRPC. The Host Agent evaluates guardrails and budget, returns a verdict (ALLOW / DENY / ESCALATE), and the agent only executes the tool if allowed. After execution, the agent reports the result back for the audit trail. Any outbound network calls the tool makes are filtered through the egress enforcer — only allowlisted destinations pass.
+Your agent runs inside a Docker container (the "sandbox") with a security profile determined by the isolation tier. When it needs to use a tool, it first asks the Host Agent for permission via gRPC. The Host Agent evaluates guardrails and budget, returns a verdict (ALLOW / DENY / ESCALATE), and the agent only executes the tool if allowed. After execution, the agent reports the result back for the audit trail. Any outbound network calls the tool makes are filtered through the egress enforcer — only allowlisted destinations pass.
 
 ```mermaid
 sequenceDiagram
@@ -325,7 +325,7 @@ Egress enforcement is one layer of the sandbox security model:
 | **Guardrails** | What the agent *intends* to do (tool calls) | Scoped policy evaluation (<50ms) |
 | **DLP** | What *data* leaves the sandbox | Content inspection via Governance Service |
 | **Egress allowlist** | Where the agent can *actually* connect | iptables FORWARD rules per container |
-| **Container isolation** | Process boundary and resource limits | Docker namespaces + cgroups |
+| **Container isolation** | Process boundary and resource limits | Tiered: standard (cgroups), hardened (seccomp + caps), isolated (gVisor/Kata) |
 
 Guardrails evaluate intent; DLP inspects content; egress enforces network behavior. A tool call can be ALLOWED by guardrails but blocked by DLP (sensitive data) or egress (non-allowlisted destination).
 

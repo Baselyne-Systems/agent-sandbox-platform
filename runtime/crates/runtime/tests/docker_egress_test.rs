@@ -71,6 +71,7 @@ async fn egress_allowlist_blocks_unauthorized_traffic() {
             128 * 1024 * 1024, // 128MB
             50_000,            // 0.5 CPU
             &["1.1.1.1".to_string()],
+            "standard",
         )
         .await
         .expect("failed to start container");
@@ -154,6 +155,7 @@ async fn container_without_egress_has_no_iptables_chain() {
             128 * 1024 * 1024,
             50_000,
             &[], // empty = no restrictions
+            "standard",
         )
         .await
         .expect("failed to start container");

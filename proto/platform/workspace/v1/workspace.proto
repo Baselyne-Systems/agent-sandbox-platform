@@ -38,6 +38,7 @@ message Workspace {
   google.protobuf.Timestamp updated_at = 8;
   google.protobuf.Timestamp expires_at = 9;
   string snapshot_id = 10;
+  IsolationTier isolation_tier = 11;    // resolved isolation tier for this workspace
 }
 
 enum WorkspaceStatus {
@@ -51,6 +52,14 @@ enum WorkspaceStatus {
   WORKSPACE_STATUS_FAILED = 7;
 }
 
+// IsolationTier defines the security isolation level for a workspace sandbox.
+enum IsolationTier {
+  ISOLATION_TIER_UNSPECIFIED = 0; // auto-select based on agent trust level + data classification
+  ISOLATION_TIER_STANDARD = 1;   // Docker container (cgroups + namespaces)
+  ISOLATION_TIER_HARDENED = 2;   // Docker + seccomp + read-only rootfs + dropped capabilities
+  ISOLATION_TIER_ISOLATED = 3;   // Docker + gVisor/Kata runtime for kernel-level isolation
+}
+
 // WorkspaceSpec defines the desired configuration for a workspace.
 message WorkspaceSpec {
   int64 memory_mb = 1;
@@ -62,6 +71,8 @@ message WorkspaceSpec {
   map<string, string> env_vars = 7;
   string container_image = 8;       // Docker image for sandbox container
   repeated string egress_allowlist = 9;  // approved destination hosts/CIDRs
+  IsolationTier isolation_tier = 10;     // security isolation level
+  string data_classification = 11;      // data sensitivity (public/internal/confidential/restricted) — used for tier auto-selection
 }
 
 message CreateWorkspaceRequest {

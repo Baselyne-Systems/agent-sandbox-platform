@@ -51,7 +51,7 @@ impl HostAgentService for HostAgentServiceImpl {
             "creating sandbox"
         );
 
-        let (allowed_tools, env_vars, container_image, egress_allowlist) = req
+        let (allowed_tools, env_vars, container_image, egress_allowlist, isolation_tier) = req
             .spec
             .as_ref()
             .map(|s| (
@@ -59,8 +59,9 @@ impl HostAgentService for HostAgentServiceImpl {
                 s.env_vars.clone(),
                 s.container_image.clone(),
                 s.egress_allowlist.clone(),
+                s.isolation_tier.clone(),
             ))
-            .unwrap_or_else(|| (vec![], HashMap::new(), String::new(), vec![]));
+            .unwrap_or_else(|| (vec![], HashMap::new(), String::new(), vec![], String::new()));
 
         let params = CreateSandboxParams {
             workspace_id: req.workspace_id.clone(),
@@ -70,6 +71,7 @@ impl HostAgentService for HostAgentServiceImpl {
             compiled_guardrails: req.compiled_guardrails,
             container_image,
             egress_allowlist,
+            isolation_tier,
         };
 
         let state = self

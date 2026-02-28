@@ -90,6 +90,23 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Determine supported isolation tiers.
+    let supported_tiers: Vec<String> = {
+        let default_tiers = "standard,hardened".to_string();
+        let mut tiers: Vec<String> = std::env::var("SUPPORTED_TIERS")
+            .unwrap_or(default_tiers)
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        // Only include "isolated" if ISOLATED_RUNTIME is set.
+        if std::env::var("ISOLATED_RUNTIME").is_ok() && !tiers.contains(&"isolated".to_string()) {
+            tiers.push("isolated".to_string());
+        }
+        tiers
+    };
+    info!(supported_tiers = ?supported_tiers, "isolation tiers available");
+
     let advertise_addr = std::env::var("ADVERTISE_ADDRESS").unwrap_or_else(|_| "localhost".to_string());
     let advertise_endpoint = format!("{advertise_addr}:{port}");
     info!(advertise_endpoint = %advertise_endpoint, "agent API advertise endpoint");

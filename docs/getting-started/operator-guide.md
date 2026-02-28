@@ -146,9 +146,10 @@ grpcurl -plaintext -d '{
 
 Creating a task and transitioning it to `RUNNING` triggers the full orchestration flow:
 
-1. **Compute Placement** — find a host with sufficient resources
-2. **Guardrails Compilation** — compile rules into a binary policy
-3. **Sandbox Creation** — deploy a Docker container on the host with egress rules applied
+1. **Isolation Tier Selection** — auto-select tier based on agent trust level and data classification (or use explicit override)
+2. **Compute Placement** — find a host with sufficient resources that supports the requested isolation tier
+3. **Guardrails Compilation** — compile rules into a binary policy
+4. **Sandbox Creation** — deploy a Docker container with the tier-specific security profile and egress rules applied
 
 ```bash
 grpcurl -plaintext -d '{
@@ -196,9 +197,9 @@ sequenceDiagram
     Compute-->>WS: host_id, address
     WS->>Guard: CompilePolicy
     Guard-->>WS: compiled_policy
-    WS->>HA: CreateSandbox (image, egress_allowlist, allowed_tools)
+    WS->>HA: CreateSandbox (image, egress_allowlist, allowed_tools, isolation_tier)
     HA-->>WS: sandbox_id
-    Note over HA: Container started + egress rules applied
+    Note over HA: Container started (tier-specific security) + egress rules applied
 ```
 
 ---
@@ -404,6 +405,8 @@ docker compose -f deploy/docker-compose.yml down
 | `ECONOMICS_ENDPOINT` | (not set) | Economics Service gRPC endpoint for budget checks |
 | `GOVERNANCE_ENDPOINT` | (not set) | Governance Service gRPC endpoint for DLP egress inspection |
 | `ENABLE_DOCKER` | `false` | Enable Docker container lifecycle management |
+| `SUPPORTED_TIERS` | `standard,hardened` | Isolation tiers this host supports (comma-separated) |
+| `ISOLATED_RUNTIME` | (not set) | Docker runtime for isolated tier (e.g., `runsc`, `kata`) |
 | `RUST_LOG` | `info` | Logging level |
 
 ### Snapshot Backends

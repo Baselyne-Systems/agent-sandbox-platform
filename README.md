@@ -25,7 +25,7 @@ graph TB
         HostAgent["Host Agent (Rust)"]
         Evaluator["Guardrails Evaluator"]
         Egress["Egress Enforcer (iptables)"]
-        Sandbox["Sandbox (Docker)"]
+        Sandbox["Sandbox (Docker)<br/>standard | hardened | isolated"]
     end
 
     Operator -->|gRPC| CP
@@ -36,11 +36,11 @@ graph TB
     Workspace -->|"create sandbox"| HostAgent
 ```
 
-The **control plane** (Go) handles orchestration, persistence, and policy management. The **Host Agent** (Rust) runs on each host and manages sandboxed Docker containers — it evaluates guardrails and budget as a policy engine while agents execute tools inside their containers.
+The **control plane** (Go) handles orchestration, persistence, and policy management. The **Host Agent** (Rust) runs on each host and manages sandboxed containers with configurable isolation tiers (standard, hardened, isolated) — it evaluates guardrails and budget as a policy engine while agents execute tools inside their containers.
 
 ## Key Features
 
-- **Sandboxed Execution** — Each agent runs in an isolated Docker container with resource limits, allowed tool lists, and environment variable injection
+- **Sandboxed Execution** — Each agent runs in an isolated Docker container with configurable isolation tiers (standard, hardened with seccomp + read-only rootfs, or isolated with gVisor/Kata runtime), resource limits, allowed tool lists, and environment variable injection
 - **Egress Allowlist** — Per-sandbox network egress control via iptables. Approved destinations pass; all other outbound traffic is dropped at the kernel level
 - **Policy-Only Host Agent** — Evaluates guardrails and budget, returns a verdict (ALLOW/DENY/ESCALATE). Agents execute tools locally inside their container
 - **Real-Time Guardrails** — Every tool call evaluated in <50ms against compiled policy rules
@@ -49,7 +49,8 @@ The **control plane** (Go) handles orchestration, persistence, and policy manage
 - **Append-Only Audit Trail** — Every action recorded immutably with full context and latency metrics
 - **Python SDK** — `@tool` decorator handles the evaluate-execute-report cycle transparently. Integrates with LangChain
 - **Credential Brokering** — Scoped, time-limited credentials with SHA-256 token hashing
-- **Compute Placement** — Best-fit host selection with atomic resource reservation
+- **Compute Placement** — Best-fit host selection with atomic resource reservation and isolation-tier-aware filtering
+- **Isolation Tier Auto-Selection** — Automatic selection of sandbox isolation tier (standard/hardened/isolated) based on agent trust level and data classification
 
 ## Choose Your Guide
 

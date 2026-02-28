@@ -62,6 +62,7 @@ message SandboxSpec {
   map<string, string> env_vars = 5;
   string container_image = 6;       // Docker image for sandbox container
   repeated string egress_allowlist = 7;  // approved destination hosts/CIDRs
+  string isolation_tier = 8;        // security isolation tier (standard, hardened, isolated)
 }
 
 message CreateSandboxResponse {

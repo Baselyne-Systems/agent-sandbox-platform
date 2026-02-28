@@ -23,12 +23,16 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) RegisterHost(ctx context.Context, address string, resources models.HostResources) (*models.Host, error) {
+func (s *Service) RegisterHost(ctx context.Context, address string, resources models.HostResources, supportedTiers []string) (*models.Host, error) {
 	if address == "" {
 		return nil, ErrInvalidInput
 	}
 	if resources.MemoryMb <= 0 || resources.CpuMillicores <= 0 || resources.DiskMb <= 0 {
 		return nil, ErrInvalidInput
+	}
+
+	if len(supportedTiers) == 0 {
+		supportedTiers = []string{"standard"}
 	}
 
 	host := &models.Host{
@@ -38,6 +42,7 @@ func (s *Service) RegisterHost(ctx context.Context, address string, resources mo
 		AvailableResources: resources,
 		ActiveSandboxes:    0,
 		LastHeartbeat:      time.Now().UTC(),
+		SupportedTiers:     supportedTiers,
 	}
 
 	if err := s.repo.CreateHost(ctx, host); err != nil {
@@ -57,12 +62,12 @@ func (s *Service) ListHosts(ctx context.Context, status models.HostStatus) ([]mo
 	return s.repo.ListHosts(ctx, status)
 }
 
-func (s *Service) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64) (string, string, error) {
+func (s *Service) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64, isolationTier string) (string, string, error) {
 	if memoryMb <= 0 || cpuMillicores <= 0 || diskMb <= 0 {
 		return "", "", ErrInvalidInput
 	}
 
-	host, err := s.repo.PlaceAndDecrement(ctx, memoryMb, cpuMillicores, diskMb)
+	host, err := s.repo.PlaceAndDecrement(ctx, memoryMb, cpuMillicores, diskMb, isolationTier)
 	if err != nil {
 		return "", "", err
 	}
@@ -70,7 +75,7 @@ func (s *Service) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillico
 	return host.ID, host.Address, nil
 }
 
-func (s *Service) Heartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32) (*models.Host, error) {
+func (s *Service) Heartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32, supportedTiers []string) (*models.Host, error) {
 	if hostID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -80,5 +85,5 @@ func (s *Service) Heartbeat(ctx context.Context, hostID string, resources models
 	if activeSandboxes < 0 {
 		return nil, ErrInvalidInput
 	}
-	return s.repo.UpdateHeartbeat(ctx, hostID, resources, activeSandboxes)
+	return s.repo.UpdateHeartbeat(ctx, hostID, resources, activeSandboxes, supportedTiers)
 }

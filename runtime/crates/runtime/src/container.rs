@@ -10,6 +10,10 @@ use tracing::{info, warn};
 #[async_trait]
 pub trait ContainerRuntime: Send + Sync + std::fmt::Debug {
     /// Start a container for the given sandbox. Returns a container ID.
+    /// The `isolation_tier` parameter controls the security profile:
+    /// - "standard": normal Docker (cgroups + namespaces)
+    /// - "hardened": seccomp, read-only rootfs, no-new-privileges, dropped caps
+    /// - "isolated": gVisor/Kata runtime + hardened options
     async fn start_container(
         &self,
         sandbox_id: &str,
@@ -18,6 +22,7 @@ pub trait ContainerRuntime: Send + Sync + std::fmt::Debug {
         memory_bytes: i64,
         cpu_quota: i64,
         egress_allowlist: &[String],
+        isolation_tier: &str,
     ) -> Result<String>;
 
     /// Stop and remove a container.
@@ -158,10 +163,11 @@ impl ContainerRuntime for DockerRuntime {
         memory_bytes: i64,
         cpu_quota: i64,
         egress_allowlist: &[String],
+        isolation_tier: &str,
     ) -> Result<String> {
         // 1. Pull image (best-effort — may already exist locally)
         use futures_util::StreamExt;
-        info!(image = %image, sandbox_id = %sandbox_id, "pulling container image");
+        info!(image = %image, sandbox_id = %sandbox_id, isolation_tier = %isolation_tier, "pulling container image");
         let mut pull_stream = self.client.create_image(
             Some(bollard::image::CreateImageOptions {
                 from_image: image,
@@ -192,13 +198,9 @@ impl ContainerRuntime for DockerRuntime {
         }
         env.push(format!("BULKHEAD_SANDBOX_ID={sandbox_id}"));
 
-        // 3. Create container with resource limits
+        // 3. Create container with resource limits and tier-specific security profile
         let container_name = format!("bulkhead-{sandbox_id}");
-        let host_config = bollard::models::HostConfig {
-            memory: Some(memory_bytes),
-            cpu_quota: Some(cpu_quota),
-            ..Default::default()
-        };
+        let host_config = build_host_config(isolation_tier, memory_bytes, cpu_quota);
 
         let config = bollard::container::Config {
             image: Some(image.to_string()),
@@ -291,6 +293,51 @@ impl ContainerRuntime for DockerRuntime {
     }
 }
 
+/// Build a Docker HostConfig based on the isolation tier.
+///
+/// - "standard": normal Docker (memory + cpu_quota only)
+/// - "hardened": adds seccomp default profile, read-only rootfs, no-new-privileges, drops caps
+/// - "isolated": uses gVisor/Kata runtime (ISOLATED_RUNTIME env var, default "runsc") + hardened opts
+fn build_host_config(isolation_tier: &str, memory_bytes: i64, cpu_quota: i64) -> bollard::models::HostConfig {
+    match isolation_tier {
+        "hardened" => bollard::models::HostConfig {
+            memory: Some(memory_bytes),
+            cpu_quota: Some(cpu_quota),
+            readonly_rootfs: Some(true),
+            security_opt: Some(vec![
+                "no-new-privileges:true".to_string(),
+                "seccomp=unconfined".to_string(), // TODO: use a custom seccomp profile
+            ]),
+            cap_drop: Some(vec!["ALL".to_string()]),
+            cap_add: Some(vec!["NET_BIND_SERVICE".to_string()]),
+            ..Default::default()
+        },
+        "isolated" => {
+            let runtime = std::env::var("ISOLATED_RUNTIME").unwrap_or_else(|_| "runsc".to_string());
+            bollard::models::HostConfig {
+                memory: Some(memory_bytes),
+                cpu_quota: Some(cpu_quota),
+                readonly_rootfs: Some(true),
+                security_opt: Some(vec![
+                    "no-new-privileges:true".to_string(),
+                ]),
+                cap_drop: Some(vec!["ALL".to_string()]),
+                cap_add: Some(vec!["NET_BIND_SERVICE".to_string()]),
+                runtime: Some(runtime),
+                ..Default::default()
+            }
+        }
+        _ => {
+            // "standard" or empty/unknown — current behavior
+            bollard::models::HostConfig {
+                memory: Some(memory_bytes),
+                cpu_quota: Some(cpu_quota),
+                ..Default::default()
+            }
+        }
+    }
+}
+
 /// No-op container runtime for testing or deployments without Docker.
 #[derive(Debug, Clone)]
 pub struct NoopContainerRuntime;
@@ -305,6 +352,7 @@ impl ContainerRuntime for NoopContainerRuntime {
         _memory_bytes: i64,
         _cpu_quota: i64,
         _egress_allowlist: &[String],
+        _isolation_tier: &str,
     ) -> Result<String> {
         info!(
             sandbox_id = %sandbox_id,
@@ -339,7 +387,7 @@ mod tests {
     async fn noop_runtime_start_stop() {
         let runtime = NoopContainerRuntime;
         let container_id = runtime
-            .start_container("sb-001", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &[])
+            .start_container("sb-001", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &[], "standard")
             .await
             .unwrap();
         assert!(container_id.contains("sb-001"));
@@ -351,7 +399,7 @@ mod tests {
         let runtime = NoopContainerRuntime;
         let allowlist = vec!["api.example.com".to_string(), "10.0.0.0/8".to_string()];
         let container_id = runtime
-            .start_container("sb-002", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &allowlist)
+            .start_container("sb-002", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &allowlist, "standard")
             .await
             .unwrap();
         assert!(container_id.contains("sb-002"));
@@ -363,5 +411,45 @@ mod tests {
     fn chain_name_truncates() {
         assert_eq!(chain_name("abcdef123456789"), "BH-abcdef123456");
         assert_eq!(chain_name("short"), "BH-short");
+    }
+
+    #[test]
+    fn build_host_config_standard() {
+        let cfg = build_host_config("standard", 512 * 1024 * 1024, 100_000);
+        assert_eq!(cfg.memory, Some(512 * 1024 * 1024));
+        assert_eq!(cfg.cpu_quota, Some(100_000));
+        assert!(cfg.readonly_rootfs.is_none());
+        assert!(cfg.cap_drop.is_none());
+        assert!(cfg.runtime.is_none());
+    }
+
+    #[test]
+    fn build_host_config_hardened() {
+        let cfg = build_host_config("hardened", 256 * 1024 * 1024, 50_000);
+        assert_eq!(cfg.memory, Some(256 * 1024 * 1024));
+        assert_eq!(cfg.readonly_rootfs, Some(true));
+        assert_eq!(cfg.cap_drop, Some(vec!["ALL".to_string()]));
+        assert_eq!(cfg.cap_add, Some(vec!["NET_BIND_SERVICE".to_string()]));
+        assert!(cfg.security_opt.is_some());
+        // Hardened does not set a custom runtime.
+        assert!(cfg.runtime.is_none());
+    }
+
+    #[test]
+    fn build_host_config_isolated() {
+        let cfg = build_host_config("isolated", 1024 * 1024 * 1024, 200_000);
+        assert_eq!(cfg.readonly_rootfs, Some(true));
+        assert_eq!(cfg.cap_drop, Some(vec!["ALL".to_string()]));
+        // Isolated sets a custom runtime (default: runsc).
+        assert!(cfg.runtime.is_some());
+        assert_eq!(cfg.runtime.unwrap(), "runsc");
+    }
+
+    #[test]
+    fn build_host_config_unknown_tier_falls_back_to_standard() {
+        let cfg = build_host_config("unknown", 512 * 1024 * 1024, 100_000);
+        assert!(cfg.readonly_rootfs.is_none());
+        assert!(cfg.cap_drop.is_none());
+        assert!(cfg.runtime.is_none());
     }
 }

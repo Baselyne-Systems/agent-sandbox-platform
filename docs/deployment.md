@@ -181,6 +181,8 @@ healthcheck:
 | `ACTIVITY_ENDPOINT` | — | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
 | `ECONOMICS_ENDPOINT` | — | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
 | `ENABLE_DOCKER` | `false` | Set to `true` to enable Docker container management via bollard. Requires Docker socket access. |
+| `SUPPORTED_TIERS` | `standard,hardened` | Comma-separated isolation tiers this host supports. Options: `standard`, `hardened`, `isolated`. |
+| `ISOLATED_RUNTIME` | (not set) | Docker runtime for the `isolated` tier (e.g., `runsc` for gVisor, `kata` for Kata Containers). Setting this automatically adds `isolated` to supported tiers. |
 | `RUST_LOG` | `info` | Tracing filter (e.g., `debug`, `host_agent=trace,tower=warn`) |
 
 ### Docker Compose Environment
@@ -207,6 +209,8 @@ HIS_ENDPOINT: http://human:50051
 ACTIVITY_ENDPOINT: http://activity:50051
 ECONOMICS_ENDPOINT: http://economics:50051
 ENABLE_DOCKER: "true"
+SUPPORTED_TIERS: "standard,hardened"
+# ISOLATED_RUNTIME: "runsc"  # Uncomment if gVisor is installed on the host
 ```
 
 The Host Agent container needs Docker socket access for managing agent containers:
@@ -250,6 +254,7 @@ Migration files in `control-plane/migrations/` are automatically executed on fir
 | `006_missing_tables.sql` | HIS extensions: delivery_channels, timeout_policies. Workspace snapshot_id column |
 | `007_container_image.sql` | Adds `container_image` column to workspaces table |
 | `008_egress_allowlist.sql` | Adds `egress_allowlist` JSONB column to workspaces table |
+| `009_isolation_tiers.sql` | Adds `supported_tiers` TEXT[] column to hosts table and `isolation_tier` TEXT column to workspaces table |
 
 ### Migration Idempotency
 
