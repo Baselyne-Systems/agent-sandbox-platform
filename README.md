@@ -21,13 +21,13 @@ graph TB
     Agent["AI Agent"]
 
     subgraph CP["Control Plane (Go)"]
-        Identity["Identity Service"]
-        Task["Task Service"]
-        Workspace["Workspace Service"]
-        Guardrails["Guardrails Service"]
+        Identity["Identity"]
+        Task["Task"]
+        Workspace["Workspace"]
+        Guardrails["Guardrails"]
         Compute["Compute Plane"]
-        Human["Human Interaction Service"]
-        Economics["Economics Service"]
+        Human["Human Interaction"]
+        Economics["Economics"]
         Activity["Activity Store"]
         Governance["Data Governance"]
         PG[("PostgreSQL")]
@@ -40,30 +40,12 @@ graph TB
         end
     end
 
-    %% Operator management (setup)
-    Operator -->|"register agents, mint credentials"| Identity
-    Operator -->|"create rules, compile policies"| Guardrails
-    Operator -->|"set budgets"| Economics
-    Operator -->|"respond to requests"| Human
-
-    %% Orchestration chain (task start)
-    Operator -->|"create + start task"| Task
-    Task -->|"provision workspace"| Workspace
-    Workspace -->|"place (atomic reserve)"| Compute
-    Workspace -->|"compile policy → bytes"| Guardrails
-    Workspace -->|"create sandbox + deploy evaluator"| Sandbox
-
-    %% Agent hot path (every tool call)
-    Agent -->|"ExecuteTool / RequestHumanInput"| Sandbox
-    Sandbox -->|"CheckBudget (before exec)"| Economics
-    Sandbox -->|"forward human requests"| Human
-    Sandbox -.->|"record action (async)"| Activity
-    Sandbox -.->|"record usage (async)"| Economics
-
-    %% Shared persistence
-    Identity & Task & Workspace & Guardrails & Compute ~~~ PG
-    Human & Economics & Activity ~~~ PG
+    Operator -->|gRPC| CP
+    Agent -->|gRPC| Sandbox
+    Workspace -->|"create sandbox"| Sandbox
 ```
+
+The control plane handles setup and orchestration; the data plane handles agent execution. See [Core Flows](#core-flows) below for how data moves between components.
 
 ### Services
 
@@ -82,17 +64,19 @@ graph TB
 
 ### Core Flows
 
-**1. Action Evaluation (Hot Path, <50ms)**
+**1. Action Evaluation (Hot Path, <50ms)** — Every tool call an agent makes flows through the Runtime: budget check via Economics, guardrails evaluation (local, RwLock read), tool execution, then fire-and-forget recording to Activity Store and Economics.
+
 ```mermaid
 flowchart LR
-    A[Agent] -->|ExecuteTool| B[Budget Check]
-    B --> C[Guardrails Eval]
+    A[Agent] -->|ExecuteTool| B["Budget Check<br/>(Economics)"]
+    B --> C["Guardrails Eval<br/>(local RwLock)"]
     C --> D[Tool Execution]
-    D -.->|async| E[Activity Record]
-    D -.->|async| F[Usage Record]
+    D -.->|"fire-and-forget"| E["Activity Store"]
+    D -.->|"fire-and-forget"| F["Economics"]
 ```
 
-**2. Human Interaction (Non-Blocking)**
+**2. Human Interaction (Non-Blocking)** — Agent submits a request through the Runtime, which forwards it to the Human Interaction Service. The agent gets back a `request_id` and polls until a human responds.
+
 ```mermaid
 sequenceDiagram
     Agent->>Runtime: RequestHumanInput
@@ -107,12 +91,13 @@ sequenceDiagram
     Runtime-->>Agent: response + responder_id
 ```
 
-**3. Workspace Orchestration**
+**3. Workspace Orchestration** — When a task starts, the Workspace Service coordinates placement, policy compilation, and sandbox creation across three services.
+
 ```mermaid
 flowchart LR
-    A[CreateTask] --> B["Compute PlaceWorkspace<br/>(atomic reservation)"]
-    B --> C["Guardrails CompilePolicy<br/>(rules → binary)"]
-    C --> D["Runtime CreateSandbox<br/>(deploy evaluator)"]
+    A["Task Service<br/>(start task)"] --> B["Compute Plane<br/>(atomic host reservation)"]
+    B --> C["Guardrails Service<br/>(compile rules → binary)"]
+    C --> D["Sandbox Runtime<br/>(create sandbox + load evaluator)"]
 ```
 
 ## Quick Start
