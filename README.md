@@ -10,31 +10,42 @@ graph TB
 
     subgraph CP["Control Plane (Go)"]
         Identity["Identity"]
+
         Task["Task"]
         Workspace["Workspace"]
-        Guardrails["Guardrails"]
         Compute["Compute Plane"]
+        Guardrails["Guardrails"]
+
         Human["Human Interaction"]
         Economics["Economics"]
         Activity["Activity Store"]
         Governance["Data Governance"]
         PG[("PostgreSQL")]
+
+        Task -->|provision| Workspace
+        Workspace -->|place| Compute
+        Workspace -->|compile policy| Guardrails
     end
 
-    subgraph Host["Host"]
-        HostAgent["Host Agent (Rust)"]
+    subgraph Host["Host (Rust)"]
+        HostAgent["Host Agent"]
         Evaluator["Guardrails Evaluator"]
         Egress["Egress Enforcer (iptables)"]
         Sandbox["Sandbox (Docker)<br/>standard | hardened | isolated"]
     end
 
-    Operator -->|gRPC| CP
-    Sandbox -->|gRPC| HostAgent
+    Operator -->|"create task"| Task
+    Operator -->|"register agent"| Identity
+    Workspace -->|"create sandbox"| HostAgent
+    HostAgent -->|"register + heartbeat"| Compute
+    HostAgent -.->|"escalate"| Human
+    HostAgent -.->|"audit"| Activity
+    HostAgent -.->|"budget check"| Economics
+    HostAgent -.->|"DLP"| Governance
+    Sandbox -->|"evaluate tool"| HostAgent
     HostAgent --- Evaluator
     HostAgent --- Egress
     Egress --- Sandbox
-    Workspace -->|"create sandbox"| HostAgent
-    HostAgent -->|"register + heartbeat"| Compute
 ```
 
 The **control plane** (Go) handles orchestration, persistence, policy management, and host fleet management. The **Host Agent** (Rust) runs on each host — it self-registers with the Compute Plane on startup, sends periodic heartbeats with resource availability, and manages sandboxed containers with configurable isolation tiers (standard, hardened, isolated). It evaluates guardrails and budget as a policy engine while agents execute tools inside their containers.
