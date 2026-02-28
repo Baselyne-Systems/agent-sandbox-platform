@@ -18,13 +18,14 @@ import (
 
 type mockCredentialLookup struct {
 	agentID   string
+	tenantID  string
 	scopes    []string
 	expiresAt time.Time
 	err       error
 }
 
-func (m *mockCredentialLookup) LookupByTokenHash(_ context.Context, _ string) (string, []string, time.Time, error) {
-	return m.agentID, m.scopes, m.expiresAt, m.err
+func (m *mockCredentialLookup) LookupByTokenHash(_ context.Context, _ string) (string, string, []string, time.Time, error) {
+	return m.agentID, m.tenantID, m.scopes, m.expiresAt, m.err
 }
 
 func hashToken(raw string) string {
@@ -169,6 +170,7 @@ func TestAuthInterceptor_LookupInternalError(t *testing.T) {
 func TestAuthInterceptor_ValidToken(t *testing.T) {
 	lookup := &mockCredentialLookup{
 		agentID:   "agent-123",
+		tenantID:  "tenant-abc",
 		scopes:    []string{"read", "write"},
 		expiresAt: time.Now().Add(1 * time.Hour),
 	}
@@ -195,6 +197,10 @@ func TestAuthInterceptor_ValidToken(t *testing.T) {
 	agentID, ok := AgentIDFromContext(capturedCtx)
 	if !ok || agentID != "agent-123" {
 		t.Errorf("expected agent_id=agent-123, got %q (ok=%v)", agentID, ok)
+	}
+	tenantID, ok := TenantIDFromContext(capturedCtx)
+	if !ok || tenantID != "tenant-abc" {
+		t.Errorf("expected tenant_id=tenant-abc, got %q (ok=%v)", tenantID, ok)
 	}
 	scopes, ok := ScopesFromContext(capturedCtx)
 	if !ok || len(scopes) != 2 || scopes[0] != "read" || scopes[1] != "write" {

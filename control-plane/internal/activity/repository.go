@@ -13,8 +13,8 @@ import (
 // Repository defines persistence operations for action records.
 type Repository interface {
 	InsertAction(ctx context.Context, record *models.ActionRecord) error
-	GetAction(ctx context.Context, id string) (*models.ActionRecord, error)
-	QueryActions(ctx context.Context, filter QueryFilter) ([]models.ActionRecord, error)
+	GetAction(ctx context.Context, tenantID, id string) (*models.ActionRecord, error)
+	QueryActions(ctx context.Context, tenantID string, filter QueryFilter) ([]models.ActionRecord, error)
 }
 
 // QueryFilter holds the optional filter fields for querying action records.
@@ -44,26 +44,26 @@ func (r *PostgresRepository) InsertAction(ctx context.Context, record *models.Ac
 	result := nullableJSON(record.Result)
 
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO action_records (workspace_id, agent_id, task_id, tool_name, parameters, result,
+		`INSERT INTO action_records (tenant_id, workspace_id, agent_id, task_id, tool_name, parameters, result,
 			outcome, guardrail_rule_id, denial_reason, evaluation_latency_us, execution_latency_us)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		 RETURNING id, recorded_at`,
-		record.WorkspaceID, record.AgentID, nullIfEmpty(record.TaskID),
+		record.TenantID, record.WorkspaceID, record.AgentID, nullIfEmpty(record.TaskID),
 		record.ToolName, params, result,
 		string(record.Outcome), nullIfEmpty(record.GuardrailRuleID), nullIfEmpty(record.DenialReason),
 		record.EvaluationLatencyUs, record.ExecutionLatencyUs,
 	).Scan(&record.ID, &record.RecordedAt)
 }
 
-func (r *PostgresRepository) GetAction(ctx context.Context, id string) (*models.ActionRecord, error) {
+func (r *PostgresRepository) GetAction(ctx context.Context, tenantID, id string) (*models.ActionRecord, error) {
 	var rec models.ActionRecord
 	var params, result []byte
 	var taskID, guardrailRuleID, denialReason sql.NullString
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, agent_id, task_id, tool_name, parameters, result,
+		`SELECT id, tenant_id, workspace_id, agent_id, task_id, tool_name, parameters, result,
 			outcome, guardrail_rule_id, denial_reason, evaluation_latency_us, execution_latency_us, recorded_at
-		 FROM action_records WHERE id = $1`, id,
-	).Scan(&rec.ID, &rec.WorkspaceID, &rec.AgentID, &taskID,
+		 FROM action_records WHERE id = $1 AND tenant_id = $2`, id, tenantID,
+	).Scan(&rec.ID, &rec.TenantID, &rec.WorkspaceID, &rec.AgentID, &taskID,
 		&rec.ToolName, &params, &result,
 		&rec.Outcome, &guardrailRuleID, &denialReason,
 		&rec.EvaluationLatencyUs, &rec.ExecutionLatencyUs, &rec.RecordedAt)
@@ -81,12 +81,12 @@ func (r *PostgresRepository) GetAction(ctx context.Context, id string) (*models.
 	return &rec, nil
 }
 
-func (r *PostgresRepository) QueryActions(ctx context.Context, filter QueryFilter) ([]models.ActionRecord, error) {
-	query := `SELECT id, workspace_id, agent_id, task_id, tool_name, parameters, result,
+func (r *PostgresRepository) QueryActions(ctx context.Context, tenantID string, filter QueryFilter) ([]models.ActionRecord, error) {
+	query := `SELECT id, tenant_id, workspace_id, agent_id, task_id, tool_name, parameters, result,
 		outcome, guardrail_rule_id, denial_reason, evaluation_latency_us, execution_latency_us, recorded_at
-		FROM action_records WHERE 1=1`
-	args := []any{}
-	argIdx := 1
+		FROM action_records WHERE tenant_id = $1`
+	args := []any{tenantID}
+	argIdx := 2
 
 	if filter.WorkspaceID != "" {
 		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
@@ -144,7 +144,7 @@ func (r *PostgresRepository) QueryActions(ctx context.Context, filter QueryFilte
 		var rec models.ActionRecord
 		var params, result []byte
 		var taskID, guardrailRuleID, denialReason sql.NullString
-		if err := rows.Scan(&rec.ID, &rec.WorkspaceID, &rec.AgentID, &taskID,
+		if err := rows.Scan(&rec.ID, &rec.TenantID, &rec.WorkspaceID, &rec.AgentID, &taskID,
 			&rec.ToolName, &params, &result,
 			&rec.Outcome, &guardrailRuleID, &denialReason,
 			&rec.EvaluationLatencyUs, &rec.ExecutionLatencyUs, &rec.RecordedAt); err != nil {

@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "bulkhead.fullname" . }}-task
+  labels:
+    {{- include "bulkhead.labels" . | nindent 4 }}
+    app.kubernetes.io/component: task
+spec:
+  replicas: {{ .Values.controlPlane.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "bulkhead.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: task
+  template:
+    metadata:
+      labels:
+        {{- include "bulkhead.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: task
+    spec:
+      containers:
+        - name: task
+          image: "{{ .Values.controlPlane.image.repository }}-task:{{ .Values.controlPlane.image.tag }}"
+          imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
+          command: ["/service"]
+          ports:
+            - containerPort: 50051
+              name: grpc
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "bulkhead.fullname" . }}-secret
+                  key: database-url
+            - name: GRPC_PORT
+              value: "50051"
+            - name: LOG_LEVEL
+              value: {{ .Values.controlPlane.logLevel | quote }}
+            - name: WORKSPACE_ENDPOINT
+              value: "{{ include "bulkhead.fullname" . }}-workspace:50051"
+          readinessProbe:
+            exec:
+              command: ["grpc_health_probe", "-addr=:50051"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["grpc_health_probe", "-addr=:50051"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}

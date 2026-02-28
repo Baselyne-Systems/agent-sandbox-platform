@@ -11,7 +11,7 @@ func BenchmarkCreateRequest(b *testing.B) {
 	ctx := context.Background()
 
 	for b.Loop() {
-		_, err := svc.CreateRequest(ctx, "ws-1", "agent-1", "Approve?", []string{"yes", "no"}, "context", 300, "", "", "")
+		_, err := svc.CreateRequest(ctx, "test-tenant", "ws-1", "agent-1", "Approve?", []string{"yes", "no"}, "context", 300, "", "", "")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -24,10 +24,10 @@ func BenchmarkRespondToRequest(b *testing.B) {
 	for b.Loop() {
 		b.StopTimer()
 		svc := NewService(newMockRepo())
-		req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300, "", "", "")
+		req, _ := svc.CreateRequest(ctx, "test-tenant", "ws", "a", "q", nil, "", 300, "", "", "")
 		b.StartTimer()
 
-		err := svc.RespondToRequest(ctx, req.ID, "approved", "human-1")
+		err := svc.RespondToRequest(ctx, "test-tenant", req.ID, "approved", "human-1")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -41,12 +41,12 @@ func BenchmarkListRequests_Scaling(b *testing.B) {
 			ctx := context.Background()
 
 			for i := 0; i < n; i++ {
-				svc.CreateRequest(ctx, "ws-1", "a", fmt.Sprintf("q%d", i), nil, "", 300, "", "", "")
+				svc.CreateRequest(ctx, "test-tenant", "ws-1", "a", fmt.Sprintf("q%d", i), nil, "", 300, "", "", "")
 			}
 
 			b.ResetTimer()
 			for b.Loop() {
-				_, _, err := svc.ListRequests(ctx, "", "", 50, "")
+				_, _, err := svc.ListRequests(ctx, "test-tenant", "", "", 50, "")
 				if err != nil {
 					b.Fatal(err)
 				}

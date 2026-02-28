@@ -38,8 +38,8 @@ type ComputePlacer interface {
 
 // PolicyCompiler compiles guardrail rules into bytes for the Host Agent evaluator.
 type PolicyCompiler interface {
-	CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error)
-	ResolveRuleIDs(ctx context.Context, policyID string) ([]string, error)
+	CompilePolicy(ctx context.Context, tenantID string, ruleIDs []string) ([]byte, int, error)
+	ResolveRuleIDs(ctx context.Context, tenantID, policyID string) ([]string, error)
 }
 
 // HostAgentDialer creates a gRPC connection to a Host Agent and returns a client.
@@ -106,15 +106,16 @@ func NewService(cfg ServiceConfig) *Service {
 	}
 }
 
-func (s *Service) CreateWorkspace(ctx context.Context, agentID, taskID string, spec *models.WorkspaceSpec) (*models.Workspace, error) {
+func (s *Service) CreateWorkspace(ctx context.Context, tenantID, agentID, taskID string, spec *models.WorkspaceSpec) (*models.Workspace, error) {
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
 
 	ws := &models.Workspace{
-		AgentID: agentID,
-		TaskID:  taskID,
-		Status:  models.WorkspaceStatusPending,
+		TenantID: tenantID,
+		AgentID:  agentID,
+		TaskID:   taskID,
+		Status:   models.WorkspaceStatusPending,
 	}
 
 	// Apply spec with defaults.
@@ -153,13 +154,13 @@ func (s *Service) CreateWorkspace(ctx context.Context, agentID, taskID string, s
 
 	// If orchestration dependencies are available, provision the sandbox.
 	if s.compute != nil && s.dialHostAgent != nil {
-		if err := s.provisionSandbox(ctx, ws); err != nil {
+		if err := s.provisionSandbox(ctx, tenantID, ws); err != nil {
 			s.logger.Error("sandbox provisioning failed",
 				zap.String("workspace_id", ws.ID),
 				zap.Error(err),
 			)
 			// Mark workspace as failed.
-			_ = s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusFailed, ws.HostID, "", "")
+			_ = s.repo.UpdateWorkspaceStatus(ctx, tenantID, ws.ID, models.WorkspaceStatusFailed, ws.HostID, "", "")
 			ws.Status = models.WorkspaceStatusFailed
 			return ws, nil
 		}
@@ -169,9 +170,9 @@ func (s *Service) CreateWorkspace(ctx context.Context, agentID, taskID string, s
 }
 
 // provisionSandbox orchestrates: place → compile guardrails → create sandbox → update status.
-func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) error {
+func (s *Service) provisionSandbox(ctx context.Context, tenantID string, ws *models.Workspace) error {
 	// 1. Transition to "creating".
-	if err := s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusCreating, "", "", ""); err != nil {
+	if err := s.repo.UpdateWorkspaceStatus(ctx, tenantID, ws.ID, models.WorkspaceStatusCreating, "", "", ""); err != nil {
 		return fmt.Errorf("update status to creating: %w", err)
 	}
 	ws.Status = models.WorkspaceStatusCreating
@@ -232,11 +233,11 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 	// Supports "set:<name>" (named GuardrailSet) or "id1,id2,id3" (direct rule IDs).
 	var compiledGuardrails []byte
 	if ws.Spec.GuardrailPolicyID != "" && s.guardrails != nil {
-		ruleIDs, err := s.guardrails.ResolveRuleIDs(ctx, ws.Spec.GuardrailPolicyID)
+		ruleIDs, err := s.guardrails.ResolveRuleIDs(ctx, tenantID, ws.Spec.GuardrailPolicyID)
 		if err != nil {
 			return fmt.Errorf("resolve guardrail policy %q: %w", ws.Spec.GuardrailPolicyID, err)
 		}
-		compiled, _, err := s.guardrails.CompilePolicy(ctx, ruleIDs)
+		compiled, _, err := s.guardrails.CompilePolicy(ctx, tenantID, ruleIDs)
 		if err != nil {
 			return fmt.Errorf("compile guardrails policy: %w", err)
 		}
@@ -281,7 +282,7 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 	)
 
 	// 6. Transition to "running".
-	if err := s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusRunning, hostID, hostAddress, ws.SandboxID); err != nil {
+	if err := s.repo.UpdateWorkspaceStatus(ctx, tenantID, ws.ID, models.WorkspaceStatusRunning, hostID, hostAddress, ws.SandboxID); err != nil {
 		return fmt.Errorf("update status to running: %w", err)
 	}
 	ws.Status = models.WorkspaceStatusRunning
@@ -289,11 +290,11 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 	return nil
 }
 
-func (s *Service) GetWorkspace(ctx context.Context, id string) (*models.Workspace, error) {
+func (s *Service) GetWorkspace(ctx context.Context, tenantID, id string) (*models.Workspace, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	ws, err := s.repo.GetWorkspace(ctx, id)
+	ws, err := s.repo.GetWorkspace(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -303,7 +304,7 @@ func (s *Service) GetWorkspace(ctx context.Context, id string) (*models.Workspac
 	return ws, nil
 }
 
-func (s *Service) ListWorkspaces(ctx context.Context, agentID string, status models.WorkspaceStatus, pageSize int, pageToken string) ([]models.Workspace, string, error) {
+func (s *Service) ListWorkspaces(ctx context.Context, tenantID, agentID string, status models.WorkspaceStatus, pageSize int, pageToken string) ([]models.Workspace, string, error) {
 	if pageSize <= 0 {
 		pageSize = defaultPageSize
 	}
@@ -316,7 +317,7 @@ func (s *Service) ListWorkspaces(ctx context.Context, agentID string, status mod
 		return nil, "", ErrInvalidInput
 	}
 
-	workspaces, err := s.repo.ListWorkspaces(ctx, agentID, status, afterID, pageSize+1)
+	workspaces, err := s.repo.ListWorkspaces(ctx, tenantID, agentID, status, afterID, pageSize+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -330,14 +331,14 @@ func (s *Service) ListWorkspaces(ctx context.Context, agentID string, status mod
 	return workspaces, nextToken, nil
 }
 
-func (s *Service) TerminateWorkspace(ctx context.Context, id string, reason string) error {
+func (s *Service) TerminateWorkspace(ctx context.Context, tenantID, id string, reason string) error {
 	if id == "" {
 		return ErrInvalidInput
 	}
 
 	// If orchestration is available, destroy the sandbox first.
 	if s.dialHostAgent != nil {
-		ws, err := s.repo.GetWorkspace(ctx, id)
+		ws, err := s.repo.GetWorkspace(ctx, tenantID, id)
 		if err != nil {
 			return err
 		}
@@ -356,10 +357,10 @@ func (s *Service) TerminateWorkspace(ctx context.Context, id string, reason stri
 		}
 	}
 
-	return s.repo.TerminateWorkspace(ctx, id, reason)
+	return s.repo.TerminateWorkspace(ctx, tenantID, id, reason)
 }
 
-func (s *Service) SnapshotWorkspace(ctx context.Context, id string) (*models.WorkspaceSnapshot, error) {
+func (s *Service) SnapshotWorkspace(ctx context.Context, tenantID, id string) (*models.WorkspaceSnapshot, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
@@ -367,7 +368,7 @@ func (s *Service) SnapshotWorkspace(ctx context.Context, id string) (*models.Wor
 		return nil, errors.New("snapshot store not configured")
 	}
 
-	ws, err := s.repo.GetWorkspace(ctx, id)
+	ws, err := s.repo.GetWorkspace(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -395,14 +396,15 @@ func (s *Service) SnapshotWorkspace(ctx context.Context, id string) (*models.Wor
 	}
 
 	// Transition workspace to Paused with snapshot reference.
-	if err := s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusPaused, ws.HostID, ws.HostAddress, ""); err != nil {
+	if err := s.repo.UpdateWorkspaceStatus(ctx, tenantID, ws.ID, models.WorkspaceStatusPaused, ws.HostID, ws.HostAddress, ""); err != nil {
 		return nil, fmt.Errorf("update workspace status to paused: %w", err)
 	}
-	if err := s.repo.SetSnapshotID(ctx, ws.ID, snapshotID); err != nil {
+	if err := s.repo.SetSnapshotID(ctx, tenantID, ws.ID, snapshotID); err != nil {
 		return nil, fmt.Errorf("set snapshot ID: %w", err)
 	}
 
 	snapshot := &models.WorkspaceSnapshot{
+		TenantID:    tenantID,
 		ID:          snapshotID,
 		WorkspaceID: ws.ID,
 		AgentID:     ws.AgentID,
@@ -416,7 +418,7 @@ func (s *Service) SnapshotWorkspace(ctx context.Context, id string) (*models.Wor
 	return snapshot, nil
 }
 
-func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*models.Workspace, error) {
+func (s *Service) RestoreWorkspace(ctx context.Context, tenantID, snapshotID string) (*models.Workspace, error) {
 	if snapshotID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -424,7 +426,7 @@ func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*mod
 		return nil, errors.New("snapshot store not configured")
 	}
 
-	snapshot, err := s.repo.GetSnapshot(ctx, snapshotID)
+	snapshot, err := s.repo.GetSnapshot(ctx, tenantID, snapshotID)
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +434,7 @@ func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*mod
 		return nil, ErrSnapshotNotFound
 	}
 
-	ws, err := s.repo.GetWorkspace(ctx, snapshot.WorkspaceID)
+	ws, err := s.repo.GetWorkspace(ctx, tenantID, snapshot.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
@@ -450,19 +452,19 @@ func (s *Service) RestoreWorkspace(ctx context.Context, snapshotID string) (*mod
 
 	// Re-provision sandbox using existing orchestration pipeline.
 	if s.compute != nil && s.dialHostAgent != nil {
-		if err := s.provisionSandbox(ctx, ws); err != nil {
+		if err := s.provisionSandbox(ctx, tenantID, ws); err != nil {
 			s.logger.Error("sandbox re-provisioning failed during restore",
 				zap.String("workspace_id", ws.ID),
 				zap.Error(err),
 			)
-			_ = s.repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusFailed, ws.HostID, "", "")
+			_ = s.repo.UpdateWorkspaceStatus(ctx, tenantID, ws.ID, models.WorkspaceStatusFailed, ws.HostID, "", "")
 			ws.Status = models.WorkspaceStatusFailed
 			return ws, nil
 		}
 	}
 
 	// Clear snapshot reference.
-	if err := s.repo.SetSnapshotID(ctx, ws.ID, ""); err != nil {
+	if err := s.repo.SetSnapshotID(ctx, tenantID, ws.ID, ""); err != nil {
 		return nil, fmt.Errorf("clear snapshot ID: %w", err)
 	}
 

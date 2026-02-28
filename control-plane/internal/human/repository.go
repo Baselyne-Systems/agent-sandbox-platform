@@ -13,17 +13,17 @@ import (
 // Repository defines persistence operations for human interaction requests.
 type Repository interface {
 	CreateRequest(ctx context.Context, req *models.HumanRequest) error
-	GetRequest(ctx context.Context, id string) (*models.HumanRequest, error)
-	RespondToRequest(ctx context.Context, id, response, responderID string) error
-	ListRequests(ctx context.Context, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error)
+	GetRequest(ctx context.Context, tenantID, id string) (*models.HumanRequest, error)
+	RespondToRequest(ctx context.Context, tenantID, id, response, responderID string) error
+	ListRequests(ctx context.Context, tenantID, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error)
 
 	UpsertDeliveryChannel(ctx context.Context, cfg *models.DeliveryChannelConfig) error
-	GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error)
+	GetDeliveryChannel(ctx context.Context, tenantID, userID, channelType string) (*models.DeliveryChannelConfig, error)
 	UpsertTimeoutPolicy(ctx context.Context, policy *models.TimeoutPolicy) error
-	GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error)
+	GetTimeoutPolicy(ctx context.Context, tenantID, scope, scopeID string) (*models.TimeoutPolicy, error)
 
-	// ListEnabledChannels returns all enabled delivery channels (across all users).
-	ListEnabledChannels(ctx context.Context) ([]models.DeliveryChannelConfig, error)
+	// ListEnabledChannels returns all enabled delivery channels for a tenant.
+	ListEnabledChannels(ctx context.Context, tenantID string) ([]models.DeliveryChannelConfig, error)
 
 	// ExpirePendingRequests marks all pending requests past their deadline as expired.
 	ExpirePendingRequests(ctx context.Context) (int, error)
@@ -48,16 +48,16 @@ func (r *PostgresRepository) CreateRequest(ctx context.Context, req *models.Huma
 		taskID = req.TaskID
 	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO human_requests (workspace_id, agent_id, question, options, context, status, expires_at, type, urgency, task_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		`INSERT INTO human_requests (tenant_id, workspace_id, agent_id, question, options, context, status, expires_at, type, urgency, task_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id, created_at`,
-		req.WorkspaceID, req.AgentID, req.Question, optionsJSON,
+		req.TenantID, req.WorkspaceID, req.AgentID, req.Question, optionsJSON,
 		req.Context, string(req.Status), req.ExpiresAt,
 		string(req.Type), string(req.Urgency), taskID,
 	).Scan(&req.ID, &req.CreatedAt)
 }
 
-func (r *PostgresRepository) GetRequest(ctx context.Context, id string) (*models.HumanRequest, error) {
+func (r *PostgresRepository) GetRequest(ctx context.Context, tenantID, id string) (*models.HumanRequest, error) {
 	var req models.HumanRequest
 	var optionsJSON []byte
 	var response, responderID sql.NullString
@@ -67,11 +67,11 @@ func (r *PostgresRepository) GetRequest(ctx context.Context, id string) (*models
 	var taskID sql.NullString
 
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, agent_id, question, options, context, status,
+		`SELECT id, tenant_id, workspace_id, agent_id, question, options, context, status,
 			response, responder_id, created_at, responded_at, expires_at,
 			type, urgency, task_id
-		 FROM human_requests WHERE id = $1`, id,
-	).Scan(&req.ID, &req.WorkspaceID, &req.AgentID, &req.Question, &optionsJSON,
+		 FROM human_requests WHERE id = $1 AND tenant_id = $2`, id, tenantID,
+	).Scan(&req.ID, &req.TenantID, &req.WorkspaceID, &req.AgentID, &req.Question, &optionsJSON,
 		&req.Context, &req.Status, &response, &responderID,
 		&req.CreatedAt, &respondedAt, &expiresAt,
 		&req.Type, &req.Urgency, &taskID)
@@ -100,12 +100,12 @@ func (r *PostgresRepository) GetRequest(ctx context.Context, id string) (*models
 	return &req, nil
 }
 
-func (r *PostgresRepository) RespondToRequest(ctx context.Context, id, response, responderID string) error {
+func (r *PostgresRepository) RespondToRequest(ctx context.Context, tenantID, id, response, responderID string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE human_requests
 		 SET status = $1, response = $2, responder_id = $3, responded_at = $4
-		 WHERE id = $5 AND status = 'pending'`,
-		string(models.HumanRequestStatusResponded), response, responderID, time.Now(), id)
+		 WHERE id = $5 AND tenant_id = $6 AND status = 'pending'`,
+		string(models.HumanRequestStatusResponded), response, responderID, time.Now(), id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -119,13 +119,13 @@ func (r *PostgresRepository) RespondToRequest(ctx context.Context, id, response,
 	return nil
 }
 
-func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error) {
-	query := `SELECT id, workspace_id, agent_id, question, options, context, status,
+func (r *PostgresRepository) ListRequests(ctx context.Context, tenantID, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error) {
+	query := `SELECT id, tenant_id, workspace_id, agent_id, question, options, context, status,
 		response, responder_id, created_at, responded_at, expires_at,
 		type, urgency, task_id
-		FROM human_requests WHERE 1=1`
-	args := []any{}
-	argIdx := 1
+		FROM human_requests WHERE tenant_id = $1`
+	args := []any{tenantID}
+	argIdx := 2
 
 	if workspaceID != "" {
 		query += fmt.Sprintf(" AND workspace_id = $%d", argIdx)
@@ -159,7 +159,7 @@ func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID strin
 		var response, responderID, taskID sql.NullString
 		var respondedAt, expiresAt sql.NullTime
 
-		if err := rows.Scan(&req.ID, &req.WorkspaceID, &req.AgentID, &req.Question,
+		if err := rows.Scan(&req.ID, &req.TenantID, &req.WorkspaceID, &req.AgentID, &req.Question,
 			&optionsJSON, &req.Context, &req.Status, &response, &responderID,
 			&req.CreatedAt, &respondedAt, &expiresAt,
 			&req.Type, &req.Urgency, &taskID); err != nil {
@@ -186,21 +186,21 @@ func (r *PostgresRepository) ListRequests(ctx context.Context, workspaceID strin
 
 func (r *PostgresRepository) UpsertDeliveryChannel(ctx context.Context, cfg *models.DeliveryChannelConfig) error {
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO delivery_channels (user_id, channel_type, endpoint, enabled)
-		 VALUES ($1, $2, $3, $4)
-		 ON CONFLICT (user_id, channel_type) DO UPDATE SET endpoint = $3, enabled = $4, updated_at = now()
+		`INSERT INTO delivery_channels (tenant_id, user_id, channel_type, endpoint, enabled)
+		 VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (tenant_id, user_id, channel_type) DO UPDATE SET endpoint = $4, enabled = $5, updated_at = now()
 		 RETURNING id, created_at, updated_at`,
-		cfg.UserID, cfg.ChannelType, cfg.Endpoint, cfg.Enabled,
+		cfg.TenantID, cfg.UserID, cfg.ChannelType, cfg.Endpoint, cfg.Enabled,
 	).Scan(&cfg.ID, &cfg.CreatedAt, &cfg.UpdatedAt)
 }
 
-func (r *PostgresRepository) GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+func (r *PostgresRepository) GetDeliveryChannel(ctx context.Context, tenantID, userID, channelType string) (*models.DeliveryChannelConfig, error) {
 	var cfg models.DeliveryChannelConfig
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, user_id, channel_type, endpoint, enabled, created_at, updated_at
-		 FROM delivery_channels WHERE user_id = $1 AND channel_type = $2`,
-		userID, channelType,
-	).Scan(&cfg.ID, &cfg.UserID, &cfg.ChannelType, &cfg.Endpoint, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt)
+		`SELECT id, tenant_id, user_id, channel_type, endpoint, enabled, created_at, updated_at
+		 FROM delivery_channels WHERE user_id = $1 AND channel_type = $2 AND tenant_id = $3`,
+		userID, channelType, tenantID,
+	).Scan(&cfg.ID, &cfg.TenantID, &cfg.UserID, &cfg.ChannelType, &cfg.Endpoint, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -216,22 +216,22 @@ func (r *PostgresRepository) UpsertTimeoutPolicy(ctx context.Context, policy *mo
 		return fmt.Errorf("marshal escalation_targets: %w", err)
 	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO timeout_policies (scope, scope_id, timeout_secs, action, escalation_targets)
-		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (scope, scope_id) DO UPDATE SET timeout_secs = $3, action = $4, escalation_targets = $5, updated_at = now()
+		`INSERT INTO timeout_policies (tenant_id, scope, scope_id, timeout_secs, action, escalation_targets)
+		 VALUES ($1, $2, $3, $4, $5, $6)
+		 ON CONFLICT (tenant_id, scope, scope_id) DO UPDATE SET timeout_secs = $4, action = $5, escalation_targets = $6, updated_at = now()
 		 RETURNING id, created_at, updated_at`,
-		policy.Scope, policy.ScopeID, policy.TimeoutSecs, policy.Action, targetsJSON,
+		policy.TenantID, policy.Scope, policy.ScopeID, policy.TimeoutSecs, policy.Action, targetsJSON,
 	).Scan(&policy.ID, &policy.CreatedAt, &policy.UpdatedAt)
 }
 
-func (r *PostgresRepository) GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error) {
+func (r *PostgresRepository) GetTimeoutPolicy(ctx context.Context, tenantID, scope, scopeID string) (*models.TimeoutPolicy, error) {
 	var policy models.TimeoutPolicy
 	var targetsJSON []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, scope, scope_id, timeout_secs, action, escalation_targets, created_at, updated_at
-		 FROM timeout_policies WHERE scope = $1 AND scope_id = $2`,
-		scope, scopeID,
-	).Scan(&policy.ID, &policy.Scope, &policy.ScopeID, &policy.TimeoutSecs, &policy.Action, &targetsJSON, &policy.CreatedAt, &policy.UpdatedAt)
+		`SELECT id, tenant_id, scope, scope_id, timeout_secs, action, escalation_targets, created_at, updated_at
+		 FROM timeout_policies WHERE scope = $1 AND scope_id = $2 AND tenant_id = $3`,
+		scope, scopeID, tenantID,
+	).Scan(&policy.ID, &policy.TenantID, &policy.Scope, &policy.ScopeID, &policy.TimeoutSecs, &policy.Action, &targetsJSON, &policy.CreatedAt, &policy.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -244,10 +244,10 @@ func (r *PostgresRepository) GetTimeoutPolicy(ctx context.Context, scope, scopeI
 	return &policy, nil
 }
 
-func (r *PostgresRepository) ListEnabledChannels(ctx context.Context) ([]models.DeliveryChannelConfig, error) {
+func (r *PostgresRepository) ListEnabledChannels(ctx context.Context, tenantID string) ([]models.DeliveryChannelConfig, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, user_id, channel_type, endpoint, enabled, created_at, updated_at
-		 FROM delivery_channels WHERE enabled = true`)
+		`SELECT id, tenant_id, user_id, channel_type, endpoint, enabled, created_at, updated_at
+		 FROM delivery_channels WHERE tenant_id = $1 AND enabled = true`, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -256,7 +256,7 @@ func (r *PostgresRepository) ListEnabledChannels(ctx context.Context) ([]models.
 	var channels []models.DeliveryChannelConfig
 	for rows.Next() {
 		var cfg models.DeliveryChannelConfig
-		if err := rows.Scan(&cfg.ID, &cfg.UserID, &cfg.ChannelType, &cfg.Endpoint, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt); err != nil {
+		if err := rows.Scan(&cfg.ID, &cfg.TenantID, &cfg.UserID, &cfg.ChannelType, &cfg.Endpoint, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt); err != nil {
 			return nil, err
 		}
 		channels = append(channels, cfg)

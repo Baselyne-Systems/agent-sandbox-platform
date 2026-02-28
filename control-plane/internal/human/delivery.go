@@ -92,12 +92,12 @@ func (d *WebhookDeliverer) Send(ctx context.Context, channel *models.DeliveryCha
 
 // notifyChannels delivers a newly created request to all enabled channels.
 // Delivery is best-effort — failures are logged but do not fail the request.
-func (s *Service) notifyChannels(ctx context.Context, req *models.HumanRequest) {
+func (s *Service) notifyChannels(ctx context.Context, tenantID string, req *models.HumanRequest) {
 	if s.deliverer == nil {
 		return
 	}
 
-	channels, err := s.repo.ListEnabledChannels(ctx)
+	channels, err := s.repo.ListEnabledChannels(ctx, tenantID)
 	if err != nil {
 		log.Printf("delivery: failed to list channels: %v", err)
 		return

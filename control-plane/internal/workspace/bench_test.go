@@ -13,7 +13,7 @@ func BenchmarkCreateWorkspace(b *testing.B) {
 	ctx := context.Background()
 
 	for b.Loop() {
-		_, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+		_, err := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -23,10 +23,10 @@ func BenchmarkCreateWorkspace(b *testing.B) {
 func BenchmarkGetWorkspace(b *testing.B) {
 	svc := newTestService(newMockRepo())
 	ctx := context.Background()
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 
 	for b.Loop() {
-		_, err := svc.GetWorkspace(ctx, ws.ID)
+		_, err := svc.GetWorkspace(ctx, "test-tenant", ws.ID)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -40,12 +40,12 @@ func BenchmarkListWorkspaces_Scaling(b *testing.B) {
 			ctx := context.Background()
 
 			for i := 0; i < n; i++ {
-				svc.CreateWorkspace(ctx, "agent-1", fmt.Sprintf("t%d", i), nil)
+				svc.CreateWorkspace(ctx, "test-tenant", "agent-1", fmt.Sprintf("t%d", i), nil)
 			}
 
 			b.ResetTimer()
 			for b.Loop() {
-				_, _, err := svc.ListWorkspaces(ctx, "", "", 50, "")
+				_, _, err := svc.ListWorkspaces(ctx, "test-tenant", "", "", 50, "")
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -60,10 +60,10 @@ func BenchmarkTerminateWorkspace(b *testing.B) {
 	for b.Loop() {
 		b.StopTimer()
 		svc := newTestService(newMockRepo())
-		ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+		ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 		b.StartTimer()
 
-		err := svc.TerminateWorkspace(ctx, ws.ID, "done")
+		err := svc.TerminateWorkspace(ctx, "test-tenant", ws.ID, "done")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -84,7 +84,7 @@ func BenchmarkCreateWorkspace_WithSpec(b *testing.B) {
 	}
 
 	for b.Loop() {
-		_, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", spec)
+		_, err := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", spec)
 		if err != nil {
 			b.Fatal(err)
 		}

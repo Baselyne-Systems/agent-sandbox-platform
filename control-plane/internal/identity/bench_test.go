@@ -28,7 +28,7 @@ func BenchmarkRegisterAgent(b *testing.B) {
 	labels := map[string]string{"env": "prod", "team": "platform"}
 
 	for b.Loop() {
-		_, err := svc.RegisterAgent(ctx, "bench-agent", "benchmark", "owner-1", labels, "", "", nil)
+		_, err := svc.RegisterAgent(ctx, testTenant, "bench-agent", "benchmark", "owner-1", labels, "", "", nil)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -40,10 +40,10 @@ func BenchmarkGetAgent(b *testing.B) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "bench-agent", "", "owner-1", nil, "", "", nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "bench-agent", "", "owner-1", nil, "", "", nil)
 
 	for b.Loop() {
-		_, err := svc.GetAgent(ctx, agent.ID)
+		_, err := svc.GetAgent(ctx, testTenant, agent.ID)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -55,11 +55,11 @@ func BenchmarkMintCredential(b *testing.B) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "bench-agent", "", "owner-1", nil, "", "", nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "bench-agent", "", "owner-1", nil, "", "", nil)
 	scopes := []string{"read", "write", "admin"}
 
 	for b.Loop() {
-		_, _, err := svc.MintCredential(ctx, agent.ID, scopes, 3600)
+		_, _, err := svc.MintCredential(ctx, testTenant, agent.ID, scopes, 3600)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -74,12 +74,12 @@ func BenchmarkListAgents_Scaling(b *testing.B) {
 			ctx := context.Background()
 
 			for i := 0; i < n; i++ {
-				svc.RegisterAgent(ctx, fmt.Sprintf("agent-%d", i), "", "owner-1", nil, "", "", nil)
+				svc.RegisterAgent(ctx, testTenant, fmt.Sprintf("agent-%d", i), "", "owner-1", nil, "", "", nil)
 			}
 
 			b.ResetTimer()
 			for b.Loop() {
-				_, _, err := svc.ListAgents(ctx, "", "", 50, "")
+				_, _, err := svc.ListAgents(ctx, testTenant, "", "", 50, "")
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -95,12 +95,12 @@ func BenchmarkDeactivateAgent(b *testing.B) {
 		b.StopTimer()
 		repo := newMockRepo()
 		svc := NewService(repo)
-		agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+		agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
 		for j := 0; j < 10; j++ {
-			svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
+			svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, 3600)
 		}
 		b.StartTimer()
 
-		svc.DeactivateAgent(ctx, agent.ID)
+		svc.DeactivateAgent(ctx, testTenant, agent.ID)
 	}
 }

@@ -159,7 +159,7 @@ type guardrailsAdapter struct {
 	client guardrailspb.GuardrailsServiceClient
 }
 
-func (a *guardrailsAdapter) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error) {
+func (a *guardrailsAdapter) CompilePolicy(ctx context.Context, _ string, ruleIDs []string) ([]byte, int, error) {
 	resp, err := a.client.CompilePolicy(ctx, &guardrailspb.CompilePolicyRequest{
 		RuleIds: ruleIDs,
 	})
@@ -169,7 +169,7 @@ func (a *guardrailsAdapter) CompilePolicy(ctx context.Context, ruleIDs []string)
 	return resp.GetCompiledPolicy(), int(resp.GetRuleCount()), nil
 }
 
-func (a *guardrailsAdapter) ResolveRuleIDs(ctx context.Context, policyID string) ([]string, error) {
+func (a *guardrailsAdapter) ResolveRuleIDs(ctx context.Context, tenantID, policyID string) ([]string, error) {
 	if strings.HasPrefix(policyID, "set:") {
 		setName := strings.TrimPrefix(policyID, "set:")
 		// Look up set by iterating ListGuardrailSets (name is unique).

@@ -32,7 +32,10 @@ func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) RegisterAgent(ctx context.Context, name, description, ownerID string, labels map[string]string, purpose string, trustLevel models.AgentTrustLevel, capabilities []string) (*models.Agent, error) {
+func (s *Service) RegisterAgent(ctx context.Context, tenantID, name, description, ownerID string, labels map[string]string, purpose string, trustLevel models.AgentTrustLevel, capabilities []string) (*models.Agent, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -49,6 +52,7 @@ func (s *Service) RegisterAgent(ctx context.Context, name, description, ownerID 
 		capabilities = []string{}
 	}
 	agent := &models.Agent{
+		TenantID:     tenantID,
 		Name:         name,
 		Description:  description,
 		OwnerID:      ownerID,
@@ -64,11 +68,14 @@ func (s *Service) RegisterAgent(ctx context.Context, name, description, ownerID 
 	return agent, nil
 }
 
-func (s *Service) GetAgent(ctx context.Context, id string) (*models.Agent, error) {
+func (s *Service) GetAgent(ctx context.Context, tenantID, id string) (*models.Agent, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	agent, err := s.repo.GetAgent(ctx, id)
+	agent, err := s.repo.GetAgent(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +85,10 @@ func (s *Service) GetAgent(ctx context.Context, id string) (*models.Agent, error
 	return agent, nil
 }
 
-func (s *Service) ListAgents(ctx context.Context, ownerID string, status models.AgentStatus, pageSize int, pageToken string) ([]models.Agent, string, error) {
+func (s *Service) ListAgents(ctx context.Context, tenantID, ownerID string, status models.AgentStatus, pageSize int, pageToken string) ([]models.Agent, string, error) {
+	if tenantID == "" {
+		return nil, "", ErrInvalidInput
+	}
 	if pageSize <= 0 {
 		pageSize = defaultPageSize
 	}
@@ -92,7 +102,7 @@ func (s *Service) ListAgents(ctx context.Context, ownerID string, status models.
 	}
 
 	// Fetch one extra to determine if there is a next page
-	agents, err := s.repo.ListAgents(ctx, ownerID, status, afterID, pageSize+1)
+	agents, err := s.repo.ListAgents(ctx, tenantID, ownerID, status, afterID, pageSize+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -106,14 +116,20 @@ func (s *Service) ListAgents(ctx context.Context, ownerID string, status models.
 	return agents, nextToken, nil
 }
 
-func (s *Service) DeactivateAgent(ctx context.Context, id string) error {
+func (s *Service) DeactivateAgent(ctx context.Context, tenantID, id string) error {
+	if tenantID == "" {
+		return ErrInvalidInput
+	}
 	if id == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.DeactivateAgent(ctx, id)
+	return s.repo.DeactivateAgent(ctx, tenantID, id)
 }
 
-func (s *Service) MintCredential(ctx context.Context, agentID string, scopes []string, ttlSeconds int64) (*models.ScopedCredential, string, error) {
+func (s *Service) MintCredential(ctx context.Context, tenantID, agentID string, scopes []string, ttlSeconds int64) (*models.ScopedCredential, string, error) {
+	if tenantID == "" {
+		return nil, "", ErrInvalidInput
+	}
 	if agentID == "" {
 		return nil, "", ErrInvalidInput
 	}
@@ -124,7 +140,7 @@ func (s *Service) MintCredential(ctx context.Context, agentID string, scopes []s
 		return nil, "", ErrInvalidInput
 	}
 
-	agent, err := s.repo.GetAgent(ctx, agentID)
+	agent, err := s.repo.GetAgent(ctx, tenantID, agentID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -141,6 +157,7 @@ func (s *Service) MintCredential(ctx context.Context, agentID string, scopes []s
 	}
 
 	cred := &models.ScopedCredential{
+		TenantID:  tenantID,
 		AgentID:   agentID,
 		Scopes:    scopes,
 		TokenHash: tokenHash,
@@ -153,7 +170,10 @@ func (s *Service) MintCredential(ctx context.Context, agentID string, scopes []s
 	return cred, rawToken, nil
 }
 
-func (s *Service) UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel, justification string) (*models.Agent, error) {
+func (s *Service) UpdateTrustLevel(ctx context.Context, tenantID, agentID string, level models.AgentTrustLevel, justification string) (*models.Agent, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -164,42 +184,51 @@ func (s *Service) UpdateTrustLevel(ctx context.Context, agentID string, level mo
 		return nil, ErrInvalidTrustLevel
 	}
 
-	if err := s.repo.UpdateTrustLevel(ctx, agentID, level); err != nil {
+	if err := s.repo.UpdateTrustLevel(ctx, tenantID, agentID, level); err != nil {
 		return nil, err
 	}
 
-	return s.GetAgent(ctx, agentID)
+	return s.GetAgent(ctx, tenantID, agentID)
 }
 
-func (s *Service) RevokeCredential(ctx context.Context, credentialID string) error {
+func (s *Service) RevokeCredential(ctx context.Context, tenantID, credentialID string) error {
+	if tenantID == "" {
+		return ErrInvalidInput
+	}
 	if credentialID == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.RevokeCredential(ctx, credentialID)
+	return s.repo.RevokeCredential(ctx, tenantID, credentialID)
 }
 
-func (s *Service) SuspendAgent(ctx context.Context, agentID string) (*models.Agent, error) {
+func (s *Service) SuspendAgent(ctx context.Context, tenantID, agentID string) (*models.Agent, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
-	if err := s.repo.UpdateAgentStatus(ctx, agentID, []models.AgentStatus{
+	if err := s.repo.UpdateAgentStatus(ctx, tenantID, agentID, []models.AgentStatus{
 		models.AgentStatusActive, models.AgentStatusSuspended,
 	}, models.AgentStatusSuspended); err != nil {
 		return nil, err
 	}
-	return s.GetAgent(ctx, agentID)
+	return s.GetAgent(ctx, tenantID, agentID)
 }
 
-func (s *Service) ReactivateAgent(ctx context.Context, agentID string) (*models.Agent, error) {
+func (s *Service) ReactivateAgent(ctx context.Context, tenantID, agentID string) (*models.Agent, error) {
+	if tenantID == "" {
+		return nil, ErrInvalidInput
+	}
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
-	if err := s.repo.UpdateAgentStatus(ctx, agentID, []models.AgentStatus{
+	if err := s.repo.UpdateAgentStatus(ctx, tenantID, agentID, []models.AgentStatus{
 		models.AgentStatusSuspended, models.AgentStatusInactive, models.AgentStatusActive,
 	}, models.AgentStatusActive); err != nil {
 		return nil, err
 	}
-	return s.GetAgent(ctx, agentID)
+	return s.GetAgent(ctx, tenantID, agentID)
 }
 
 // encodePageToken encodes a cursor ID as a page token.

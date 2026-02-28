@@ -59,7 +59,7 @@ func (s *Service) GetBehaviorReport(ctx context.Context, agentID string, windowS
 	return s.considered.GenerateReport(ctx, agentID, windowStart, windowEnd)
 }
 
-func (s *Service) CreateRule(ctx context.Context, name, description string, ruleType models.RuleType, condition string, action models.RuleAction, priority int, labels map[string]string, scope models.RuleScope) (*models.GuardrailRule, error) {
+func (s *Service) CreateRule(ctx context.Context, tenantID, name, description string, ruleType models.RuleType, condition string, action models.RuleAction, priority int, labels map[string]string, scope models.RuleScope) (*models.GuardrailRule, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -77,6 +77,7 @@ func (s *Service) CreateRule(ctx context.Context, name, description string, rule
 	}
 
 	rule := &models.GuardrailRule{
+		TenantID:    tenantID,
 		Name:        name,
 		Description: description,
 		Type:        ruleType,
@@ -93,11 +94,11 @@ func (s *Service) CreateRule(ctx context.Context, name, description string, rule
 	return rule, nil
 }
 
-func (s *Service) GetRule(ctx context.Context, id string) (*models.GuardrailRule, error) {
+func (s *Service) GetRule(ctx context.Context, tenantID, id string) (*models.GuardrailRule, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	rule, err := s.repo.GetRule(ctx, id)
+	rule, err := s.repo.GetRule(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +108,7 @@ func (s *Service) GetRule(ctx context.Context, id string) (*models.GuardrailRule
 	return rule, nil
 }
 
-func (s *Service) UpdateRule(ctx context.Context, rule *models.GuardrailRule) (*models.GuardrailRule, error) {
+func (s *Service) UpdateRule(ctx context.Context, tenantID string, rule *models.GuardrailRule) (*models.GuardrailRule, error) {
 	if rule.ID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -126,20 +127,20 @@ func (s *Service) UpdateRule(ctx context.Context, rule *models.GuardrailRule) (*
 	if rule.Labels == nil {
 		rule.Labels = map[string]string{}
 	}
-	if err := s.repo.UpdateRule(ctx, rule); err != nil {
+	if err := s.repo.UpdateRule(ctx, tenantID, rule); err != nil {
 		return nil, err
 	}
 	return rule, nil
 }
 
-func (s *Service) DeleteRule(ctx context.Context, id string) error {
+func (s *Service) DeleteRule(ctx context.Context, tenantID, id string) error {
 	if id == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.DeleteRule(ctx, id)
+	return s.repo.DeleteRule(ctx, tenantID, id)
 }
 
-func (s *Service) ListRules(ctx context.Context, ruleType models.RuleType, enabledOnly bool, pageSize int, pageToken string) ([]models.GuardrailRule, string, error) {
+func (s *Service) ListRules(ctx context.Context, tenantID string, ruleType models.RuleType, enabledOnly bool, pageSize int, pageToken string) ([]models.GuardrailRule, string, error) {
 	if pageSize <= 0 {
 		pageSize = defaultPageSize
 	}
@@ -152,7 +153,7 @@ func (s *Service) ListRules(ctx context.Context, ruleType models.RuleType, enabl
 		return nil, "", ErrInvalidInput
 	}
 
-	rules, err := s.repo.ListRules(ctx, ruleType, enabledOnly, afterID, pageSize+1)
+	rules, err := s.repo.ListRules(ctx, tenantID, ruleType, enabledOnly, afterID, pageSize+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -193,14 +194,14 @@ type compiledPolicy struct {
 
 // CompilePolicy fetches each rule by ID and produces a structured CompiledPolicy
 // that the Rust runtime evaluator can deserialize and evaluate.
-func (s *Service) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, int, error) {
+func (s *Service) CompilePolicy(ctx context.Context, tenantID string, ruleIDs []string) ([]byte, int, error) {
 	if len(ruleIDs) == 0 {
 		return nil, 0, ErrInvalidInput
 	}
 
 	var rules []compiledRule
 	for _, id := range ruleIDs {
-		rule, err := s.repo.GetRule(ctx, id)
+		rule, err := s.repo.GetRule(ctx, tenantID, id)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -217,13 +218,13 @@ func (s *Service) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, 
 			Enabled:   rule.Enabled,
 		}
 		// Include scope if any field is non-empty.
-		s := rule.Scope
-		if len(s.AgentIDs) > 0 || len(s.ToolNames) > 0 || len(s.TrustLevels) > 0 || len(s.DataClassifications) > 0 {
+		sc := rule.Scope
+		if len(sc.AgentIDs) > 0 || len(sc.ToolNames) > 0 || len(sc.TrustLevels) > 0 || len(sc.DataClassifications) > 0 {
 			cr.Scope = &compiledRuleScope{
-				AgentIDs:            s.AgentIDs,
-				ToolNames:           s.ToolNames,
-				TrustLevels:         s.TrustLevels,
-				DataClassifications: s.DataClassifications,
+				AgentIDs:            sc.AgentIDs,
+				ToolNames:           sc.ToolNames,
+				TrustLevels:         sc.TrustLevels,
+				DataClassifications: sc.DataClassifications,
 			}
 		}
 		rules = append(rules, cr)
@@ -248,7 +249,7 @@ type SimulationResult struct {
 // SimulatePolicy dry-runs a set of rules against a sample tool call, returning
 // the verdict that would be produced. Rules are evaluated in priority order
 // (ascending — lower priority number = higher precedence).
-func (s *Service) SimulatePolicy(ctx context.Context, ruleIDs []string, toolName string, parameters map[string]string, agentID string) (*SimulationResult, error) {
+func (s *Service) SimulatePolicy(ctx context.Context, tenantID string, ruleIDs []string, toolName string, parameters map[string]string, agentID string) (*SimulationResult, error) {
 	if len(ruleIDs) == 0 {
 		return nil, ErrInvalidInput
 	}
@@ -259,7 +260,7 @@ func (s *Service) SimulatePolicy(ctx context.Context, ruleIDs []string, toolName
 	// Fetch all rules.
 	var rules []models.GuardrailRule
 	for _, id := range ruleIDs {
-		rule, err := s.repo.GetRule(ctx, id)
+		rule, err := s.repo.GetRule(ctx, tenantID, id)
 		if err != nil {
 			return nil, err
 		}
@@ -337,7 +338,7 @@ func (s *Service) SimulatePolicy(ctx context.Context, ruleIDs []string, toolName
 
 // --- GuardrailSet CRUD ---
 
-func (s *Service) CreateSet(ctx context.Context, name, description string, ruleIDs []string, labels map[string]string) (*models.GuardrailSet, error) {
+func (s *Service) CreateSet(ctx context.Context, tenantID, name, description string, ruleIDs []string, labels map[string]string) (*models.GuardrailSet, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -348,6 +349,7 @@ func (s *Service) CreateSet(ctx context.Context, name, description string, ruleI
 		labels = map[string]string{}
 	}
 	set := &models.GuardrailSet{
+		TenantID:    tenantID,
 		Name:        name,
 		Description: description,
 		RuleIDs:     ruleIDs,
@@ -359,11 +361,11 @@ func (s *Service) CreateSet(ctx context.Context, name, description string, ruleI
 	return set, nil
 }
 
-func (s *Service) GetSet(ctx context.Context, id string) (*models.GuardrailSet, error) {
+func (s *Service) GetSet(ctx context.Context, tenantID, id string) (*models.GuardrailSet, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	set, err := s.repo.GetSet(ctx, id)
+	set, err := s.repo.GetSet(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -373,11 +375,11 @@ func (s *Service) GetSet(ctx context.Context, id string) (*models.GuardrailSet, 
 	return set, nil
 }
 
-func (s *Service) GetSetByName(ctx context.Context, name string) (*models.GuardrailSet, error) {
+func (s *Service) GetSetByName(ctx context.Context, tenantID, name string) (*models.GuardrailSet, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
-	set, err := s.repo.GetSetByName(ctx, name)
+	set, err := s.repo.GetSetByName(ctx, tenantID, name)
 	if err != nil {
 		return nil, err
 	}
@@ -387,7 +389,7 @@ func (s *Service) GetSetByName(ctx context.Context, name string) (*models.Guardr
 	return set, nil
 }
 
-func (s *Service) UpdateSet(ctx context.Context, set *models.GuardrailSet) (*models.GuardrailSet, error) {
+func (s *Service) UpdateSet(ctx context.Context, tenantID string, set *models.GuardrailSet) (*models.GuardrailSet, error) {
 	if set.ID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -400,20 +402,20 @@ func (s *Service) UpdateSet(ctx context.Context, set *models.GuardrailSet) (*mod
 	if set.Labels == nil {
 		set.Labels = map[string]string{}
 	}
-	if err := s.repo.UpdateSet(ctx, set); err != nil {
+	if err := s.repo.UpdateSet(ctx, tenantID, set); err != nil {
 		return nil, err
 	}
 	return set, nil
 }
 
-func (s *Service) DeleteSet(ctx context.Context, id string) error {
+func (s *Service) DeleteSet(ctx context.Context, tenantID, id string) error {
 	if id == "" {
 		return ErrInvalidInput
 	}
-	return s.repo.DeleteSet(ctx, id)
+	return s.repo.DeleteSet(ctx, tenantID, id)
 }
 
-func (s *Service) ListSets(ctx context.Context, pageSize int, pageToken string) ([]models.GuardrailSet, string, error) {
+func (s *Service) ListSets(ctx context.Context, tenantID string, pageSize int, pageToken string) ([]models.GuardrailSet, string, error) {
 	if pageSize <= 0 {
 		pageSize = defaultPageSize
 	}
@@ -426,7 +428,7 @@ func (s *Service) ListSets(ctx context.Context, pageSize int, pageToken string) 
 		return nil, "", ErrInvalidInput
 	}
 
-	sets, err := s.repo.ListSets(ctx, afterID, pageSize+1)
+	sets, err := s.repo.ListSets(ctx, tenantID, afterID, pageSize+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -444,10 +446,10 @@ func (s *Service) ListSets(ctx context.Context, pageSize int, pageToken string) 
 // Supports two formats:
 //   - "set:<name>" — looks up a named GuardrailSet and returns its rule IDs.
 //   - "id1,id2,id3" — returns the comma-separated IDs directly (existing behavior).
-func (s *Service) ResolveRuleIDs(ctx context.Context, policyID string) ([]string, error) {
+func (s *Service) ResolveRuleIDs(ctx context.Context, tenantID, policyID string) ([]string, error) {
 	if strings.HasPrefix(policyID, "set:") {
 		setName := strings.TrimPrefix(policyID, "set:")
-		set, err := s.repo.GetSetByName(ctx, setName)
+		set, err := s.repo.GetSetByName(ctx, tenantID, setName)
 		if err != nil {
 			return nil, err
 		}

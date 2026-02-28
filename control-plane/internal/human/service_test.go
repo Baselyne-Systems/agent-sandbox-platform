@@ -45,7 +45,7 @@ func (m *mockRepo) CreateRequest(_ context.Context, req *models.HumanRequest) er
 	return nil
 }
 
-func (m *mockRepo) GetRequest(_ context.Context, id string) (*models.HumanRequest, error) {
+func (m *mockRepo) GetRequest(_ context.Context, _, id string) (*models.HumanRequest, error) {
 	r, ok := m.requests[id]
 	if !ok {
 		return nil, nil
@@ -63,7 +63,7 @@ func (m *mockRepo) GetRequest(_ context.Context, id string) (*models.HumanReques
 	return &cp, nil
 }
 
-func (m *mockRepo) RespondToRequest(_ context.Context, id, response, responderID string) error {
+func (m *mockRepo) RespondToRequest(_ context.Context, _, id, response, responderID string) error {
 	r, ok := m.requests[id]
 	if !ok {
 		return ErrRequestNotPending
@@ -79,7 +79,7 @@ func (m *mockRepo) RespondToRequest(_ context.Context, id, response, responderID
 	return nil
 }
 
-func (m *mockRepo) ListRequests(_ context.Context, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error) {
+func (m *mockRepo) ListRequests(_ context.Context, _, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error) {
 	var result []models.HumanRequest
 	for _, r := range m.requests {
 		if workspaceID != "" && r.WorkspaceID != workspaceID {
@@ -122,7 +122,7 @@ func (m *mockRepo) UpsertDeliveryChannel(_ context.Context, cfg *models.Delivery
 	return nil
 }
 
-func (m *mockRepo) GetDeliveryChannel(_ context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+func (m *mockRepo) GetDeliveryChannel(_ context.Context, _, userID, channelType string) (*models.DeliveryChannelConfig, error) {
 	key := userID + ":" + channelType
 	cfg, ok := m.channels[key]
 	if !ok {
@@ -154,7 +154,7 @@ func (m *mockRepo) UpsertTimeoutPolicy(_ context.Context, policy *models.Timeout
 	return nil
 }
 
-func (m *mockRepo) GetTimeoutPolicy(_ context.Context, scope, scopeID string) (*models.TimeoutPolicy, error) {
+func (m *mockRepo) GetTimeoutPolicy(_ context.Context, _, scope, scopeID string) (*models.TimeoutPolicy, error) {
 	key := scope + ":" + scopeID
 	policy, ok := m.timeoutPolicies[key]
 	if !ok {
@@ -165,7 +165,7 @@ func (m *mockRepo) GetTimeoutPolicy(_ context.Context, scope, scopeID string) (*
 	return &cp, nil
 }
 
-func (m *mockRepo) ListEnabledChannels(_ context.Context) ([]models.DeliveryChannelConfig, error) {
+func (m *mockRepo) ListEnabledChannels(_ context.Context, _ string) ([]models.DeliveryChannelConfig, error) {
 	var result []models.DeliveryChannelConfig
 	for _, cfg := range m.channels {
 		if cfg.Enabled {
@@ -209,7 +209,7 @@ func (m *mockActivityLogger) RecordAction(_ context.Context, record *models.Acti
 
 func TestCreateRequest_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
-	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "Approve invoice?", []string{"yes", "no"}, "Invoice #123", 300, "", "", "")
+	req, err := svc.CreateRequest(context.Background(), "test-tenant", "ws-1", "agent-1", "Approve invoice?", []string{"yes", "no"}, "Invoice #123", 300, "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -231,20 +231,20 @@ func TestCreateRequest_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.CreateRequest(ctx, "", "a", "q", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRequest(ctx, "test-tenant", "", "a", "q", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty workspace_id, got: %v", err)
 	}
-	if _, err := svc.CreateRequest(ctx, "ws", "", "q", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRequest(ctx, "test-tenant", "ws", "", "q", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty agent_id, got: %v", err)
 	}
-	if _, err := svc.CreateRequest(ctx, "ws", "a", "", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRequest(ctx, "test-tenant", "ws", "a", "", nil, "", 0, "", "", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty question, got: %v", err)
 	}
 }
 
 func TestCreateRequest_DefaultTimeout(t *testing.T) {
 	svc := NewService(newMockRepo())
-	req, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "q", nil, "", 0, "", "", "")
+	req, err := svc.CreateRequest(context.Background(), "test-tenant", "ws-1", "agent-1", "q", nil, "", 0, "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -260,8 +260,8 @@ func TestCreateRequest_DefaultTimeout(t *testing.T) {
 
 func TestGetRequest_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.CreateRequest(context.Background(), "ws", "a", "q", nil, "", 300, "", "", "")
-	got, err := svc.GetRequest(context.Background(), created.ID)
+	created, _ := svc.CreateRequest(context.Background(), "test-tenant", "ws", "a", "q", nil, "", 300, "", "", "")
+	got, err := svc.GetRequest(context.Background(), "test-tenant", created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestGetRequest_Found(t *testing.T) {
 
 func TestGetRequest_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetRequest(context.Background(), "nonexistent-id")
+	_, err := svc.GetRequest(context.Background(), "test-tenant", "nonexistent-id")
 	if !errors.Is(err, ErrRequestNotFound) {
 		t.Errorf("expected ErrRequestNotFound, got: %v", err)
 	}
@@ -283,12 +283,12 @@ func TestGetRequest_Expired(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 1, "", "", "")
+	req, _ := svc.CreateRequest(ctx, "test-tenant", "ws", "a", "q", nil, "", 1, "", "", "")
 	// Manually set expires_at to the past
 	pastTime := time.Now().Add(-1 * time.Minute)
 	repo.requests[req.ID].ExpiresAt = &pastTime
 
-	got, err := svc.GetRequest(ctx, req.ID)
+	got, err := svc.GetRequest(ctx, "test-tenant", req.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,13 +300,13 @@ func TestGetRequest_Expired(t *testing.T) {
 func TestRespondToRequest_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300, "", "", "")
+	req, _ := svc.CreateRequest(ctx, "test-tenant", "ws", "a", "q", nil, "", 300, "", "", "")
 
-	if err := svc.RespondToRequest(ctx, req.ID, "approved", "human-1"); err != nil {
+	if err := svc.RespondToRequest(ctx, "test-tenant", req.ID, "approved", "human-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got, _ := svc.GetRequest(ctx, req.ID)
+	got, _ := svc.GetRequest(ctx, "test-tenant", req.ID)
 	if got.Status != models.HumanRequestStatusResponded {
 		t.Errorf("expected status responded, got %q", got.Status)
 	}
@@ -321,11 +321,11 @@ func TestRespondToRequest_Success(t *testing.T) {
 func TestRespondToRequest_NotPending(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	req, _ := svc.CreateRequest(ctx, "ws", "a", "q", nil, "", 300, "", "", "")
+	req, _ := svc.CreateRequest(ctx, "test-tenant", "ws", "a", "q", nil, "", 300, "", "", "")
 
-	svc.RespondToRequest(ctx, req.ID, "first", "h1")
+	svc.RespondToRequest(ctx, "test-tenant", req.ID, "first", "h1")
 
-	err := svc.RespondToRequest(ctx, req.ID, "second", "h2")
+	err := svc.RespondToRequest(ctx, "test-tenant", req.ID, "second", "h2")
 	if !errors.Is(err, ErrRequestNotPending) {
 		t.Errorf("expected ErrRequestNotPending on double-respond, got: %v", err)
 	}
@@ -333,7 +333,7 @@ func TestRespondToRequest_NotPending(t *testing.T) {
 
 func TestRespondToRequest_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	err := svc.RespondToRequest(context.Background(), "no-such-id", "resp", "h1")
+	err := svc.RespondToRequest(context.Background(), "test-tenant", "no-such-id", "resp", "h1")
 	if !errors.Is(err, ErrRequestNotPending) {
 		t.Errorf("expected ErrRequestNotPending, got: %v", err)
 	}
@@ -343,13 +343,13 @@ func TestRespondToRequest_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if err := svc.RespondToRequest(ctx, "", "r", "h"); !errors.Is(err, ErrInvalidInput) {
+	if err := svc.RespondToRequest(ctx, "test-tenant", "", "r", "h"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty id, got: %v", err)
 	}
-	if err := svc.RespondToRequest(ctx, "id", "", "h"); !errors.Is(err, ErrInvalidInput) {
+	if err := svc.RespondToRequest(ctx, "test-tenant", "id", "", "h"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty response, got: %v", err)
 	}
-	if err := svc.RespondToRequest(ctx, "id", "r", ""); !errors.Is(err, ErrInvalidInput) {
+	if err := svc.RespondToRequest(ctx, "test-tenant", "id", "r", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty responder_id, got: %v", err)
 	}
 }
@@ -358,12 +358,12 @@ func TestListRequests_WithFilters(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	svc.CreateRequest(ctx, "ws-1", "a", "q1", nil, "", 300, "", "", "")
-	svc.CreateRequest(ctx, "ws-2", "a", "q2", nil, "", 300, "", "", "")
-	svc.CreateRequest(ctx, "ws-1", "a", "q3", nil, "", 300, "", "", "")
+	svc.CreateRequest(ctx, "test-tenant", "ws-1", "a", "q1", nil, "", 300, "", "", "")
+	svc.CreateRequest(ctx, "test-tenant", "ws-2", "a", "q2", nil, "", 300, "", "", "")
+	svc.CreateRequest(ctx, "test-tenant", "ws-1", "a", "q3", nil, "", 300, "", "", "")
 
 	// Filter by workspace
-	reqs, _, err := svc.ListRequests(ctx, "ws-1", "", 50, "")
+	reqs, _, err := svc.ListRequests(ctx, "test-tenant", "ws-1", "", 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -372,7 +372,7 @@ func TestListRequests_WithFilters(t *testing.T) {
 	}
 
 	// All requests
-	reqs, _, err = svc.ListRequests(ctx, "", "", 50, "")
+	reqs, _, err = svc.ListRequests(ctx, "test-tenant", "", "", 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -386,10 +386,10 @@ func TestListRequests_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.CreateRequest(ctx, "ws", "a", fmt.Sprintf("q%d", i), nil, "", 300, "", "", "")
+		svc.CreateRequest(ctx, "test-tenant", "ws", "a", fmt.Sprintf("q%d", i), nil, "", 300, "", "", "")
 	}
 
-	reqs, nextToken, err := svc.ListRequests(ctx, "", "", 3, "")
+	reqs, nextToken, err := svc.ListRequests(ctx, "test-tenant", "", "", 3, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestListRequests_Pagination(t *testing.T) {
 		t.Error("expected a next page token")
 	}
 
-	reqs2, nextToken2, err := svc.ListRequests(ctx, "", "", 3, nextToken)
+	reqs2, nextToken2, err := svc.ListRequests(ctx, "test-tenant", "", "", 3, nextToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -416,7 +416,7 @@ func TestConfigureDeliveryChannel_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	cfg, err := svc.ConfigureDeliveryChannel(ctx, "user-1", "slack", "https://hooks.slack.com/services/T00/B00/xxx")
+	cfg, err := svc.ConfigureDeliveryChannel(ctx, "test-tenant", "user-1", "slack", "https://hooks.slack.com/services/T00/B00/xxx")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestConfigureDeliveryChannel_Success(t *testing.T) {
 
 func TestConfigureDeliveryChannel_InvalidType(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.ConfigureDeliveryChannel(context.Background(), "user-1", "sms", "1234567890")
+	_, err := svc.ConfigureDeliveryChannel(context.Background(), "test-tenant", "user-1", "sms", "1234567890")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid channel type, got: %v", err)
 	}
@@ -443,13 +443,13 @@ func TestConfigureDeliveryChannel_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.ConfigureDeliveryChannel(ctx, "", "slack", "ep"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.ConfigureDeliveryChannel(ctx, "test-tenant", "", "slack", "ep"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty user_id, got: %v", err)
 	}
-	if _, err := svc.ConfigureDeliveryChannel(ctx, "u", "", "ep"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.ConfigureDeliveryChannel(ctx, "test-tenant", "u", "", "ep"); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty channel_type, got: %v", err)
 	}
-	if _, err := svc.ConfigureDeliveryChannel(ctx, "u", "slack", ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.ConfigureDeliveryChannel(ctx, "test-tenant", "u", "slack", ""); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty endpoint, got: %v", err)
 	}
 }
@@ -458,8 +458,8 @@ func TestGetDeliveryChannel_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	svc.ConfigureDeliveryChannel(ctx, "user-1", "email", "user@example.com")
-	cfg, err := svc.GetDeliveryChannel(ctx, "user-1", "email")
+	svc.ConfigureDeliveryChannel(ctx, "test-tenant", "user-1", "email", "user@example.com")
+	cfg, err := svc.GetDeliveryChannel(ctx, "test-tenant", "user-1", "email")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestGetDeliveryChannel_Found(t *testing.T) {
 
 func TestGetDeliveryChannel_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetDeliveryChannel(context.Background(), "user-1", "slack")
+	_, err := svc.GetDeliveryChannel(context.Background(), "test-tenant", "user-1", "slack")
 	if !errors.Is(err, ErrChannelNotFound) {
 		t.Errorf("expected ErrChannelNotFound, got: %v", err)
 	}
@@ -480,7 +480,7 @@ func TestSetTimeoutPolicy_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	policy, err := svc.SetTimeoutPolicy(ctx, "agent", "agent-1", 600, "escalate", []string{"admin@example.com"})
+	policy, err := svc.SetTimeoutPolicy(ctx, "test-tenant", "agent", "agent-1", 600, "escalate", []string{"admin@example.com"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -500,19 +500,19 @@ func TestSetTimeoutPolicy_Validation(t *testing.T) {
 	ctx := context.Background()
 
 	// Invalid scope
-	if _, err := svc.SetTimeoutPolicy(ctx, "invalid", "", 600, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetTimeoutPolicy(ctx, "test-tenant", "invalid", "", 600, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid scope, got: %v", err)
 	}
 	// Invalid action
-	if _, err := svc.SetTimeoutPolicy(ctx, "global", "", 600, "invalid", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetTimeoutPolicy(ctx, "test-tenant", "global", "", 600, "invalid", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid action, got: %v", err)
 	}
 	// Zero timeout
-	if _, err := svc.SetTimeoutPolicy(ctx, "global", "", 0, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetTimeoutPolicy(ctx, "test-tenant", "global", "", 0, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for zero timeout, got: %v", err)
 	}
 	// Non-global scope without scope_id
-	if _, err := svc.SetTimeoutPolicy(ctx, "agent", "", 600, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetTimeoutPolicy(ctx, "test-tenant", "agent", "", 600, "escalate", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for agent scope without scope_id, got: %v", err)
 	}
 }
@@ -522,7 +522,7 @@ func TestSetTimeoutPolicy_GlobalScope(t *testing.T) {
 	ctx := context.Background()
 
 	// Global scope allows empty scope_id
-	policy, err := svc.SetTimeoutPolicy(ctx, "global", "", 300, "halt", nil)
+	policy, err := svc.SetTimeoutPolicy(ctx, "test-tenant", "global", "", 300, "halt", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -535,8 +535,8 @@ func TestGetTimeoutPolicy_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	svc.SetTimeoutPolicy(ctx, "workspace", "ws-1", 900, "continue", nil)
-	policy, err := svc.GetTimeoutPolicy(ctx, "workspace", "ws-1")
+	svc.SetTimeoutPolicy(ctx, "test-tenant", "workspace", "ws-1", 900, "continue", nil)
+	policy, err := svc.GetTimeoutPolicy(ctx, "test-tenant", "workspace", "ws-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -547,7 +547,7 @@ func TestGetTimeoutPolicy_Found(t *testing.T) {
 
 func TestGetTimeoutPolicy_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetTimeoutPolicy(context.Background(), "agent", "no-such-id")
+	_, err := svc.GetTimeoutPolicy(context.Background(), "test-tenant", "agent", "no-such-id")
 	if !errors.Is(err, ErrTimeoutPolicyNotFound) {
 		t.Errorf("expected ErrTimeoutPolicyNotFound, got: %v", err)
 	}
@@ -558,7 +558,7 @@ func TestCreateRequest_LogsToActivityStore(t *testing.T) {
 	svc := NewService(newMockRepo())
 	svc.SetActivityLogger(activity)
 
-	_, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "Approve?", nil, "", 300, "", "", "task-1")
+	_, err := svc.CreateRequest(context.Background(), "test-tenant", "ws-1", "agent-1", "Approve?", nil, "", 300, "", "", "task-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -586,10 +586,10 @@ func TestRespondToRequest_LogsToActivityStore(t *testing.T) {
 	svc.SetActivityLogger(activity)
 
 	ctx := context.Background()
-	req, _ := svc.CreateRequest(ctx, "ws-1", "agent-1", "Approve?", nil, "", 300, "", "", "")
+	req, _ := svc.CreateRequest(ctx, "test-tenant", "ws-1", "agent-1", "Approve?", nil, "", 300, "", "", "")
 	activity.records = nil // reset after create
 
-	if err := svc.RespondToRequest(ctx, req.ID, "approved", "human-1"); err != nil {
+	if err := svc.RespondToRequest(ctx, "test-tenant", req.ID, "approved", "human-1"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(activity.records) != 1 {
@@ -604,7 +604,7 @@ func TestRespondToRequest_LogsToActivityStore(t *testing.T) {
 func TestCreateRequest_NoActivityLogger_NoPanic(t *testing.T) {
 	// Ensure no panic when activity logger is nil.
 	svc := NewService(newMockRepo())
-	_, err := svc.CreateRequest(context.Background(), "ws-1", "agent-1", "q", nil, "", 300, "", "", "")
+	_, err := svc.CreateRequest(context.Background(), "test-tenant", "ws-1", "agent-1", "q", nil, "", 300, "", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

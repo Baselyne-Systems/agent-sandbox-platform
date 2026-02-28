@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/task/v1"
 	"google.golang.org/grpc/codes"
@@ -22,6 +23,7 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*pb.CreateTaskResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	var wsConfig *models.TaskWorkspaceConfig
 	if req.GetWorkspaceConfig() != nil {
 		wc := protoWSConfigToModel(req.GetWorkspaceConfig())
@@ -39,6 +41,7 @@ func (h *Handler) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*p
 	}
 
 	task, err := h.svc.CreateTask(ctx,
+		tenantID,
 		req.GetAgentId(),
 		req.GetGoal(),
 		wsConfig,
@@ -56,7 +59,8 @@ func (h *Handler) CreateTask(ctx context.Context, req *pb.CreateTaskRequest) (*p
 }
 
 func (h *Handler) GetTask(ctx context.Context, req *pb.GetTaskRequest) (*pb.GetTaskResponse, error) {
-	task, err := h.svc.GetTask(ctx, req.GetTaskId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	task, err := h.svc.GetTask(ctx, tenantID, req.GetTaskId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -64,8 +68,9 @@ func (h *Handler) GetTask(ctx context.Context, req *pb.GetTaskRequest) (*pb.GetT
 }
 
 func (h *Handler) ListTasks(ctx context.Context, req *pb.ListTasksRequest) (*pb.ListTasksResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	statusFilter := protoTaskStatusToModel(req.GetStatus())
-	tasks, nextToken, err := h.svc.ListTasks(ctx, req.GetAgentId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
+	tasks, nextToken, err := h.svc.ListTasks(ctx, tenantID, req.GetAgentId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -81,8 +86,9 @@ func (h *Handler) ListTasks(ctx context.Context, req *pb.ListTasksRequest) (*pb.
 }
 
 func (h *Handler) UpdateTaskStatus(ctx context.Context, req *pb.UpdateTaskStatusRequest) (*pb.UpdateTaskStatusResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	newStatus := protoTaskStatusToModel(req.GetStatus())
-	task, err := h.svc.UpdateTaskStatus(ctx, req.GetTaskId(), newStatus, req.GetReason())
+	task, err := h.svc.UpdateTaskStatus(ctx, tenantID, req.GetTaskId(), newStatus, req.GetReason())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -90,7 +96,8 @@ func (h *Handler) UpdateTaskStatus(ctx context.Context, req *pb.UpdateTaskStatus
 }
 
 func (h *Handler) CancelTask(ctx context.Context, req *pb.CancelTaskRequest) (*pb.CancelTaskResponse, error) {
-	if err := h.svc.CancelTask(ctx, req.GetTaskId(), req.GetReason()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.CancelTask(ctx, tenantID, req.GetTaskId(), req.GetReason()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.CancelTaskResponse{}, nil
@@ -101,6 +108,7 @@ func (h *Handler) CancelTask(ctx context.Context, req *pb.CancelTaskRequest) (*p
 func taskToProto(t *models.Task) *pb.Task {
 	p := &pb.Task{
 		TaskId:                         t.ID,
+		TenantId:                       t.TenantID,
 		AgentId:                        t.AgentID,
 		Goal:                           t.Goal,
 		Status:                         modelTaskStatusToProto(t.Status),

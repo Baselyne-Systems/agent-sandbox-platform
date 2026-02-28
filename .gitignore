@@ -1,5 +1,8 @@
 # Go
 control-plane/pkg/gen/
+control-plane/human
+control-plane/task
+control-plane/workspace
 
 # Rust
 runtime/target/

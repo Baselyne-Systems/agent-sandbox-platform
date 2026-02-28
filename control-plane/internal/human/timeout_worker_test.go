@@ -13,7 +13,7 @@ func TestTimeoutWorker_ExpiresRequests(t *testing.T) {
 	svc := NewService(repo)
 
 	ctx := context.Background()
-	req, err := svc.CreateRequest(ctx, "ws-1", "agent-1", "question?", nil, "", 3600, "", "", "")
+	req, err := svc.CreateRequest(ctx, "test-tenant", "ws-1", "agent-1", "question?", nil, "", 3600, "", "", "")
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestTimeoutWorker_SkipsFutureRequests(t *testing.T) {
 	svc := NewService(repo)
 
 	ctx := context.Background()
-	req, err := svc.CreateRequest(ctx, "ws-1", "agent-1", "question?", nil, "", 3600, "", "", "")
+	req, err := svc.CreateRequest(ctx, "test-tenant", "ws-1", "agent-1", "question?", nil, "", 3600, "", "", "")
 	if err != nil {
 		t.Fatalf("create request: %v", err)
 	}
@@ -81,9 +81,9 @@ func TestTimeoutWorker_MultipleExpiredRequests(t *testing.T) {
 	pastTime := time.Now().Add(-1 * time.Minute)
 
 	// Create 3 requests, expire 2.
-	r1, _ := svc.CreateRequest(ctx, "ws-1", "a1", "q1", nil, "", 3600, "", "", "")
-	r2, _ := svc.CreateRequest(ctx, "ws-1", "a1", "q2", nil, "", 3600, "", "", "")
-	r3, _ := svc.CreateRequest(ctx, "ws-1", "a1", "q3", nil, "", 3600, "", "", "")
+	r1, _ := svc.CreateRequest(ctx, "test-tenant", "ws-1", "a1", "q1", nil, "", 3600, "", "", "")
+	r2, _ := svc.CreateRequest(ctx, "test-tenant", "ws-1", "a1", "q2", nil, "", 3600, "", "", "")
+	r3, _ := svc.CreateRequest(ctx, "test-tenant", "ws-1", "a1", "q3", nil, "", 3600, "", "", "")
 
 	repo.requests[r1.ID].ExpiresAt = &pastTime
 	repo.requests[r2.ID].ExpiresAt = &pastTime

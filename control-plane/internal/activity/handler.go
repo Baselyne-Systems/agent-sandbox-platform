@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/activity/v1"
 	"google.golang.org/grpc"
@@ -25,12 +26,14 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) RecordAction(ctx context.Context, req *pb.RecordActionRequest) (*pb.RecordActionResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	r := req.GetRecord()
 	if r == nil {
 		return nil, status.Error(codes.InvalidArgument, "record is required")
 	}
 
 	record := &models.ActionRecord{
+		TenantID:        tenantID,
 		WorkspaceID:     r.GetWorkspaceId(),
 		AgentID:         r.GetAgentId(),
 		TaskID:          r.GetTaskId(),
@@ -59,7 +62,8 @@ func (h *Handler) RecordAction(ctx context.Context, req *pb.RecordActionRequest)
 }
 
 func (h *Handler) GetAction(ctx context.Context, req *pb.GetActionRequest) (*pb.GetActionResponse, error) {
-	record, err := h.svc.GetAction(ctx, req.GetRecordId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	record, err := h.svc.GetAction(ctx, tenantID, req.GetRecordId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -71,6 +75,7 @@ func (h *Handler) GetAction(ctx context.Context, req *pb.GetActionRequest) (*pb.
 }
 
 func (h *Handler) QueryActions(ctx context.Context, req *pb.QueryActionsRequest) (*pb.QueryActionsResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	var startTime, endTime *timestamppb.Timestamp
 	startTime = req.GetStartTime()
 	endTime = req.GetEndTime()
@@ -93,7 +98,7 @@ func (h *Handler) QueryActions(ctx context.Context, req *pb.QueryActionsRequest)
 		filter.EndTime = &t
 	}
 
-	records, nextToken, err := h.svc.QueryActions(ctx, filter)
+	records, nextToken, err := h.svc.QueryActions(ctx, tenantID, filter)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -160,6 +165,7 @@ func recordToProto(r *models.ActionRecord) (*pb.ActionRecord, error) {
 
 	rec := &pb.ActionRecord{
 		RecordId:        r.ID,
+		TenantId:        r.TenantID,
 		WorkspaceId:     r.WorkspaceID,
 		AgentId:         r.AgentID,
 		TaskId:          r.TaskID,

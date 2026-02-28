@@ -1,0 +1,6 @@
+apiVersion: v2
+name: bulkhead
+description: Agent Sandbox Platform for deploying autonomous AI agents safely
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

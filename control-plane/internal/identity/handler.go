@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/identity/v1"
 	"google.golang.org/grpc/codes"
@@ -22,7 +23,12 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) RegisterAgent(ctx context.Context, req *pb.RegisterAgentRequest) (*pb.RegisterAgentResponse, error) {
+	tenantID := req.GetTenantId()
+	if tenantID == "" {
+		tenantID, _ = middleware.TenantIDFromContext(ctx)
+	}
 	agent, err := h.svc.RegisterAgent(ctx,
+		tenantID,
 		req.GetName(),
 		req.GetDescription(),
 		req.GetOwnerId(),
@@ -38,7 +44,8 @@ func (h *Handler) RegisterAgent(ctx context.Context, req *pb.RegisterAgentReques
 }
 
 func (h *Handler) GetAgent(ctx context.Context, req *pb.GetAgentRequest) (*pb.GetAgentResponse, error) {
-	agent, err := h.svc.GetAgent(ctx, req.GetAgentId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	agent, err := h.svc.GetAgent(ctx, tenantID, req.GetAgentId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -46,8 +53,9 @@ func (h *Handler) GetAgent(ctx context.Context, req *pb.GetAgentRequest) (*pb.Ge
 }
 
 func (h *Handler) ListAgents(ctx context.Context, req *pb.ListAgentsRequest) (*pb.ListAgentsResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	statusFilter := protoStatusToModel(req.GetStatus())
-	agents, nextToken, err := h.svc.ListAgents(ctx, req.GetOwnerId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
+	agents, nextToken, err := h.svc.ListAgents(ctx, tenantID, req.GetOwnerId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -63,14 +71,16 @@ func (h *Handler) ListAgents(ctx context.Context, req *pb.ListAgentsRequest) (*p
 }
 
 func (h *Handler) DeactivateAgent(ctx context.Context, req *pb.DeactivateAgentRequest) (*pb.DeactivateAgentResponse, error) {
-	if err := h.svc.DeactivateAgent(ctx, req.GetAgentId()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.DeactivateAgent(ctx, tenantID, req.GetAgentId()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.DeactivateAgentResponse{}, nil
 }
 
 func (h *Handler) MintCredential(ctx context.Context, req *pb.MintCredentialRequest) (*pb.MintCredentialResponse, error) {
-	cred, rawToken, err := h.svc.MintCredential(ctx, req.GetAgentId(), req.GetScopes(), req.GetTtlSeconds())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	cred, rawToken, err := h.svc.MintCredential(ctx, tenantID, req.GetAgentId(), req.GetScopes(), req.GetTtlSeconds())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -81,14 +91,16 @@ func (h *Handler) MintCredential(ctx context.Context, req *pb.MintCredentialRequ
 }
 
 func (h *Handler) RevokeCredential(ctx context.Context, req *pb.RevokeCredentialRequest) (*pb.RevokeCredentialResponse, error) {
-	if err := h.svc.RevokeCredential(ctx, req.GetCredentialId()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.RevokeCredential(ctx, tenantID, req.GetCredentialId()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.RevokeCredentialResponse{}, nil
 }
 
 func (h *Handler) UpdateTrustLevel(ctx context.Context, req *pb.UpdateTrustLevelRequest) (*pb.UpdateTrustLevelResponse, error) {
-	agent, err := h.svc.UpdateTrustLevel(ctx, req.GetAgentId(), protoTrustLevelToModel(req.GetTrustLevel()), req.GetJustification())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	agent, err := h.svc.UpdateTrustLevel(ctx, tenantID, req.GetAgentId(), protoTrustLevelToModel(req.GetTrustLevel()), req.GetJustification())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -96,7 +108,8 @@ func (h *Handler) UpdateTrustLevel(ctx context.Context, req *pb.UpdateTrustLevel
 }
 
 func (h *Handler) SuspendAgent(ctx context.Context, req *pb.SuspendAgentRequest) (*pb.SuspendAgentResponse, error) {
-	agent, err := h.svc.SuspendAgent(ctx, req.GetAgentId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	agent, err := h.svc.SuspendAgent(ctx, tenantID, req.GetAgentId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -104,7 +117,8 @@ func (h *Handler) SuspendAgent(ctx context.Context, req *pb.SuspendAgentRequest)
 }
 
 func (h *Handler) ReactivateAgent(ctx context.Context, req *pb.ReactivateAgentRequest) (*pb.ReactivateAgentResponse, error) {
-	agent, err := h.svc.ReactivateAgent(ctx, req.GetAgentId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	agent, err := h.svc.ReactivateAgent(ctx, tenantID, req.GetAgentId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -116,6 +130,7 @@ func (h *Handler) ReactivateAgent(ctx context.Context, req *pb.ReactivateAgentRe
 func agentToProto(a *models.Agent) *pb.Agent {
 	return &pb.Agent{
 		AgentId:      a.ID,
+		TenantId:     a.TenantID,
 		Name:         a.Name,
 		Description:  a.Description,
 		OwnerId:      a.OwnerID,
@@ -158,6 +173,7 @@ func protoTrustLevelToModel(t pb.AgentTrustLevel) models.AgentTrustLevel {
 func credToProto(c *models.ScopedCredential) *pb.ScopedCredential {
 	return &pb.ScopedCredential{
 		CredentialId: c.ID,
+		TenantId:     c.TenantID,
 		AgentId:      c.AgentID,
 		Scopes:       c.Scopes,
 		ExpiresAt:    timestamppb.New(c.ExpiresAt),

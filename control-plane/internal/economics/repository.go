@@ -19,10 +19,10 @@ type ResourceCost struct {
 // Repository defines data access for the economics service.
 type Repository interface {
 	InsertUsage(ctx context.Context, record *models.UsageRecord) error
-	GetBudget(ctx context.Context, agentID string) (*models.Budget, error)
+	GetBudget(ctx context.Context, tenantID, agentID string) (*models.Budget, error)
 	UpsertBudget(ctx context.Context, budget *models.Budget) error
-	AddUsedAmount(ctx context.Context, agentID string, amount float64) error
-	GetCostReport(ctx context.Context, agentID string, start, end time.Time) ([]ResourceCost, error)
+	AddUsedAmount(ctx context.Context, tenantID, agentID string, amount float64) error
+	GetCostReport(ctx context.Context, tenantID, agentID string, start, end time.Time) ([]ResourceCost, error)
 }
 
 // PostgresRepository implements Repository using PostgreSQL.
@@ -36,21 +36,21 @@ func NewPostgresRepository(db *sql.DB) *PostgresRepository {
 
 func (r *PostgresRepository) InsertUsage(ctx context.Context, record *models.UsageRecord) error {
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO usage_records (agent_id, workspace_id, resource_type, unit, quantity, cost)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO usage_records (tenant_id, agent_id, workspace_id, resource_type, unit, quantity, cost)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING id, recorded_at`,
-		record.AgentID, record.WorkspaceID, record.ResourceType, record.Unit, record.Quantity, record.Cost,
+		record.TenantID, record.AgentID, record.WorkspaceID, record.ResourceType, record.Unit, record.Quantity, record.Cost,
 	).Scan(&record.ID, &record.RecordedAt)
 }
 
-func (r *PostgresRepository) GetBudget(ctx context.Context, agentID string) (*models.Budget, error) {
+func (r *PostgresRepository) GetBudget(ctx context.Context, tenantID, agentID string) (*models.Budget, error) {
 	b := &models.Budget{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, agent_id, currency, "limit", used, period_start, period_end,
+		`SELECT id, tenant_id, agent_id, currency, "limit", used, period_start, period_end,
 		        COALESCE(on_exceeded, 'halt'), COALESCE(warning_threshold, 0)
-		 FROM budgets WHERE agent_id = $1`,
-		agentID,
-	).Scan(&b.ID, &b.AgentID, &b.Currency, &b.Limit, &b.Used, &b.PeriodStart, &b.PeriodEnd,
+		 FROM budgets WHERE agent_id = $1 AND tenant_id = $2`,
+		agentID, tenantID,
+	).Scan(&b.ID, &b.TenantID, &b.AgentID, &b.Currency, &b.Limit, &b.Used, &b.PeriodStart, &b.PeriodEnd,
 		&b.OnExceeded, &b.WarningThreshold)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -63,9 +63,9 @@ func (r *PostgresRepository) GetBudget(ctx context.Context, agentID string) (*mo
 
 func (r *PostgresRepository) UpsertBudget(ctx context.Context, budget *models.Budget) error {
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO budgets (agent_id, currency, "limit", used, period_start, period_end, on_exceeded, warning_threshold)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 ON CONFLICT (agent_id) DO UPDATE SET
+		`INSERT INTO budgets (tenant_id, agent_id, currency, "limit", used, period_start, period_end, on_exceeded, warning_threshold)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (tenant_id, agent_id) DO UPDATE SET
 		   currency = EXCLUDED.currency,
 		   "limit" = EXCLUDED."limit",
 		   used = EXCLUDED.used,
@@ -74,15 +74,15 @@ func (r *PostgresRepository) UpsertBudget(ctx context.Context, budget *models.Bu
 		   on_exceeded = EXCLUDED.on_exceeded,
 		   warning_threshold = EXCLUDED.warning_threshold
 		 RETURNING id, period_start, period_end`,
-		budget.AgentID, budget.Currency, budget.Limit, budget.Used, budget.PeriodStart, budget.PeriodEnd,
+		budget.TenantID, budget.AgentID, budget.Currency, budget.Limit, budget.Used, budget.PeriodStart, budget.PeriodEnd,
 		budget.OnExceeded, budget.WarningThreshold,
 	).Scan(&budget.ID, &budget.PeriodStart, &budget.PeriodEnd)
 }
 
-func (r *PostgresRepository) AddUsedAmount(ctx context.Context, agentID string, amount float64) error {
+func (r *PostgresRepository) AddUsedAmount(ctx context.Context, tenantID, agentID string, amount float64) error {
 	result, err := r.db.ExecContext(ctx,
-		`UPDATE budgets SET used = used + $1 WHERE agent_id = $2`,
-		amount, agentID,
+		`UPDATE budgets SET used = used + $1 WHERE agent_id = $2 AND tenant_id = $3`,
+		amount, agentID, tenantID,
 	)
 	if err != nil {
 		return err
@@ -97,11 +97,11 @@ func (r *PostgresRepository) AddUsedAmount(ctx context.Context, agentID string, 
 	return nil
 }
 
-func (r *PostgresRepository) GetCostReport(ctx context.Context, agentID string, start, end time.Time) ([]ResourceCost, error) {
+func (r *PostgresRepository) GetCostReport(ctx context.Context, tenantID, agentID string, start, end time.Time) ([]ResourceCost, error) {
 	query := `SELECT resource_type, SUM(cost), COUNT(*)
 		FROM usage_records
-		WHERE recorded_at >= $1 AND recorded_at <= $2`
-	args := []any{start, end}
+		WHERE tenant_id = $1 AND recorded_at >= $2 AND recorded_at <= $3`
+	args := []any{tenantID, start, end}
 
 	if agentID != "" {
 		query += fmt.Sprintf(" AND agent_id = $%d", len(args)+1)

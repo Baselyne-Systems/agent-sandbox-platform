@@ -39,7 +39,7 @@ func (m *mockRepo) CreateTask(_ context.Context, task *models.Task) error {
 	return nil
 }
 
-func (m *mockRepo) GetTask(_ context.Context, id string) (*models.Task, error) {
+func (m *mockRepo) GetTask(_ context.Context, _, id string) (*models.Task, error) {
 	t, ok := m.tasks[id]
 	if !ok {
 		return nil, nil
@@ -54,7 +54,7 @@ func (m *mockRepo) GetTask(_ context.Context, id string) (*models.Task, error) {
 	return &cp, nil
 }
 
-func (m *mockRepo) ListTasks(_ context.Context, agentID string, status models.TaskStatus, afterID string, limit int) ([]models.Task, error) {
+func (m *mockRepo) ListTasks(_ context.Context, _ string, agentID string, status models.TaskStatus, afterID string, limit int) ([]models.Task, error) {
 	var result []models.Task
 	for _, t := range m.tasks {
 		if agentID != "" && t.AgentID != agentID {
@@ -78,7 +78,7 @@ func (m *mockRepo) ListTasks(_ context.Context, agentID string, status models.Ta
 	return result, nil
 }
 
-func (m *mockRepo) UpdateTaskStatus(_ context.Context, id string, status models.TaskStatus) error {
+func (m *mockRepo) UpdateTaskStatus(_ context.Context, _, id string, status models.TaskStatus) error {
 	t, ok := m.tasks[id]
 	if !ok {
 		return ErrTaskNotFound
@@ -92,7 +92,7 @@ func (m *mockRepo) UpdateTaskStatus(_ context.Context, id string, status models.
 	return nil
 }
 
-func (m *mockRepo) SetWorkspaceID(_ context.Context, taskID, workspaceID string) error {
+func (m *mockRepo) SetWorkspaceID(_ context.Context, _, taskID, workspaceID string) error {
 	t, ok := m.tasks[taskID]
 	if !ok {
 		return ErrTaskNotFound
@@ -115,7 +115,7 @@ func copyMap(m map[string]string) map[string]string {
 
 func TestCreateTask_Success(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
-	task, err := svc.CreateTask(context.Background(), "agent-1", "Process invoices", nil, "policy-1", nil, nil, 300, nil, nil)
+	task, err := svc.CreateTask(context.Background(), "tenant-1", "agent-1", "Process invoices", nil, "policy-1", nil, nil, 300, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestCreateTask_WithConfigs(t *testing.T) {
 		Currency:         "USD",
 	}
 
-	task, err := svc.CreateTask(context.Background(), "agent-1", "goal",
+	task, err := svc.CreateTask(context.Background(), "tenant-1", "agent-1", "goal",
 		wsConfig, "policy-1", hiConfig, budgetConfig, 300,
 		map[string]string{"key": "value"}, map[string]string{"env": "test"})
 	if err != nil {
@@ -194,18 +194,18 @@ func TestCreateTask_Validation(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
 	ctx := context.Background()
 
-	if _, err := svc.CreateTask(ctx, "", "goal", nil, "", nil, nil, 0, nil, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateTask(ctx, "tenant-1", "", "goal", nil, "", nil, nil, 0, nil, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty agent_id, got: %v", err)
 	}
-	if _, err := svc.CreateTask(ctx, "agent", "", nil, "", nil, nil, 0, nil, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateTask(ctx, "tenant-1", "agent", "", nil, "", nil, nil, 0, nil, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty goal, got: %v", err)
 	}
 }
 
 func TestGetTask_Found(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
-	created, _ := svc.CreateTask(context.Background(), "a", "g", nil, "", nil, nil, 0, nil, nil)
-	got, err := svc.GetTask(context.Background(), created.ID)
+	created, _ := svc.CreateTask(context.Background(), "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	got, err := svc.GetTask(context.Background(), "tenant-1", created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestGetTask_Found(t *testing.T) {
 
 func TestGetTask_NotFound(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
-	_, err := svc.GetTask(context.Background(), "nonexistent-id")
+	_, err := svc.GetTask(context.Background(), "tenant-1", "nonexistent-id")
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Errorf("expected ErrTaskNotFound, got: %v", err)
 	}
@@ -227,10 +227,10 @@ func TestListTasks_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.CreateTask(ctx, "agent-1", fmt.Sprintf("goal-%d", i), nil, "", nil, nil, 0, nil, nil)
+		svc.CreateTask(ctx, "tenant-1", "agent-1", fmt.Sprintf("goal-%d", i), nil, "", nil, nil, 0, nil, nil)
 	}
 
-	tasks, nextToken, err := svc.ListTasks(ctx, "", "", 3, "")
+	tasks, nextToken, err := svc.ListTasks(ctx, "tenant-1", "", "", 3, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -241,7 +241,7 @@ func TestListTasks_Pagination(t *testing.T) {
 		t.Error("expected a next page token")
 	}
 
-	tasks2, nextToken2, err := svc.ListTasks(ctx, "", "", 3, nextToken)
+	tasks2, nextToken2, err := svc.ListTasks(ctx, "tenant-1", "", "", 3, nextToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,12 +257,12 @@ func TestListTasks_Filters(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
 	ctx := context.Background()
 
-	svc.CreateTask(ctx, "agent-1", "g1", nil, "", nil, nil, 0, nil, nil)
-	svc.CreateTask(ctx, "agent-2", "g2", nil, "", nil, nil, 0, nil, nil)
-	svc.CreateTask(ctx, "agent-1", "g3", nil, "", nil, nil, 0, nil, nil)
+	svc.CreateTask(ctx, "tenant-1", "agent-1", "g1", nil, "", nil, nil, 0, nil, nil)
+	svc.CreateTask(ctx, "tenant-1", "agent-2", "g2", nil, "", nil, nil, 0, nil, nil)
+	svc.CreateTask(ctx, "tenant-1", "agent-1", "g3", nil, "", nil, nil, 0, nil, nil)
 
 	// Filter by agent
-	tasks, _, err := svc.ListTasks(ctx, "agent-1", "", 50, "")
+	tasks, _, err := svc.ListTasks(ctx, "tenant-1", "agent-1", "", 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -276,8 +276,8 @@ func TestUpdateTaskStatus_ValidTransitions(t *testing.T) {
 	ctx := context.Background()
 
 	// pending → running
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	updated, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	updated, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 	if err != nil {
 		t.Fatalf("pending→running: %v", err)
 	}
@@ -286,7 +286,7 @@ func TestUpdateTaskStatus_ValidTransitions(t *testing.T) {
 	}
 
 	// running → waiting_on_human
-	updated, err = svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusWaitingOnHuman, "")
+	updated, err = svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusWaitingOnHuman, "")
 	if err != nil {
 		t.Fatalf("running→waiting_on_human: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestUpdateTaskStatus_ValidTransitions(t *testing.T) {
 	}
 
 	// waiting_on_human → running
-	updated, err = svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	updated, err = svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 	if err != nil {
 		t.Fatalf("waiting_on_human→running: %v", err)
 	}
@@ -304,7 +304,7 @@ func TestUpdateTaskStatus_ValidTransitions(t *testing.T) {
 	}
 
 	// running → completed
-	updated, err = svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusCompleted, "")
+	updated, err = svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusCompleted, "")
 	if err != nil {
 		t.Fatalf("running→completed: %v", err)
 	}
@@ -321,17 +321,17 @@ func TestUpdateTaskStatus_InvalidTransitions(t *testing.T) {
 	ctx := context.Background()
 
 	// pending → completed (not allowed)
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	_, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusCompleted, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	_, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusCompleted, "")
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition for pending→completed, got: %v", err)
 	}
 
 	// Move to completed, then try to transition again
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusCompleted, "")
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusCompleted, "")
 
-	_, err = svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	_, err = svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition for completed→running, got: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestUpdateTaskStatus_InvalidTransitions(t *testing.T) {
 
 func TestUpdateTaskStatus_NotFound(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
-	_, err := svc.UpdateTaskStatus(context.Background(), "nonexistent", models.TaskStatusRunning, "")
+	_, err := svc.UpdateTaskStatus(context.Background(), "tenant-1", "nonexistent", models.TaskStatusRunning, "")
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Errorf("expected ErrTaskNotFound, got: %v", err)
 	}
@@ -350,22 +350,22 @@ func TestCancelTask_Success(t *testing.T) {
 	ctx := context.Background()
 
 	// Cancel from pending
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	if err := svc.CancelTask(ctx, task.ID, "no longer needed"); err != nil {
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	if err := svc.CancelTask(ctx, "tenant-1", task.ID, "no longer needed"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got, _ := svc.GetTask(ctx, task.ID)
+	got, _ := svc.GetTask(ctx, "tenant-1", task.ID)
 	if got.Status != models.TaskStatusCancelled {
 		t.Errorf("expected cancelled, got %q", got.Status)
 	}
 
 	// Cancel from running
-	task2, _ := svc.CreateTask(ctx, "a", "g2", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task2.ID, models.TaskStatusRunning, "")
-	if err := svc.CancelTask(ctx, task2.ID, "timeout"); err != nil {
+	task2, _ := svc.CreateTask(ctx, "tenant-1", "a", "g2", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task2.ID, models.TaskStatusRunning, "")
+	if err := svc.CancelTask(ctx, "tenant-1", task2.ID, "timeout"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got2, _ := svc.GetTask(ctx, task2.ID)
+	got2, _ := svc.GetTask(ctx, "tenant-1", task2.ID)
 	if got2.Status != models.TaskStatusCancelled {
 		t.Errorf("expected cancelled, got %q", got2.Status)
 	}
@@ -375,11 +375,11 @@ func TestCancelTask_InvalidState(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusCompleted, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusCompleted, "")
 
-	err := svc.CancelTask(ctx, task.ID, "too late")
+	err := svc.CancelTask(ctx, "tenant-1", task.ID, "too late")
 	if !errors.Is(err, ErrInvalidTransition) {
 		t.Errorf("expected ErrInvalidTransition for cancelling completed task, got: %v", err)
 	}
@@ -387,7 +387,7 @@ func TestCancelTask_InvalidState(t *testing.T) {
 
 func TestCancelTask_NotFound(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
-	err := svc.CancelTask(context.Background(), "no-such-id", "")
+	err := svc.CancelTask(context.Background(), "tenant-1", "no-such-id", "")
 	if !errors.Is(err, ErrTaskNotFound) {
 		t.Errorf("expected ErrTaskNotFound, got: %v", err)
 	}
@@ -425,8 +425,8 @@ func TestPendingToRunning_ProvisionWorkspace(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	updated, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	updated, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -446,8 +446,8 @@ func TestPendingToRunning_ProvisionFailure(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	updated, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	updated, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -464,10 +464,10 @@ func TestRunningToCompleted_TerminateWorkspace(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 
-	updated, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusCompleted, "done")
+	updated, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusCompleted, "done")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,10 +487,10 @@ func TestRunningToFailed_TerminateWorkspace(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 
-	_, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusFailed, "error occurred")
+	_, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusFailed, "error occurred")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -507,14 +507,14 @@ func TestWaitingToRunning_NoProvision(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusWaitingOnHuman, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusWaitingOnHuman, "")
 
 	// Reset counters after initial provision.
 	prov.provisionCalls = 0
 
-	_, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "human responded")
+	_, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "human responded")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -527,8 +527,8 @@ func TestNilProvisioner_NoOrchestration(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	updated, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	updated, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -545,10 +545,10 @@ func TestTerminateError_StillTransitions(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 
-	updated, err := svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusCompleted, "")
+	updated, err := svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusCompleted, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -562,13 +562,13 @@ func TestCancelRunning_TerminatesWorkspace(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 
 	// Reset after provision.
 	prov.terminateCalls = 0
 
-	err := svc.CancelTask(ctx, task.ID, "user cancelled")
+	err := svc.CancelTask(ctx, "tenant-1", task.ID, "user cancelled")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -585,8 +585,8 @@ func TestCancelPending_NoTerminate(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo(), Provisioner: prov})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	err := svc.CancelTask(ctx, task.ID, "changed mind")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	err := svc.CancelTask(ctx, "tenant-1", task.ID, "changed mind")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -599,14 +599,14 @@ func TestCancelNilProvisioner_StillCancels(t *testing.T) {
 	svc := NewService(ServiceConfig{Repo: newMockRepo()})
 	ctx := context.Background()
 
-	task, _ := svc.CreateTask(ctx, "a", "g", nil, "", nil, nil, 0, nil, nil)
-	svc.UpdateTaskStatus(ctx, task.ID, models.TaskStatusRunning, "")
+	task, _ := svc.CreateTask(ctx, "tenant-1", "a", "g", nil, "", nil, nil, 0, nil, nil)
+	svc.UpdateTaskStatus(ctx, "tenant-1", task.ID, models.TaskStatusRunning, "")
 
-	err := svc.CancelTask(ctx, task.ID, "no provisioner")
+	err := svc.CancelTask(ctx, "tenant-1", task.ID, "no provisioner")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	got, _ := svc.GetTask(ctx, task.ID)
+	got, _ := svc.GetTask(ctx, "tenant-1", task.ID)
 	if got.Status != models.TaskStatusCancelled {
 		t.Errorf("expected cancelled, got %q", got.Status)
 	}

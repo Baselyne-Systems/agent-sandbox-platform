@@ -14,6 +14,8 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/testutil"
 )
 
+const integTenant = "integ-tenant"
+
 var testDB *testutil.TestDB
 
 func TestMain(m *testing.M) {
@@ -34,6 +36,7 @@ func TestInteg_CreateAndGetAgent_JSONBRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	agent := &models.Agent{
+		TenantID:    integTenant,
 		Name:        "test-agent",
 		Description: "integration test agent",
 		OwnerID:     "owner-1",
@@ -54,7 +57,7 @@ func TestInteg_CreateAndGetAgent_JSONBRoundTrip(t *testing.T) {
 		t.Fatal("expected server-generated updated_at")
 	}
 
-	got, err := repo.GetAgent(ctx, agent.ID)
+	got, err := repo.GetAgent(ctx, integTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -76,7 +79,7 @@ func TestInteg_GetAgent_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	got, err := repo.GetAgent(ctx, "00000000-0000-0000-0000-000000000000")
+	got, err := repo.GetAgent(ctx, integTenant, "00000000-0000-0000-0000-000000000000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -92,10 +95,11 @@ func TestInteg_ListAgents_Pagination(t *testing.T) {
 	var ids []string
 	for i := 0; i < 5; i++ {
 		a := &models.Agent{
-			Name:    "agent-" + string(rune('A'+i)),
-			OwnerID: "owner-1",
-			Status:  models.AgentStatusActive,
-			Labels:  map[string]string{},
+			TenantID: integTenant,
+			Name:     "agent-" + string(rune('A'+i)),
+			OwnerID:  "owner-1",
+			Status:   models.AgentStatusActive,
+			Labels:   map[string]string{},
 		}
 		if err := repo.CreateAgent(ctx, a); err != nil {
 			t.Fatalf("CreateAgent[%d]: %v", i, err)
@@ -105,7 +109,7 @@ func TestInteg_ListAgents_Pagination(t *testing.T) {
 	sort.Strings(ids) // UUIDs sorted ascending = DB order
 
 	// Page 1: first 2
-	page1, err := repo.ListAgents(ctx, "", "", "", 2)
+	page1, err := repo.ListAgents(ctx, integTenant, "", "", "", 2)
 	if err != nil {
 		t.Fatalf("ListAgents page1: %v", err)
 	}
@@ -117,7 +121,7 @@ func TestInteg_ListAgents_Pagination(t *testing.T) {
 	}
 
 	// Page 2: next 2
-	page2, err := repo.ListAgents(ctx, "", "", page1[1].ID, 2)
+	page2, err := repo.ListAgents(ctx, integTenant, "", "", page1[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListAgents page2: %v", err)
 	}
@@ -129,7 +133,7 @@ func TestInteg_ListAgents_Pagination(t *testing.T) {
 	}
 
 	// Page 3: last 1
-	page3, err := repo.ListAgents(ctx, "", "", page2[1].ID, 2)
+	page3, err := repo.ListAgents(ctx, integTenant, "", "", page2[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListAgents page3: %v", err)
 	}
@@ -146,9 +150,9 @@ func TestInteg_ListAgents_Filters(t *testing.T) {
 	ctx := context.Background()
 
 	agents := []*models.Agent{
-		{Name: "a1", OwnerID: "owner-A", Status: models.AgentStatusActive, Labels: map[string]string{}},
-		{Name: "a2", OwnerID: "owner-A", Status: models.AgentStatusInactive, Labels: map[string]string{}},
-		{Name: "a3", OwnerID: "owner-B", Status: models.AgentStatusActive, Labels: map[string]string{}},
+		{TenantID: integTenant, Name: "a1", OwnerID: "owner-A", Status: models.AgentStatusActive, Labels: map[string]string{}},
+		{TenantID: integTenant, Name: "a2", OwnerID: "owner-A", Status: models.AgentStatusInactive, Labels: map[string]string{}},
+		{TenantID: integTenant, Name: "a3", OwnerID: "owner-B", Status: models.AgentStatusActive, Labels: map[string]string{}},
 	}
 	for _, a := range agents {
 		if err := repo.CreateAgent(ctx, a); err != nil {
@@ -157,7 +161,7 @@ func TestInteg_ListAgents_Filters(t *testing.T) {
 	}
 
 	// Filter by owner
-	byOwner, err := repo.ListAgents(ctx, "owner-A", "", "", 10)
+	byOwner, err := repo.ListAgents(ctx, integTenant, "owner-A", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListAgents by owner: %v", err)
 	}
@@ -166,7 +170,7 @@ func TestInteg_ListAgents_Filters(t *testing.T) {
 	}
 
 	// Filter by status
-	byStatus, err := repo.ListAgents(ctx, "", models.AgentStatusActive, "", 10)
+	byStatus, err := repo.ListAgents(ctx, integTenant, "", models.AgentStatusActive, "", 10)
 	if err != nil {
 		t.Fatalf("ListAgents by status: %v", err)
 	}
@@ -175,7 +179,7 @@ func TestInteg_ListAgents_Filters(t *testing.T) {
 	}
 
 	// Combined
-	combined, err := repo.ListAgents(ctx, "owner-A", models.AgentStatusActive, "", 10)
+	combined, err := repo.ListAgents(ctx, integTenant, "owner-A", models.AgentStatusActive, "", 10)
 	if err != nil {
 		t.Fatalf("ListAgents combined: %v", err)
 	}
@@ -192,10 +196,11 @@ func TestInteg_DeactivateAgent_Transaction(t *testing.T) {
 	ctx := context.Background()
 
 	agent := &models.Agent{
-		Name:    "deactivate-me",
-		OwnerID: "owner-1",
-		Status:  models.AgentStatusActive,
-		Labels:  map[string]string{},
+		TenantID: integTenant,
+		Name:     "deactivate-me",
+		OwnerID:  "owner-1",
+		Status:   models.AgentStatusActive,
+		Labels:   map[string]string{},
 	}
 	if err := repo.CreateAgent(ctx, agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
@@ -204,6 +209,7 @@ func TestInteg_DeactivateAgent_Transaction(t *testing.T) {
 	// Create two credentials
 	for i := 0; i < 2; i++ {
 		cred := &models.ScopedCredential{
+			TenantID:  integTenant,
 			AgentID:   agent.ID,
 			Scopes:    []string{"read"},
 			TokenHash: "hash-" + string(rune('0'+i)),
@@ -214,11 +220,11 @@ func TestInteg_DeactivateAgent_Transaction(t *testing.T) {
 		}
 	}
 
-	if err := repo.DeactivateAgent(ctx, agent.ID); err != nil {
+	if err := repo.DeactivateAgent(ctx, integTenant, agent.ID); err != nil {
 		t.Fatalf("DeactivateAgent: %v", err)
 	}
 
-	got, err := repo.GetAgent(ctx, agent.ID)
+	got, err := repo.GetAgent(ctx, integTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
@@ -229,7 +235,7 @@ func TestInteg_DeactivateAgent_Transaction(t *testing.T) {
 	// Verify all credentials are revoked
 	var revokedCount int
 	err = testDB.DB.QueryRow(
-		`SELECT COUNT(*) FROM scoped_credentials WHERE agent_id = $1 AND revoked = true`, agent.ID,
+		`SELECT COUNT(*) FROM scoped_credentials WHERE agent_id = $1 AND tenant_id = $2 AND revoked = true`, agent.ID, integTenant,
 	).Scan(&revokedCount)
 	if err != nil {
 		t.Fatalf("count revoked: %v", err)
@@ -243,7 +249,7 @@ func TestInteg_DeactivateAgent_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	err := repo.DeactivateAgent(ctx, "00000000-0000-0000-0000-000000000000")
+	err := repo.DeactivateAgent(ctx, integTenant, "00000000-0000-0000-0000-000000000000")
 	if err != ErrAgentNotFound {
 		t.Errorf("error = %v, want ErrAgentNotFound", err)
 	}
@@ -254,21 +260,22 @@ func TestInteg_DeactivateAgent_AlreadyInactive(t *testing.T) {
 	ctx := context.Background()
 
 	agent := &models.Agent{
-		Name:    "already-inactive",
-		OwnerID: "owner-1",
-		Status:  models.AgentStatusActive,
-		Labels:  map[string]string{},
+		TenantID: integTenant,
+		Name:     "already-inactive",
+		OwnerID:  "owner-1",
+		Status:   models.AgentStatusActive,
+		Labels:   map[string]string{},
 	}
 	if err := repo.CreateAgent(ctx, agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
-	if err := repo.DeactivateAgent(ctx, agent.ID); err != nil {
+	if err := repo.DeactivateAgent(ctx, integTenant, agent.ID); err != nil {
 		t.Fatalf("first DeactivateAgent: %v", err)
 	}
 
 	// Second deactivation should be idempotent
-	if err := repo.DeactivateAgent(ctx, agent.ID); err != nil {
+	if err := repo.DeactivateAgent(ctx, integTenant, agent.ID); err != nil {
 		t.Errorf("second DeactivateAgent: unexpected error: %v", err)
 	}
 }
@@ -278,16 +285,18 @@ func TestInteg_RevokeCredential_RowsAffected(t *testing.T) {
 	ctx := context.Background()
 
 	agent := &models.Agent{
-		Name:    "cred-agent",
-		OwnerID: "owner-1",
-		Status:  models.AgentStatusActive,
-		Labels:  map[string]string{},
+		TenantID: integTenant,
+		Name:     "cred-agent",
+		OwnerID:  "owner-1",
+		Status:   models.AgentStatusActive,
+		Labels:   map[string]string{},
 	}
 	if err := repo.CreateAgent(ctx, agent); err != nil {
 		t.Fatalf("CreateAgent: %v", err)
 	}
 
 	cred := &models.ScopedCredential{
+		TenantID:  integTenant,
 		AgentID:   agent.ID,
 		Scopes:    []string{"write"},
 		TokenHash: "revoke-me-hash",
@@ -297,12 +306,12 @@ func TestInteg_RevokeCredential_RowsAffected(t *testing.T) {
 		t.Fatalf("CreateCredential: %v", err)
 	}
 
-	if err := repo.RevokeCredential(ctx, cred.ID); err != nil {
+	if err := repo.RevokeCredential(ctx, integTenant, cred.ID); err != nil {
 		t.Fatalf("RevokeCredential: %v", err)
 	}
 
 	// Re-revoke should return ErrCredentialNotFound
-	err := repo.RevokeCredential(ctx, cred.ID)
+	err := repo.RevokeCredential(ctx, integTenant, cred.ID)
 	if err != ErrCredentialNotFound {
 		t.Errorf("error = %v, want ErrCredentialNotFound", err)
 	}

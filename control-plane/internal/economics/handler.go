@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/economics/v1"
 	"google.golang.org/grpc/codes"
@@ -22,11 +23,13 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) RecordUsage(ctx context.Context, req *pb.RecordUsageRequest) (*pb.RecordUsageResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	r := req.GetRecord()
 	if r == nil {
 		return nil, status.Error(codes.InvalidArgument, "record is required")
 	}
 	record, err := h.svc.RecordUsage(ctx,
+		tenantID,
 		r.GetAgentId(),
 		r.GetWorkspaceId(),
 		r.GetResourceType(),
@@ -41,7 +44,8 @@ func (h *Handler) RecordUsage(ctx context.Context, req *pb.RecordUsageRequest) (
 }
 
 func (h *Handler) GetBudget(ctx context.Context, req *pb.GetBudgetRequest) (*pb.GetBudgetResponse, error) {
-	budget, err := h.svc.GetBudget(ctx, req.GetAgentId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	budget, err := h.svc.GetBudget(ctx, tenantID, req.GetAgentId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -49,8 +53,9 @@ func (h *Handler) GetBudget(ctx context.Context, req *pb.GetBudgetRequest) (*pb.
 }
 
 func (h *Handler) SetBudget(ctx context.Context, req *pb.SetBudgetRequest) (*pb.SetBudgetResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	onExceeded := onExceededProtoToString(req.GetOnExceeded())
-	budget, err := h.svc.SetBudget(ctx, req.GetAgentId(), req.GetLimit(), req.GetCurrency(), onExceeded, req.GetWarningThreshold())
+	budget, err := h.svc.SetBudget(ctx, tenantID, req.GetAgentId(), req.GetLimit(), req.GetCurrency(), onExceeded, req.GetWarningThreshold())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -58,7 +63,8 @@ func (h *Handler) SetBudget(ctx context.Context, req *pb.SetBudgetRequest) (*pb.
 }
 
 func (h *Handler) CheckBudget(ctx context.Context, req *pb.CheckBudgetRequest) (*pb.CheckBudgetResponse, error) {
-	result, err := h.svc.CheckBudget(ctx, req.GetAgentId(), req.GetEstimatedCost())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	result, err := h.svc.CheckBudget(ctx, tenantID, req.GetAgentId(), req.GetEstimatedCost())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -71,10 +77,11 @@ func (h *Handler) CheckBudget(ctx context.Context, req *pb.CheckBudgetRequest) (
 }
 
 func (h *Handler) GetCostReport(ctx context.Context, req *pb.GetCostReportRequest) (*pb.GetCostReportResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	start := req.GetStartTime().AsTime()
 	end := req.GetEndTime().AsTime()
 
-	report, err := h.svc.GetCostReport(ctx, req.GetAgentId(), start, end)
+	report, err := h.svc.GetCostReport(ctx, tenantID, req.GetAgentId(), start, end)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -100,6 +107,7 @@ func (h *Handler) GetCostReport(ctx context.Context, req *pb.GetCostReportReques
 func budgetToProto(b *models.Budget) *pb.Budget {
 	return &pb.Budget{
 		BudgetId:         b.ID,
+		TenantId:         b.TenantID,
 		AgentId:          b.AgentID,
 		Limit:            b.Limit,
 		Used:             b.Used,

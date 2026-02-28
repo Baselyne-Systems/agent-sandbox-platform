@@ -49,7 +49,7 @@ func (s *Service) SetDeliverer(d Deliverer) {
 	s.deliverer = d
 }
 
-func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, question string, options []string, requestContext string, timeoutSeconds int64, requestType models.HumanRequestType, urgency models.HumanRequestUrgency, taskID string) (*models.HumanRequest, error) {
+func (s *Service) CreateRequest(ctx context.Context, tenantID, workspaceID, agentID, question string, options []string, requestContext string, timeoutSeconds int64, requestType models.HumanRequestType, urgency models.HumanRequestUrgency, taskID string) (*models.HumanRequest, error) {
 	if workspaceID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -74,6 +74,7 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, quest
 
 	expiresAt := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
 	req := &models.HumanRequest{
+		TenantID:    tenantID,
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		Question:    question,
@@ -90,20 +91,20 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, quest
 	}
 
 	// Best-effort notification delivery.
-	s.notifyChannels(ctx, req)
+	s.notifyChannels(ctx, tenantID, req)
 
 	// Fire-and-forget: log to Activity Store.
-	s.logHISEvent(ctx, req.WorkspaceID, req.AgentID, req.TaskID, "his.create_request",
+	s.logHISEvent(ctx, tenantID, req.WorkspaceID, req.AgentID, req.TaskID, "his.create_request",
 		map[string]string{"request_id": req.ID, "type": string(req.Type), "urgency": string(req.Urgency)}, nil)
 
 	return req, nil
 }
 
-func (s *Service) GetRequest(ctx context.Context, id string) (*models.HumanRequest, error) {
+func (s *Service) GetRequest(ctx context.Context, tenantID, id string) (*models.HumanRequest, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	req, err := s.repo.GetRequest(ctx, id)
+	req, err := s.repo.GetRequest(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +120,7 @@ func (s *Service) GetRequest(ctx context.Context, id string) (*models.HumanReque
 	return req, nil
 }
 
-func (s *Service) RespondToRequest(ctx context.Context, id, response, responderID string) error {
+func (s *Service) RespondToRequest(ctx context.Context, tenantID, id, response, responderID string) error {
 	if id == "" {
 		return ErrInvalidInput
 	}
@@ -131,7 +132,7 @@ func (s *Service) RespondToRequest(ctx context.Context, id, response, responderI
 	}
 
 	// Fetch the request first so we have workspace/agent context for the audit log.
-	req, err := s.repo.GetRequest(ctx, id)
+	req, err := s.repo.GetRequest(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
@@ -139,19 +140,19 @@ func (s *Service) RespondToRequest(ctx context.Context, id, response, responderI
 		return ErrRequestNotPending
 	}
 
-	if err := s.repo.RespondToRequest(ctx, id, response, responderID); err != nil {
+	if err := s.repo.RespondToRequest(ctx, tenantID, id, response, responderID); err != nil {
 		return err
 	}
 
 	// Fire-and-forget: log to Activity Store.
-	s.logHISEvent(ctx, req.WorkspaceID, req.AgentID, req.TaskID, "his.respond_to_request",
+	s.logHISEvent(ctx, tenantID, req.WorkspaceID, req.AgentID, req.TaskID, "his.respond_to_request",
 		map[string]string{"request_id": id, "responder_id": responderID},
 		map[string]string{"response": response})
 
 	return nil
 }
 
-func (s *Service) ListRequests(ctx context.Context, workspaceID string, status models.HumanRequestStatus, pageSize int, pageToken string) ([]models.HumanRequest, string, error) {
+func (s *Service) ListRequests(ctx context.Context, tenantID, workspaceID string, status models.HumanRequestStatus, pageSize int, pageToken string) ([]models.HumanRequest, string, error) {
 	if pageSize <= 0 {
 		pageSize = defaultPageSize
 	}
@@ -164,7 +165,7 @@ func (s *Service) ListRequests(ctx context.Context, workspaceID string, status m
 		return nil, "", ErrInvalidInput
 	}
 
-	requests, err := s.repo.ListRequests(ctx, workspaceID, status, afterID, pageSize+1)
+	requests, err := s.repo.ListRequests(ctx, tenantID, workspaceID, status, afterID, pageSize+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -182,7 +183,7 @@ var validChannelTypes = map[string]bool{"slack": true, "email": true, "teams": t
 var validTimeoutActions = map[string]bool{"escalate": true, "continue": true, "halt": true}
 var validScopes = map[string]bool{"global": true, "agent": true, "workspace": true}
 
-func (s *Service) ConfigureDeliveryChannel(ctx context.Context, userID, channelType, endpoint string) (*models.DeliveryChannelConfig, error) {
+func (s *Service) ConfigureDeliveryChannel(ctx context.Context, tenantID, userID, channelType, endpoint string) (*models.DeliveryChannelConfig, error) {
 	if userID == "" || channelType == "" || endpoint == "" {
 		return nil, ErrInvalidInput
 	}
@@ -190,6 +191,7 @@ func (s *Service) ConfigureDeliveryChannel(ctx context.Context, userID, channelT
 		return nil, ErrInvalidInput
 	}
 	cfg := &models.DeliveryChannelConfig{
+		TenantID:    tenantID,
 		UserID:      userID,
 		ChannelType: channelType,
 		Endpoint:    endpoint,
@@ -201,11 +203,11 @@ func (s *Service) ConfigureDeliveryChannel(ctx context.Context, userID, channelT
 	return cfg, nil
 }
 
-func (s *Service) GetDeliveryChannel(ctx context.Context, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+func (s *Service) GetDeliveryChannel(ctx context.Context, tenantID, userID, channelType string) (*models.DeliveryChannelConfig, error) {
 	if userID == "" || channelType == "" {
 		return nil, ErrInvalidInput
 	}
-	cfg, err := s.repo.GetDeliveryChannel(ctx, userID, channelType)
+	cfg, err := s.repo.GetDeliveryChannel(ctx, tenantID, userID, channelType)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +217,7 @@ func (s *Service) GetDeliveryChannel(ctx context.Context, userID, channelType st
 	return cfg, nil
 }
 
-func (s *Service) SetTimeoutPolicy(ctx context.Context, scope, scopeID string, timeoutSecs int64, action string, escalationTargets []string) (*models.TimeoutPolicy, error) {
+func (s *Service) SetTimeoutPolicy(ctx context.Context, tenantID, scope, scopeID string, timeoutSecs int64, action string, escalationTargets []string) (*models.TimeoutPolicy, error) {
 	if scope == "" || action == "" {
 		return nil, ErrInvalidInput
 	}
@@ -235,6 +237,7 @@ func (s *Service) SetTimeoutPolicy(ctx context.Context, scope, scopeID string, t
 		escalationTargets = []string{}
 	}
 	policy := &models.TimeoutPolicy{
+		TenantID:          tenantID,
 		Scope:             scope,
 		ScopeID:           scopeID,
 		TimeoutSecs:       timeoutSecs,
@@ -247,11 +250,11 @@ func (s *Service) SetTimeoutPolicy(ctx context.Context, scope, scopeID string, t
 	return policy, nil
 }
 
-func (s *Service) GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error) {
+func (s *Service) GetTimeoutPolicy(ctx context.Context, tenantID, scope, scopeID string) (*models.TimeoutPolicy, error) {
 	if scope == "" {
 		return nil, ErrInvalidInput
 	}
-	policy, err := s.repo.GetTimeoutPolicy(ctx, scope, scopeID)
+	policy, err := s.repo.GetTimeoutPolicy(ctx, tenantID, scope, scopeID)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +266,7 @@ func (s *Service) GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (
 
 // logHISEvent records a human interaction event to the Activity Store.
 // It is best-effort: errors are silently ignored.
-func (s *Service) logHISEvent(ctx context.Context, workspaceID, agentID, taskID, toolName string, params, result map[string]string) {
+func (s *Service) logHISEvent(ctx context.Context, tenantID, workspaceID, agentID, taskID, toolName string, params, result map[string]string) {
 	if s.activity == nil {
 		return
 	}
@@ -273,6 +276,7 @@ func (s *Service) logHISEvent(ctx context.Context, workspaceID, agentID, taskID,
 		resultJSON, _ = json.Marshal(result)
 	}
 	record := &models.ActionRecord{
+		TenantID:    tenantID,
 		WorkspaceID: workspaceID,
 		AgentID:     agentID,
 		TaskID:      taskID,

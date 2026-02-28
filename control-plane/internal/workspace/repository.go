@@ -13,13 +13,13 @@ import (
 // Repository defines data access for the workspace service.
 type Repository interface {
 	CreateWorkspace(ctx context.Context, ws *models.Workspace) error
-	GetWorkspace(ctx context.Context, id string) (*models.Workspace, error)
-	ListWorkspaces(ctx context.Context, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error)
-	UpdateWorkspaceStatus(ctx context.Context, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error
-	TerminateWorkspace(ctx context.Context, id string, reason string) error
-	SetSnapshotID(ctx context.Context, workspaceID, snapshotID string) error
+	GetWorkspace(ctx context.Context, tenantID, id string) (*models.Workspace, error)
+	ListWorkspaces(ctx context.Context, tenantID string, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error)
+	UpdateWorkspaceStatus(ctx context.Context, tenantID, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error
+	TerminateWorkspace(ctx context.Context, tenantID, id string, reason string) error
+	SetSnapshotID(ctx context.Context, tenantID, workspaceID, snapshotID string) error
 	CreateSnapshot(ctx context.Context, snapshot *models.WorkspaceSnapshot) error
-	GetSnapshot(ctx context.Context, snapshotID string) (*models.WorkspaceSnapshot, error)
+	GetSnapshot(ctx context.Context, tenantID, snapshotID string) (*models.WorkspaceSnapshot, error)
 }
 
 // PostgresRepository implements Repository using PostgreSQL.
@@ -45,11 +45,11 @@ func (r *PostgresRepository) CreateWorkspace(ctx context.Context, ws *models.Wor
 		return fmt.Errorf("marshal egress_allowlist: %w", err)
 	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO workspaces (agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
+		`INSERT INTO workspaces (tenant_id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 		   max_duration_secs, allowed_tools, guardrail_policy_id, env_vars, host_id, host_address, sandbox_id, expires_at, container_image, egress_allowlist, isolation_tier)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 		 RETURNING id, created_at, updated_at`,
-		ws.AgentID, ws.TaskID, string(ws.Status),
+		ws.TenantID, ws.AgentID, ws.TaskID, string(ws.Status),
 		ws.Spec.MemoryMb, ws.Spec.CpuMillicores, ws.Spec.DiskMb,
 		ws.Spec.MaxDurationSecs, allowedToolsJSON, ws.Spec.GuardrailPolicyID, envVarsJSON,
 		ws.HostID, ws.HostAddress, ws.SandboxID, ws.ExpiresAt, ws.Spec.ContainerImage,
@@ -57,7 +57,7 @@ func (r *PostgresRepository) CreateWorkspace(ctx context.Context, ws *models.Wor
 	).Scan(&ws.ID, &ws.CreatedAt, &ws.UpdatedAt)
 }
 
-func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*models.Workspace, error) {
+func (r *PostgresRepository) GetWorkspace(ctx context.Context, tenantID, id string) (*models.Workspace, error) {
 	var ws models.Workspace
 	var allowedToolsJSON, envVarsJSON []byte
 	var expiresAt sql.NullTime
@@ -65,11 +65,11 @@ func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*mode
 	var egressAllowlistJSON []byte
 	var isolationTier string
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
+		`SELECT id, tenant_id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 			max_duration_secs, allowed_tools, guardrail_policy_id, env_vars,
 			host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist, isolation_tier
-		 FROM workspaces WHERE id = $1`, id,
-	).Scan(&ws.ID, &ws.AgentID, &ws.TaskID, &ws.Status,
+		 FROM workspaces WHERE id = $1 AND tenant_id = $2`, id, tenantID,
+	).Scan(&ws.ID, &ws.TenantID, &ws.AgentID, &ws.TaskID, &ws.Status,
 		&ws.Spec.MemoryMb, &ws.Spec.CpuMillicores, &ws.Spec.DiskMb,
 		&ws.Spec.MaxDurationSecs, &allowedToolsJSON, &ws.Spec.GuardrailPolicyID, &envVarsJSON,
 		&ws.HostID, &ws.HostAddress, &ws.SandboxID, &ws.CreatedAt, &ws.UpdatedAt, &expiresAt,
@@ -98,13 +98,13 @@ func (r *PostgresRepository) GetWorkspace(ctx context.Context, id string) (*mode
 	return &ws, nil
 }
 
-func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
-	query := `SELECT id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
+func (r *PostgresRepository) ListWorkspaces(ctx context.Context, tenantID string, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
+	query := `SELECT id, tenant_id, agent_id, task_id, status, memory_mb, cpu_millicores, disk_mb,
 		max_duration_secs, allowed_tools, guardrail_policy_id, env_vars,
 		host_id, host_address, sandbox_id, created_at, updated_at, expires_at, container_image, egress_allowlist, isolation_tier
-		FROM workspaces WHERE 1=1`
-	args := []any{}
-	argIdx := 1
+		FROM workspaces WHERE tenant_id = $1`
+	args := []any{tenantID}
+	argIdx := 2
 
 	if agentID != "" {
 		query += fmt.Sprintf(" AND agent_id = $%d", argIdx)
@@ -138,7 +138,7 @@ func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string,
 		var expiresAt sql.NullTime
 		var isolationTier string
 
-		if err := rows.Scan(&ws.ID, &ws.AgentID, &ws.TaskID, &ws.Status,
+		if err := rows.Scan(&ws.ID, &ws.TenantID, &ws.AgentID, &ws.TaskID, &ws.Status,
 			&ws.Spec.MemoryMb, &ws.Spec.CpuMillicores, &ws.Spec.DiskMb,
 			&ws.Spec.MaxDurationSecs, &allowedToolsJSON, &ws.Spec.GuardrailPolicyID, &envVarsJSON,
 			&ws.HostID, &ws.HostAddress, &ws.SandboxID, &ws.CreatedAt, &ws.UpdatedAt, &expiresAt,
@@ -164,11 +164,11 @@ func (r *PostgresRepository) ListWorkspaces(ctx context.Context, agentID string,
 	return workspaces, rows.Err()
 }
 
-func (r *PostgresRepository) UpdateWorkspaceStatus(ctx context.Context, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error {
+func (r *PostgresRepository) UpdateWorkspaceStatus(ctx context.Context, tenantID, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE workspaces SET status = $1, host_id = $2, host_address = $3, sandbox_id = $4, updated_at = $5
-		 WHERE id = $6`,
-		string(status), hostID, hostAddress, sandboxID, time.Now(), id)
+		 WHERE id = $6 AND tenant_id = $7`,
+		string(status), hostID, hostAddress, sandboxID, time.Now(), id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -182,10 +182,10 @@ func (r *PostgresRepository) UpdateWorkspaceStatus(ctx context.Context, id strin
 	return nil
 }
 
-func (r *PostgresRepository) SetSnapshotID(ctx context.Context, workspaceID, snapshotID string) error {
+func (r *PostgresRepository) SetSnapshotID(ctx context.Context, tenantID, workspaceID, snapshotID string) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE workspaces SET snapshot_id = $1, updated_at = $2 WHERE id = $3`,
-		snapshotID, time.Now(), workspaceID)
+		`UPDATE workspaces SET snapshot_id = $1, updated_at = $2 WHERE id = $3 AND tenant_id = $4`,
+		snapshotID, time.Now(), workspaceID, tenantID)
 	if err != nil {
 		return err
 	}
@@ -201,19 +201,19 @@ func (r *PostgresRepository) SetSnapshotID(ctx context.Context, workspaceID, sna
 
 func (r *PostgresRepository) CreateSnapshot(ctx context.Context, snapshot *models.WorkspaceSnapshot) error {
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO workspace_snapshots (workspace_id, agent_id, task_id, size_bytes)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO workspace_snapshots (tenant_id, workspace_id, agent_id, task_id, size_bytes)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, created_at`,
-		snapshot.WorkspaceID, snapshot.AgentID, snapshot.TaskID, snapshot.SizeBytes,
+		snapshot.TenantID, snapshot.WorkspaceID, snapshot.AgentID, snapshot.TaskID, snapshot.SizeBytes,
 	).Scan(&snapshot.ID, &snapshot.CreatedAt)
 }
 
-func (r *PostgresRepository) GetSnapshot(ctx context.Context, snapshotID string) (*models.WorkspaceSnapshot, error) {
+func (r *PostgresRepository) GetSnapshot(ctx context.Context, tenantID, snapshotID string) (*models.WorkspaceSnapshot, error) {
 	var s models.WorkspaceSnapshot
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, workspace_id, agent_id, task_id, size_bytes, created_at
-		 FROM workspace_snapshots WHERE id = $1`, snapshotID,
-	).Scan(&s.ID, &s.WorkspaceID, &s.AgentID, &s.TaskID, &s.SizeBytes, &s.CreatedAt)
+		`SELECT id, tenant_id, workspace_id, agent_id, task_id, size_bytes, created_at
+		 FROM workspace_snapshots WHERE id = $1 AND tenant_id = $2`, snapshotID, tenantID,
+	).Scan(&s.ID, &s.TenantID, &s.WorkspaceID, &s.AgentID, &s.TaskID, &s.SizeBytes, &s.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -223,11 +223,11 @@ func (r *PostgresRepository) GetSnapshot(ctx context.Context, snapshotID string)
 	return &s, nil
 }
 
-func (r *PostgresRepository) TerminateWorkspace(ctx context.Context, id string, reason string) error {
+func (r *PostgresRepository) TerminateWorkspace(ctx context.Context, tenantID, id string, reason string) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE workspaces SET status = 'terminated', updated_at = $1
-		 WHERE id = $2 AND status NOT IN ('terminated', 'failed')`,
-		time.Now(), id)
+		 WHERE id = $2 AND tenant_id = $3 AND status NOT IN ('terminated', 'failed')`,
+		time.Now(), id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -238,7 +238,7 @@ func (r *PostgresRepository) TerminateWorkspace(ctx context.Context, id string, 
 	if n == 0 {
 		// Check if the workspace exists at all.
 		var exists bool
-		err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1)`, id).Scan(&exists)
+		err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM workspaces WHERE id = $1 AND tenant_id = $2)`, id, tenantID).Scan(&exists)
 		if err != nil {
 			return err
 		}

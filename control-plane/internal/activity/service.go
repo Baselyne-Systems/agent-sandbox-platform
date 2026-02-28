@@ -62,11 +62,11 @@ func (s *Service) RecordAction(ctx context.Context, record *models.ActionRecord)
 	return record.ID, nil
 }
 
-func (s *Service) GetAction(ctx context.Context, id string) (*models.ActionRecord, error) {
+func (s *Service) GetAction(ctx context.Context, tenantID, id string) (*models.ActionRecord, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	record, err := s.repo.GetAction(ctx, id)
+	record, err := s.repo.GetAction(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,7 @@ func (s *Service) GetAction(ctx context.Context, id string) (*models.ActionRecor
 	return record, nil
 }
 
-func (s *Service) QueryActions(ctx context.Context, filter QueryFilter) ([]models.ActionRecord, string, error) {
+func (s *Service) QueryActions(ctx context.Context, tenantID string, filter QueryFilter) ([]models.ActionRecord, string, error) {
 	if filter.Limit <= 0 {
 		filter.Limit = defaultPageSize
 	}
@@ -86,7 +86,7 @@ func (s *Service) QueryActions(ctx context.Context, filter QueryFilter) ([]model
 
 	// Fetch one extra to determine if there's a next page
 	filter.Limit++
-	records, err := s.repo.QueryActions(ctx, filter)
+	records, err := s.repo.QueryActions(ctx, tenantID, filter)
 	if err != nil {
 		return nil, "", err
 	}

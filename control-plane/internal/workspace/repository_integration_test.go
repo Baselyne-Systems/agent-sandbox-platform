@@ -34,9 +34,10 @@ func TestInteg_CreateAndGetWorkspace_JSONBRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	ws := &models.Workspace{
-		AgentID: "agent-001",
-		TaskID:  "task-001",
-		Status:  models.WorkspaceStatusRunning,
+		TenantID: "test-tenant",
+		AgentID:  "agent-001",
+		TaskID:   "task-001",
+		Status:   models.WorkspaceStatusRunning,
 		Spec: models.WorkspaceSpec{
 			MemoryMb:          1024,
 			CpuMillicores:     2000,
@@ -59,7 +60,7 @@ func TestInteg_CreateAndGetWorkspace_JSONBRoundTrip(t *testing.T) {
 		t.Fatal("expected server-generated timestamps")
 	}
 
-	got, err := repo.GetWorkspace(ctx, ws.ID)
+	got, err := repo.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if err != nil {
 		t.Fatalf("GetWorkspace: %v", err)
 	}
@@ -91,8 +92,9 @@ func TestInteg_GetWorkspace_NullableExpiresAt(t *testing.T) {
 
 	// Without ExpiresAt
 	wsNoExpiry := &models.Workspace{
-		AgentID: "agent-no-exp",
-		Status:  models.WorkspaceStatusRunning,
+		TenantID: "test-tenant",
+		AgentID:  "agent-no-exp",
+		Status:   models.WorkspaceStatusRunning,
 		Spec: models.WorkspaceSpec{
 			AllowedTools: []string{},
 			EnvVars:      map[string]string{},
@@ -102,7 +104,7 @@ func TestInteg_GetWorkspace_NullableExpiresAt(t *testing.T) {
 		t.Fatalf("CreateWorkspace no expiry: %v", err)
 	}
 
-	got1, err := repo.GetWorkspace(ctx, wsNoExpiry.ID)
+	got1, err := repo.GetWorkspace(ctx, "test-tenant", wsNoExpiry.ID)
 	if err != nil {
 		t.Fatalf("GetWorkspace no expiry: %v", err)
 	}
@@ -113,6 +115,7 @@ func TestInteg_GetWorkspace_NullableExpiresAt(t *testing.T) {
 	// With ExpiresAt
 	expires := time.Now().Add(time.Hour).Truncate(time.Microsecond)
 	wsWithExpiry := &models.Workspace{
+		TenantID:  "test-tenant",
 		AgentID:   "agent-with-exp",
 		Status:    models.WorkspaceStatusRunning,
 		ExpiresAt: &expires,
@@ -125,7 +128,7 @@ func TestInteg_GetWorkspace_NullableExpiresAt(t *testing.T) {
 		t.Fatalf("CreateWorkspace with expiry: %v", err)
 	}
 
-	got2, err := repo.GetWorkspace(ctx, wsWithExpiry.ID)
+	got2, err := repo.GetWorkspace(ctx, "test-tenant", wsWithExpiry.ID)
 	if err != nil {
 		t.Fatalf("GetWorkspace with expiry: %v", err)
 	}
@@ -141,7 +144,7 @@ func TestInteg_GetWorkspace_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	got, err := repo.GetWorkspace(ctx, "00000000-0000-0000-0000-000000000000")
+	got, err := repo.GetWorkspace(ctx, "test-tenant", "00000000-0000-0000-0000-000000000000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,8 +167,9 @@ func TestInteg_ListWorkspaces_Filters(t *testing.T) {
 	}
 	for _, w := range workspaces {
 		ws := &models.Workspace{
-			AgentID: w.agentID,
-			Status:  w.status,
+			TenantID: "test-tenant",
+			AgentID:  w.agentID,
+			Status:   w.status,
 			Spec: models.WorkspaceSpec{
 				AllowedTools: []string{},
 				EnvVars:      map[string]string{},
@@ -177,7 +181,7 @@ func TestInteg_ListWorkspaces_Filters(t *testing.T) {
 	}
 
 	// By agent
-	byAgent, err := repo.ListWorkspaces(ctx, "agent-A", "", "", 10)
+	byAgent, err := repo.ListWorkspaces(ctx, "test-tenant", "agent-A", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListWorkspaces agent: %v", err)
 	}
@@ -186,7 +190,7 @@ func TestInteg_ListWorkspaces_Filters(t *testing.T) {
 	}
 
 	// By status
-	byStatus, err := repo.ListWorkspaces(ctx, "", models.WorkspaceStatusRunning, "", 10)
+	byStatus, err := repo.ListWorkspaces(ctx, "test-tenant", "", models.WorkspaceStatusRunning, "", 10)
 	if err != nil {
 		t.Fatalf("ListWorkspaces status: %v", err)
 	}
@@ -202,8 +206,9 @@ func TestInteg_ListWorkspaces_Pagination(t *testing.T) {
 	var ids []string
 	for i := 0; i < 5; i++ {
 		ws := &models.Workspace{
-			AgentID: "agent-page",
-			Status:  models.WorkspaceStatusRunning,
+			TenantID: "test-tenant",
+			AgentID:  "agent-page",
+			Status:   models.WorkspaceStatusRunning,
 			Spec: models.WorkspaceSpec{
 				AllowedTools: []string{},
 				EnvVars:      map[string]string{},
@@ -216,7 +221,7 @@ func TestInteg_ListWorkspaces_Pagination(t *testing.T) {
 	}
 	sort.Strings(ids)
 
-	page1, err := repo.ListWorkspaces(ctx, "", "", "", 2)
+	page1, err := repo.ListWorkspaces(ctx, "test-tenant", "", "", "", 2)
 	if err != nil {
 		t.Fatalf("ListWorkspaces page1: %v", err)
 	}
@@ -224,7 +229,7 @@ func TestInteg_ListWorkspaces_Pagination(t *testing.T) {
 		t.Fatalf("page1 len = %d, want 2", len(page1))
 	}
 
-	page2, err := repo.ListWorkspaces(ctx, "", "", page1[1].ID, 2)
+	page2, err := repo.ListWorkspaces(ctx, "test-tenant", "", "", page1[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListWorkspaces page2: %v", err)
 	}
@@ -232,7 +237,7 @@ func TestInteg_ListWorkspaces_Pagination(t *testing.T) {
 		t.Fatalf("page2 len = %d, want 2", len(page2))
 	}
 
-	page3, err := repo.ListWorkspaces(ctx, "", "", page2[1].ID, 2)
+	page3, err := repo.ListWorkspaces(ctx, "test-tenant", "", "", page2[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListWorkspaces page3: %v", err)
 	}
@@ -246,8 +251,9 @@ func TestInteg_TerminateWorkspace_Success(t *testing.T) {
 	ctx := context.Background()
 
 	ws := &models.Workspace{
-		AgentID: "agent-term",
-		Status:  models.WorkspaceStatusRunning,
+		TenantID: "test-tenant",
+		AgentID:  "agent-term",
+		Status:   models.WorkspaceStatusRunning,
 		Spec: models.WorkspaceSpec{
 			AllowedTools: []string{},
 			EnvVars:      map[string]string{},
@@ -259,11 +265,11 @@ func TestInteg_TerminateWorkspace_Success(t *testing.T) {
 
 	originalUpdatedAt := ws.UpdatedAt
 
-	if err := repo.TerminateWorkspace(ctx, ws.ID, "test shutdown"); err != nil {
+	if err := repo.TerminateWorkspace(ctx, "test-tenant", ws.ID, "test shutdown"); err != nil {
 		t.Fatalf("TerminateWorkspace: %v", err)
 	}
 
-	got, err := repo.GetWorkspace(ctx, ws.ID)
+	got, err := repo.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if err != nil {
 		t.Fatalf("GetWorkspace: %v", err)
 	}
@@ -280,8 +286,9 @@ func TestInteg_TerminateWorkspace_AlreadyTerminal(t *testing.T) {
 	ctx := context.Background()
 
 	ws := &models.Workspace{
-		AgentID: "agent-already-term",
-		Status:  models.WorkspaceStatusRunning,
+		TenantID: "test-tenant",
+		AgentID:  "agent-already-term",
+		Status:   models.WorkspaceStatusRunning,
 		Spec: models.WorkspaceSpec{
 			AllowedTools: []string{},
 			EnvVars:      map[string]string{},
@@ -291,11 +298,11 @@ func TestInteg_TerminateWorkspace_AlreadyTerminal(t *testing.T) {
 		t.Fatalf("CreateWorkspace: %v", err)
 	}
 
-	if err := repo.TerminateWorkspace(ctx, ws.ID, "first"); err != nil {
+	if err := repo.TerminateWorkspace(ctx, "test-tenant", ws.ID, "first"); err != nil {
 		t.Fatalf("first TerminateWorkspace: %v", err)
 	}
 
-	err := repo.TerminateWorkspace(ctx, ws.ID, "second")
+	err := repo.TerminateWorkspace(ctx, "test-tenant", ws.ID, "second")
 	if err != ErrWorkspaceAlreadyTerminal {
 		t.Errorf("error = %v, want ErrWorkspaceAlreadyTerminal", err)
 	}
@@ -305,7 +312,7 @@ func TestInteg_TerminateWorkspace_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	err := repo.TerminateWorkspace(ctx, "00000000-0000-0000-0000-000000000000", "reason")
+	err := repo.TerminateWorkspace(ctx, "test-tenant", "00000000-0000-0000-0000-000000000000", "reason")
 	if err != ErrWorkspaceNotFound {
 		t.Errorf("error = %v, want ErrWorkspaceNotFound", err)
 	}
@@ -316,8 +323,9 @@ func TestInteg_UpdateWorkspaceStatus_RoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	ws := &models.Workspace{
-		AgentID: "agent-update",
-		Status:  models.WorkspaceStatusPending,
+		TenantID: "test-tenant",
+		AgentID:  "agent-update",
+		Status:   models.WorkspaceStatusPending,
 		Spec: models.WorkspaceSpec{
 			AllowedTools: []string{},
 			EnvVars:      map[string]string{},
@@ -328,11 +336,11 @@ func TestInteg_UpdateWorkspaceStatus_RoundTrip(t *testing.T) {
 	}
 
 	// Update to creating
-	if err := repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusCreating, "", "", ""); err != nil {
+	if err := repo.UpdateWorkspaceStatus(ctx, "test-tenant", ws.ID, models.WorkspaceStatusCreating, "", "", ""); err != nil {
 		t.Fatalf("UpdateWorkspaceStatus creating: %v", err)
 	}
 
-	got, err := repo.GetWorkspace(ctx, ws.ID)
+	got, err := repo.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if err != nil {
 		t.Fatalf("GetWorkspace: %v", err)
 	}
@@ -341,11 +349,11 @@ func TestInteg_UpdateWorkspaceStatus_RoundTrip(t *testing.T) {
 	}
 
 	// Update to running with host and sandbox info
-	if err := repo.UpdateWorkspaceStatus(ctx, ws.ID, models.WorkspaceStatusRunning, "host-abc", "runtime.host1:50052", "sandbox-xyz"); err != nil {
+	if err := repo.UpdateWorkspaceStatus(ctx, "test-tenant", ws.ID, models.WorkspaceStatusRunning, "host-abc", "runtime.host1:50052", "sandbox-xyz"); err != nil {
 		t.Fatalf("UpdateWorkspaceStatus running: %v", err)
 	}
 
-	got, err = repo.GetWorkspace(ctx, ws.ID)
+	got, err = repo.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if err != nil {
 		t.Fatalf("GetWorkspace: %v", err)
 	}
@@ -367,7 +375,7 @@ func TestInteg_UpdateWorkspaceStatus_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	err := repo.UpdateWorkspaceStatus(ctx, "00000000-0000-0000-0000-000000000000", models.WorkspaceStatusRunning, "h", "a", "s")
+	err := repo.UpdateWorkspaceStatus(ctx, "test-tenant", "00000000-0000-0000-0000-000000000000", models.WorkspaceStatusRunning, "h", "a", "s")
 	if err != ErrWorkspaceNotFound {
 		t.Errorf("error = %v, want ErrWorkspaceNotFound", err)
 	}

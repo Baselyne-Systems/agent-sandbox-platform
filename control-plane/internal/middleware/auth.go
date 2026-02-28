@@ -19,14 +19,27 @@ import (
 type contextKey string
 
 const (
-	agentIDKey contextKey = "agent_id"
-	scopesKey  contextKey = "scopes"
+	agentIDKey  contextKey = "agent_id"
+	tenantIDKey contextKey = "tenant_id"
+	scopesKey   contextKey = "scopes"
 )
 
 // AgentIDFromContext extracts the authenticated agent ID from the context.
 func AgentIDFromContext(ctx context.Context) (string, bool) {
 	v, ok := ctx.Value(agentIDKey).(string)
 	return v, ok
+}
+
+// TenantIDFromContext extracts the authenticated tenant ID from the context.
+func TenantIDFromContext(ctx context.Context) (string, bool) {
+	v, ok := ctx.Value(tenantIDKey).(string)
+	return v, ok
+}
+
+// ContextWithTenantID returns a new context with the given tenant ID set.
+// This is useful for tests and internal service-to-service calls.
+func ContextWithTenantID(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantIDKey, tenantID)
 }
 
 // ScopesFromContext extracts the authenticated scopes from the context.
@@ -40,7 +53,7 @@ var ErrCredentialNotFound = errors.New("credential not found")
 
 // CredentialLookup abstracts credential verification for the auth interceptor.
 type CredentialLookup interface {
-	LookupByTokenHash(ctx context.Context, tokenHash string) (agentID string, scopes []string, expiresAt time.Time, err error)
+	LookupByTokenHash(ctx context.Context, tokenHash string) (agentID string, tenantID string, scopes []string, expiresAt time.Time, err error)
 }
 
 // PostgresCredentialLookup implements CredentialLookup using direct DB queries.
@@ -48,29 +61,29 @@ type PostgresCredentialLookup struct {
 	DB *sql.DB
 }
 
-func (p *PostgresCredentialLookup) LookupByTokenHash(ctx context.Context, tokenHash string) (string, []string, time.Time, error) {
-	var agentID string
+func (p *PostgresCredentialLookup) LookupByTokenHash(ctx context.Context, tokenHash string) (string, string, []string, time.Time, error) {
+	var agentID, tenantID string
 	var scopesJSON []byte
 	var expiresAt time.Time
 	err := p.DB.QueryRowContext(ctx,
-		`SELECT agent_id, scopes, expires_at
+		`SELECT agent_id, tenant_id, scopes, expires_at
 		 FROM scoped_credentials
 		 WHERE token_hash = $1 AND revoked = false`,
 		tokenHash,
-	).Scan(&agentID, &scopesJSON, &expiresAt)
+	).Scan(&agentID, &tenantID, &scopesJSON, &expiresAt)
 
 	if err == sql.ErrNoRows {
-		return "", nil, time.Time{}, ErrCredentialNotFound
+		return "", "", nil, time.Time{}, ErrCredentialNotFound
 	}
 	if err != nil {
-		return "", nil, time.Time{}, err
+		return "", "", nil, time.Time{}, err
 	}
 
 	var scopes []string
 	if err := json.Unmarshal(scopesJSON, &scopes); err != nil {
-		return "", nil, time.Time{}, fmt.Errorf("unmarshal scopes: %w", err)
+		return "", "", nil, time.Time{}, fmt.Errorf("unmarshal scopes: %w", err)
 	}
-	return agentID, scopes, expiresAt, nil
+	return agentID, tenantID, scopes, expiresAt, nil
 }
 
 // AuthConfig holds configuration for the auth interceptor.
@@ -121,7 +134,7 @@ func UnaryAuthInterceptor(cfg AuthConfig) grpc.UnaryServerInterceptor {
 
 		// Hash the token and look up credentials.
 		tokenHash := cfg.TokenHashFunc(rawToken)
-		agentID, scopes, expiresAt, err := cfg.Credentials.LookupByTokenHash(ctx, tokenHash)
+		agentID, tenantID, scopes, expiresAt, err := cfg.Credentials.LookupByTokenHash(ctx, tokenHash)
 		if errors.Is(err, ErrCredentialNotFound) {
 			return nil, status.Error(codes.Unauthenticated, "invalid or revoked token")
 		}
@@ -134,8 +147,9 @@ func UnaryAuthInterceptor(cfg AuthConfig) grpc.UnaryServerInterceptor {
 			return nil, status.Error(codes.Unauthenticated, "token expired")
 		}
 
-		// Enrich context with agent identity.
+		// Enrich context with agent and tenant identity.
 		ctx = context.WithValue(ctx, agentIDKey, agentID)
+		ctx = context.WithValue(ctx, tenantIDKey, tenantID)
 		ctx = context.WithValue(ctx, scopesKey, scopes)
 
 		return handler(ctx, req)

@@ -73,6 +73,7 @@ message GuardrailRule {
   google.protobuf.Timestamp updated_at = 11;
   // Optional scope — restricts when this rule is evaluated.
   RuleScope scope = 12;
+  string tenant_id = 13;
 }
 
 enum RuleType {
@@ -199,6 +200,7 @@ message GuardrailSet {
   map<string, string> labels = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
+  string tenant_id = 8;
 }
 
 message CreateGuardrailSetRequest {

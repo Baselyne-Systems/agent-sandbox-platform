@@ -12,15 +12,15 @@ import (
 // Repository defines persistence operations for agent identities and credentials.
 type Repository interface {
 	CreateAgent(ctx context.Context, agent *models.Agent) error
-	GetAgent(ctx context.Context, id string) (*models.Agent, error)
-	ListAgents(ctx context.Context, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error)
-	DeactivateAgent(ctx context.Context, id string) error
+	GetAgent(ctx context.Context, tenantID, id string) (*models.Agent, error)
+	ListAgents(ctx context.Context, tenantID, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error)
+	DeactivateAgent(ctx context.Context, tenantID, id string) error
 
-	UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel) error
-	UpdateAgentStatus(ctx context.Context, agentID string, from []models.AgentStatus, to models.AgentStatus) error
+	UpdateTrustLevel(ctx context.Context, tenantID, agentID string, level models.AgentTrustLevel) error
+	UpdateAgentStatus(ctx context.Context, tenantID, agentID string, from []models.AgentStatus, to models.AgentStatus) error
 
 	CreateCredential(ctx context.Context, cred *models.ScopedCredential) error
-	RevokeCredential(ctx context.Context, id string) error
+	RevokeCredential(ctx context.Context, tenantID, id string) error
 }
 
 // PostgresRepository implements Repository backed by PostgreSQL.
@@ -42,21 +42,21 @@ func (r *PostgresRepository) CreateAgent(ctx context.Context, agent *models.Agen
 		return fmt.Errorf("marshal capabilities: %w", err)
 	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO agents (name, description, owner_id, status, labels, purpose, trust_level, capabilities)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO agents (tenant_id, name, description, owner_id, status, labels, purpose, trust_level, capabilities)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		 RETURNING id, created_at, updated_at`,
-		agent.Name, agent.Description, agent.OwnerID, agent.Status, labelsJSON,
+		agent.TenantID, agent.Name, agent.Description, agent.OwnerID, agent.Status, labelsJSON,
 		agent.Purpose, string(agent.TrustLevel), capsJSON,
 	).Scan(&agent.ID, &agent.CreatedAt, &agent.UpdatedAt)
 }
 
-func (r *PostgresRepository) GetAgent(ctx context.Context, id string) (*models.Agent, error) {
+func (r *PostgresRepository) GetAgent(ctx context.Context, tenantID, id string) (*models.Agent, error) {
 	var a models.Agent
 	var labelsJSON, capsJSON []byte
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, name, description, owner_id, status, labels, purpose, trust_level, capabilities, created_at, updated_at
-		 FROM agents WHERE id = $1`, id,
-	).Scan(&a.ID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON,
+		`SELECT id, tenant_id, name, description, owner_id, status, labels, purpose, trust_level, capabilities, created_at, updated_at
+		 FROM agents WHERE id = $1 AND tenant_id = $2`, id, tenantID,
+	).Scan(&a.ID, &a.TenantID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON,
 		&a.Purpose, &a.TrustLevel, &capsJSON, &a.CreatedAt, &a.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -73,10 +73,10 @@ func (r *PostgresRepository) GetAgent(ctx context.Context, id string) (*models.A
 	return &a, nil
 }
 
-func (r *PostgresRepository) ListAgents(ctx context.Context, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error) {
-	query := `SELECT id, name, description, owner_id, status, labels, purpose, trust_level, capabilities, created_at, updated_at FROM agents WHERE 1=1`
-	args := []any{}
-	argIdx := 1
+func (r *PostgresRepository) ListAgents(ctx context.Context, tenantID, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error) {
+	query := `SELECT id, tenant_id, name, description, owner_id, status, labels, purpose, trust_level, capabilities, created_at, updated_at FROM agents WHERE tenant_id = $1`
+	args := []any{tenantID}
+	argIdx := 2
 
 	if ownerID != "" {
 		query += fmt.Sprintf(" AND owner_id = $%d", argIdx)
@@ -107,7 +107,7 @@ func (r *PostgresRepository) ListAgents(ctx context.Context, ownerID string, sta
 	for rows.Next() {
 		var a models.Agent
 		var labelsJSON, capsJSON []byte
-		if err := rows.Scan(&a.ID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON,
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.Name, &a.Description, &a.OwnerID, &a.Status, &labelsJSON,
 			&a.Purpose, &a.TrustLevel, &capsJSON, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -122,7 +122,7 @@ func (r *PostgresRepository) ListAgents(ctx context.Context, ownerID string, sta
 	return agents, rows.Err()
 }
 
-func (r *PostgresRepository) DeactivateAgent(ctx context.Context, id string) error {
+func (r *PostgresRepository) DeactivateAgent(ctx context.Context, tenantID, id string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func (r *PostgresRepository) DeactivateAgent(ctx context.Context, id string) err
 	defer tx.Rollback()
 
 	res, err := tx.ExecContext(ctx,
-		`UPDATE agents SET status = 'inactive', updated_at = now() WHERE id = $1 AND status != 'inactive'`, id)
+		`UPDATE agents SET status = 'inactive', updated_at = now() WHERE id = $1 AND tenant_id = $2 AND status != 'inactive'`, id, tenantID)
 	if err != nil {
 		return err
 	}
@@ -139,30 +139,27 @@ func (r *PostgresRepository) DeactivateAgent(ctx context.Context, id string) err
 		return err
 	}
 	if n == 0 {
-		// Check if agent exists at all
 		var exists bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1)`, id).Scan(&exists); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND tenant_id = $2)`, id, tenantID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
 			return ErrAgentNotFound
 		}
-		// Already inactive — commit is still fine
 	}
 
-	// Revoke all active credentials atomically
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE scoped_credentials SET revoked = true WHERE agent_id = $1 AND revoked = false`, id); err != nil {
+		`UPDATE scoped_credentials SET revoked = true WHERE agent_id = $1 AND tenant_id = $2 AND revoked = false`, id, tenantID); err != nil {
 		return err
 	}
 
 	return tx.Commit()
 }
 
-func (r *PostgresRepository) UpdateTrustLevel(ctx context.Context, agentID string, level models.AgentTrustLevel) error {
+func (r *PostgresRepository) UpdateTrustLevel(ctx context.Context, tenantID, agentID string, level models.AgentTrustLevel) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE agents SET trust_level = $1, updated_at = now() WHERE id = $2 AND status = 'active'`,
-		string(level), agentID)
+		`UPDATE agents SET trust_level = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3 AND status = 'active'`,
+		string(level), agentID, tenantID)
 	if err != nil {
 		return err
 	}
@@ -172,7 +169,7 @@ func (r *PostgresRepository) UpdateTrustLevel(ctx context.Context, agentID strin
 	}
 	if n == 0 {
 		var exists bool
-		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1)`, agentID).Scan(&exists); err != nil {
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND tenant_id = $2)`, agentID, tenantID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -183,9 +180,9 @@ func (r *PostgresRepository) UpdateTrustLevel(ctx context.Context, agentID strin
 	return nil
 }
 
-func (r *PostgresRepository) UpdateAgentStatus(ctx context.Context, agentID string, from []models.AgentStatus, to models.AgentStatus) error {
-	query := `UPDATE agents SET status = $1, updated_at = now() WHERE id = $2`
-	args := []any{string(to), agentID}
+func (r *PostgresRepository) UpdateAgentStatus(ctx context.Context, tenantID, agentID string, from []models.AgentStatus, to models.AgentStatus) error {
+	query := `UPDATE agents SET status = $1, updated_at = now() WHERE id = $2 AND tenant_id = $3`
+	args := []any{string(to), agentID, tenantID}
 
 	if len(from) > 0 {
 		placeholders := ""
@@ -193,7 +190,7 @@ func (r *PostgresRepository) UpdateAgentStatus(ctx context.Context, agentID stri
 			if i > 0 {
 				placeholders += ", "
 			}
-			placeholders += fmt.Sprintf("$%d", i+3)
+			placeholders += fmt.Sprintf("$%d", i+4)
 			args = append(args, string(s))
 		}
 		query += fmt.Sprintf(" AND status IN (%s)", placeholders)
@@ -209,7 +206,7 @@ func (r *PostgresRepository) UpdateAgentStatus(ctx context.Context, agentID stri
 	}
 	if n == 0 {
 		var exists bool
-		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1)`, agentID).Scan(&exists); err != nil {
+		if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM agents WHERE id = $1 AND tenant_id = $2)`, agentID, tenantID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
@@ -226,16 +223,16 @@ func (r *PostgresRepository) CreateCredential(ctx context.Context, cred *models.
 		return fmt.Errorf("marshal scopes: %w", err)
 	}
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO scoped_credentials (agent_id, scopes, token_hash, expires_at)
-		 VALUES ($1, $2, $3, $4)
+		`INSERT INTO scoped_credentials (tenant_id, agent_id, scopes, token_hash, expires_at)
+		 VALUES ($1, $2, $3, $4, $5)
 		 RETURNING id, created_at`,
-		cred.AgentID, scopesJSON, cred.TokenHash, cred.ExpiresAt,
+		cred.TenantID, cred.AgentID, scopesJSON, cred.TokenHash, cred.ExpiresAt,
 	).Scan(&cred.ID, &cred.CreatedAt)
 }
 
-func (r *PostgresRepository) RevokeCredential(ctx context.Context, id string) error {
+func (r *PostgresRepository) RevokeCredential(ctx context.Context, tenantID, id string) error {
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE scoped_credentials SET revoked = true WHERE id = $1 AND revoked = false`, id)
+		`UPDATE scoped_credentials SET revoked = true WHERE id = $1 AND tenant_id = $2 AND revoked = false`, id, tenantID)
 	if err != nil {
 		return err
 	}

@@ -51,7 +51,7 @@ func NewService(cfg ServiceConfig) *Service {
 	}
 }
 
-func (s *Service) CreateTask(ctx context.Context, agentID, goal string, wsConfig *models.TaskWorkspaceConfig, guardrailPolicyID string, hiConfig *models.TaskHumanInteractionConfig, budgetConfig *models.TaskBudgetConfig, maxDurationWithoutCheckin int64, input, labels map[string]string) (*models.Task, error) {
+func (s *Service) CreateTask(ctx context.Context, tenantID, agentID, goal string, wsConfig *models.TaskWorkspaceConfig, guardrailPolicyID string, hiConfig *models.TaskHumanInteractionConfig, budgetConfig *models.TaskBudgetConfig, maxDurationWithoutCheckin int64, input, labels map[string]string) (*models.Task, error) {
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
@@ -60,6 +60,7 @@ func (s *Service) CreateTask(ctx context.Context, agentID, goal string, wsConfig
 	}
 
 	task := &models.Task{
+		TenantID:                      tenantID,
 		AgentID:                       agentID,
 		Goal:                          goal,
 		Status:                        models.TaskStatusPending,
@@ -91,11 +92,11 @@ func (s *Service) CreateTask(ctx context.Context, agentID, goal string, wsConfig
 	return task, nil
 }
 
-func (s *Service) GetTask(ctx context.Context, id string) (*models.Task, error) {
+func (s *Service) GetTask(ctx context.Context, tenantID, id string) (*models.Task, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
-	task, err := s.repo.GetTask(ctx, id)
+	task, err := s.repo.GetTask(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (s *Service) GetTask(ctx context.Context, id string) (*models.Task, error) 
 	return task, nil
 }
 
-func (s *Service) ListTasks(ctx context.Context, agentID string, status models.TaskStatus, pageSize int, pageToken string) ([]models.Task, string, error) {
+func (s *Service) ListTasks(ctx context.Context, tenantID, agentID string, status models.TaskStatus, pageSize int, pageToken string) ([]models.Task, string, error) {
 	if pageSize <= 0 {
 		pageSize = defaultPageSize
 	}
@@ -113,7 +114,7 @@ func (s *Service) ListTasks(ctx context.Context, agentID string, status models.T
 		pageSize = maxPageSize
 	}
 
-	tasks, err := s.repo.ListTasks(ctx, agentID, status, pageToken, pageSize+1)
+	tasks, err := s.repo.ListTasks(ctx, tenantID, agentID, status, pageToken, pageSize+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -135,12 +136,12 @@ func isTerminalStatus(status models.TaskStatus) bool {
 	return false
 }
 
-func (s *Service) UpdateTaskStatus(ctx context.Context, id string, newStatus models.TaskStatus, reason string) (*models.Task, error) {
+func (s *Service) UpdateTaskStatus(ctx context.Context, tenantID, id string, newStatus models.TaskStatus, reason string) (*models.Task, error) {
 	if id == "" {
 		return nil, ErrInvalidInput
 	}
 
-	task, err := s.repo.GetTask(ctx, id)
+	task, err := s.repo.GetTask(ctx, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -169,16 +170,16 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, id string, newStatus mod
 		wsID, provErr := s.provisioner.ProvisionWorkspace(ctx, task)
 		if provErr != nil {
 			// Workspace provisioning failed — transition task to Failed instead.
-			_ = s.repo.UpdateTaskStatus(ctx, id, models.TaskStatusFailed)
-			return s.repo.GetTask(ctx, id)
+			_ = s.repo.UpdateTaskStatus(ctx, tenantID, id, models.TaskStatusFailed)
+			return s.repo.GetTask(ctx, tenantID, id)
 		}
-		if err := s.repo.SetWorkspaceID(ctx, id, wsID); err != nil {
+		if err := s.repo.SetWorkspaceID(ctx, tenantID, id, wsID); err != nil {
 			return nil, err
 		}
 		task.WorkspaceID = wsID
 	}
 
-	if err := s.repo.UpdateTaskStatus(ctx, id, newStatus); err != nil {
+	if err := s.repo.UpdateTaskStatus(ctx, tenantID, id, newStatus); err != nil {
 		return nil, err
 	}
 
@@ -188,15 +189,15 @@ func (s *Service) UpdateTaskStatus(ctx context.Context, id string, newStatus mod
 	}
 
 	// Re-fetch to return updated state.
-	return s.repo.GetTask(ctx, id)
+	return s.repo.GetTask(ctx, tenantID, id)
 }
 
-func (s *Service) CancelTask(ctx context.Context, id, reason string) error {
+func (s *Service) CancelTask(ctx context.Context, tenantID, id, reason string) error {
 	if id == "" {
 		return ErrInvalidInput
 	}
 
-	task, err := s.repo.GetTask(ctx, id)
+	task, err := s.repo.GetTask(ctx, tenantID, id)
 	if err != nil {
 		return err
 	}
@@ -207,7 +208,7 @@ func (s *Service) CancelTask(ctx context.Context, id, reason string) error {
 	// Can only cancel pending, running, or waiting_on_human tasks.
 	switch task.Status {
 	case models.TaskStatusPending, models.TaskStatusRunning, models.TaskStatusWaitingOnHuman:
-		if err := s.repo.UpdateTaskStatus(ctx, id, models.TaskStatusCancelled); err != nil {
+		if err := s.repo.UpdateTaskStatus(ctx, tenantID, id, models.TaskStatusCancelled); err != nil {
 			return err
 		}
 		// Terminate workspace if one exists (best-effort).

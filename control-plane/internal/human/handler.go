@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/human/v1"
 	"google.golang.org/grpc/codes"
@@ -22,7 +23,9 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) CreateRequest(ctx context.Context, req *pb.CreateHumanRequestRequest) (*pb.CreateHumanRequestResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	result, err := h.svc.CreateRequest(ctx,
+		tenantID,
 		req.GetWorkspaceId(),
 		req.GetAgentId(),
 		req.GetQuestion(),
@@ -40,7 +43,8 @@ func (h *Handler) CreateRequest(ctx context.Context, req *pb.CreateHumanRequestR
 }
 
 func (h *Handler) GetRequest(ctx context.Context, req *pb.GetHumanRequestRequest) (*pb.GetHumanRequestResponse, error) {
-	result, err := h.svc.GetRequest(ctx, req.GetRequestId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	result, err := h.svc.GetRequest(ctx, tenantID, req.GetRequestId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -48,15 +52,17 @@ func (h *Handler) GetRequest(ctx context.Context, req *pb.GetHumanRequestRequest
 }
 
 func (h *Handler) RespondToRequest(ctx context.Context, req *pb.RespondToHumanRequestRequest) (*pb.RespondToHumanRequestResponse, error) {
-	if err := h.svc.RespondToRequest(ctx, req.GetRequestId(), req.GetResponse(), req.GetResponderId()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.RespondToRequest(ctx, tenantID, req.GetRequestId(), req.GetResponse(), req.GetResponderId()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.RespondToHumanRequestResponse{}, nil
 }
 
 func (h *Handler) ListRequests(ctx context.Context, req *pb.ListHumanRequestsRequest) (*pb.ListHumanRequestsResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	statusFilter := protoStatusToModel(req.GetStatus())
-	requests, nextToken, err := h.svc.ListRequests(ctx, req.GetWorkspaceId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
+	requests, nextToken, err := h.svc.ListRequests(ctx, tenantID, req.GetWorkspaceId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -72,7 +78,8 @@ func (h *Handler) ListRequests(ctx context.Context, req *pb.ListHumanRequestsReq
 }
 
 func (h *Handler) ConfigureDeliveryChannel(ctx context.Context, req *pb.ConfigureDeliveryChannelRequest) (*pb.ConfigureDeliveryChannelResponse, error) {
-	cfg, err := h.svc.ConfigureDeliveryChannel(ctx, req.GetUserId(), req.GetChannelType(), req.GetEndpoint())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	cfg, err := h.svc.ConfigureDeliveryChannel(ctx, tenantID, req.GetUserId(), req.GetChannelType(), req.GetEndpoint())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -80,7 +87,8 @@ func (h *Handler) ConfigureDeliveryChannel(ctx context.Context, req *pb.Configur
 }
 
 func (h *Handler) GetDeliveryChannel(ctx context.Context, req *pb.GetDeliveryChannelRequest) (*pb.GetDeliveryChannelResponse, error) {
-	cfg, err := h.svc.GetDeliveryChannel(ctx, req.GetUserId(), req.GetChannelType())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	cfg, err := h.svc.GetDeliveryChannel(ctx, tenantID, req.GetUserId(), req.GetChannelType())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -88,7 +96,8 @@ func (h *Handler) GetDeliveryChannel(ctx context.Context, req *pb.GetDeliveryCha
 }
 
 func (h *Handler) SetTimeoutPolicy(ctx context.Context, req *pb.SetTimeoutPolicyRequest) (*pb.SetTimeoutPolicyResponse, error) {
-	policy, err := h.svc.SetTimeoutPolicy(ctx, req.GetScope(), req.GetScopeId(), req.GetTimeoutSeconds(), req.GetAction(), req.GetEscalationTargets())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	policy, err := h.svc.SetTimeoutPolicy(ctx, tenantID, req.GetScope(), req.GetScopeId(), req.GetTimeoutSeconds(), req.GetAction(), req.GetEscalationTargets())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -96,7 +105,8 @@ func (h *Handler) SetTimeoutPolicy(ctx context.Context, req *pb.SetTimeoutPolicy
 }
 
 func (h *Handler) GetTimeoutPolicy(ctx context.Context, req *pb.GetTimeoutPolicyRequest) (*pb.GetTimeoutPolicyResponse, error) {
-	policy, err := h.svc.GetTimeoutPolicy(ctx, req.GetScope(), req.GetScopeId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	policy, err := h.svc.GetTimeoutPolicy(ctx, tenantID, req.GetScope(), req.GetScopeId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -108,6 +118,7 @@ func (h *Handler) GetTimeoutPolicy(ctx context.Context, req *pb.GetTimeoutPolicy
 func requestToProto(r *models.HumanRequest) *pb.HumanRequest {
 	p := &pb.HumanRequest{
 		RequestId:   r.ID,
+		TenantId:    r.TenantID,
 		WorkspaceId: r.WorkspaceID,
 		AgentId:     r.AgentID,
 		Question:    r.Question,
@@ -219,6 +230,7 @@ func protoStatusToModel(s pb.HumanRequestStatus) models.HumanRequestStatus {
 func deliveryChannelToProto(cfg *models.DeliveryChannelConfig) *pb.DeliveryChannelConfig {
 	return &pb.DeliveryChannelConfig{
 		ConfigId:    cfg.ID,
+		TenantId:    cfg.TenantID,
 		UserId:      cfg.UserID,
 		ChannelType: cfg.ChannelType,
 		Endpoint:    cfg.Endpoint,
@@ -231,6 +243,7 @@ func deliveryChannelToProto(cfg *models.DeliveryChannelConfig) *pb.DeliveryChann
 func timeoutPolicyToProto(p *models.TimeoutPolicy) *pb.TimeoutPolicy {
 	return &pb.TimeoutPolicy{
 		PolicyId:          p.ID,
+		TenantId:          p.TenantID,
 		Scope:             p.Scope,
 		ScopeId:           p.ScopeID,
 		TimeoutSeconds:    p.TimeoutSecs,

@@ -26,6 +26,7 @@ const (
 // Agent represents an autonomous agent registered in the platform.
 type Agent struct {
 	ID           string
+	TenantID     string
 	Name         string
 	Description  string
 	OwnerID      string
@@ -41,6 +42,7 @@ type Agent struct {
 // ScopedCredential is a time-limited credential with explicit permission scopes.
 type ScopedCredential struct {
 	ID        string
+	TenantID  string
 	AgentID   string
 	Scopes    []string
 	TokenHash string
@@ -71,6 +73,7 @@ const (
 // ActionRecord is an immutable record of a single agent action.
 type ActionRecord struct {
 	ID                  string
+	TenantID            string
 	WorkspaceID         string
 	AgentID             string
 	TaskID              string
@@ -116,6 +119,7 @@ type RuleScope struct {
 
 type GuardrailRule struct {
 	ID          string
+	TenantID    string
 	Name        string
 	Description string
 	Type        RuleType
@@ -132,6 +136,7 @@ type GuardrailRule struct {
 // GuardrailSet is a named, reusable collection of guardrail rules.
 type GuardrailSet struct {
 	ID          string
+	TenantID    string
 	Name        string
 	Description string
 	RuleIDs     []string
@@ -143,6 +148,7 @@ type GuardrailSet struct {
 // UsageRecord represents a single unit of resource consumption.
 type UsageRecord struct {
 	ID           string
+	TenantID     string
 	AgentID      string
 	WorkspaceID  string
 	ResourceType string
@@ -155,6 +161,7 @@ type UsageRecord struct {
 // Budget represents a spending limit for an agent.
 type Budget struct {
 	ID               string
+	TenantID         string
 	AgentID          string
 	Currency         string
 	Limit            float64
@@ -196,6 +203,7 @@ type WorkspaceSpec struct {
 // Workspace represents an isolated execution environment for an agent.
 type Workspace struct {
 	ID        string
+	TenantID  string
 	AgentID   string
 	TaskID    string
 	Status    WorkspaceStatus
@@ -213,6 +221,7 @@ type Workspace struct {
 // WorkspaceSnapshot records metadata for a workspace snapshot.
 type WorkspaceSnapshot struct {
 	ID          string
+	TenantID    string
 	WorkspaceID string
 	AgentID     string
 	TaskID      string
@@ -223,6 +232,7 @@ type WorkspaceSnapshot struct {
 // DeliveryChannelConfig stores a user's notification channel preference.
 type DeliveryChannelConfig struct {
 	ID          string
+	TenantID    string
 	UserID      string
 	ChannelType string // slack, email, teams
 	Endpoint    string
@@ -234,6 +244,7 @@ type DeliveryChannelConfig struct {
 // TimeoutPolicy configures default timeout behavior for human interaction requests.
 type TimeoutPolicy struct {
 	ID                string
+	TenantID          string
 	Scope             string // global, agent, workspace
 	ScopeID           string
 	TimeoutSecs       int64
@@ -303,6 +314,7 @@ const (
 // HumanRequest represents an agent's request for human input.
 type HumanRequest struct {
 	ID          string
+	TenantID    string
 	WorkspaceID string
 	AgentID     string
 	TaskID      string
@@ -411,6 +423,7 @@ type TaskBudgetConfig struct {
 // Task represents a goal an agent pursues autonomously.
 type Task struct {
 	ID                          string
+	TenantID                    string
 	AgentID                     string
 	Goal                        string
 	Status                      TaskStatus

@@ -112,6 +112,7 @@ type activityAdapter struct {
 func (a *activityAdapter) RecordAction(ctx context.Context, record *models.ActionRecord) error {
 	_, err := a.client.RecordAction(ctx, &activitypb.RecordActionRequest{
 		Record: &activitypb.ActionRecord{
+			TenantId:    record.TenantID,
 			WorkspaceId: record.WorkspaceID,
 			AgentId:     record.AgentID,
 			TaskId:      record.TaskID,

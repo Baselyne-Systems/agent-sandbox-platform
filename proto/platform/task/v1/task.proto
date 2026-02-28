@@ -53,6 +53,7 @@ message Task {
   google.protobuf.Timestamp created_at = 13;
   google.protobuf.Timestamp updated_at = 14;
   google.protobuf.Timestamp completed_at = 15;
+  string tenant_id = 16;
 }
 
 enum TaskStatus {

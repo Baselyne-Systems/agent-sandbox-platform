@@ -47,6 +47,7 @@ message ActionRecord {
   int64 evaluation_latency_us = 11;
   int64 execution_latency_us = 12;
   google.protobuf.Timestamp recorded_at = 13;
+  string tenant_id = 14;
 }
 
 enum ActionOutcome {

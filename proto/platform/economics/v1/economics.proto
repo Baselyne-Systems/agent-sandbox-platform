@@ -22,6 +22,7 @@ message UsageRecord {
   string unit = 6;
   double cost = 7;
   google.protobuf.Timestamp recorded_at = 8;
+  string tenant_id = 9;
 }
 
 // OnExceededAction determines what happens when a budget is exhausted.
@@ -42,6 +43,7 @@ message Budget {
   google.protobuf.Timestamp period_end = 7;
   OnExceededAction on_exceeded = 8;   // What to do when budget is exhausted
   double warning_threshold = 9;       // 0.0–1.0: fraction of limit that triggers a warning
+  string tenant_id = 10;
 }
 
 message RecordUsageRequest {

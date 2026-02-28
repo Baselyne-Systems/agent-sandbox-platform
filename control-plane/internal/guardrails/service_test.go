@@ -43,7 +43,7 @@ func (m *mockRepo) CreateRule(_ context.Context, rule *models.GuardrailRule) err
 	return nil
 }
 
-func (m *mockRepo) GetRule(_ context.Context, id string) (*models.GuardrailRule, error) {
+func (m *mockRepo) GetRule(_ context.Context, _ string, id string) (*models.GuardrailRule, error) {
 	r, ok := m.rules[id]
 	if !ok {
 		return nil, nil
@@ -53,7 +53,7 @@ func (m *mockRepo) GetRule(_ context.Context, id string) (*models.GuardrailRule,
 	return &cp, nil
 }
 
-func (m *mockRepo) UpdateRule(_ context.Context, rule *models.GuardrailRule) error {
+func (m *mockRepo) UpdateRule(_ context.Context, _ string, rule *models.GuardrailRule) error {
 	_, ok := m.rules[rule.ID]
 	if !ok {
 		return ErrRuleNotFound
@@ -65,7 +65,7 @@ func (m *mockRepo) UpdateRule(_ context.Context, rule *models.GuardrailRule) err
 	return nil
 }
 
-func (m *mockRepo) DeleteRule(_ context.Context, id string) error {
+func (m *mockRepo) DeleteRule(_ context.Context, _ string, id string) error {
 	if _, ok := m.rules[id]; !ok {
 		return ErrRuleNotFound
 	}
@@ -73,7 +73,7 @@ func (m *mockRepo) DeleteRule(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockRepo) ListRules(_ context.Context, ruleType models.RuleType, enabledOnly bool, afterID string, limit int) ([]models.GuardrailRule, error) {
+func (m *mockRepo) ListRules(_ context.Context, _ string, ruleType models.RuleType, enabledOnly bool, afterID string, limit int) ([]models.GuardrailRule, error) {
 	var result []models.GuardrailRule
 	for _, r := range m.rules {
 		if ruleType != "" && r.Type != ruleType {
@@ -108,7 +108,7 @@ func (m *mockRepo) CreateSet(_ context.Context, set *models.GuardrailSet) error 
 	return nil
 }
 
-func (m *mockRepo) GetSet(_ context.Context, id string) (*models.GuardrailSet, error) {
+func (m *mockRepo) GetSet(_ context.Context, _ string, id string) (*models.GuardrailSet, error) {
 	s, ok := m.sets[id]
 	if !ok {
 		return nil, nil
@@ -119,15 +119,15 @@ func (m *mockRepo) GetSet(_ context.Context, id string) (*models.GuardrailSet, e
 	return &cp, nil
 }
 
-func (m *mockRepo) GetSetByName(_ context.Context, name string) (*models.GuardrailSet, error) {
+func (m *mockRepo) GetSetByName(_ context.Context, _ string, name string) (*models.GuardrailSet, error) {
 	id, ok := m.setsByName[name]
 	if !ok {
 		return nil, nil
 	}
-	return m.GetSet(context.Background(), id)
+	return m.GetSet(context.Background(), "", id)
 }
 
-func (m *mockRepo) UpdateSet(_ context.Context, set *models.GuardrailSet) error {
+func (m *mockRepo) UpdateSet(_ context.Context, _ string, set *models.GuardrailSet) error {
 	existing, ok := m.sets[set.ID]
 	if !ok {
 		return ErrSetNotFound
@@ -143,7 +143,7 @@ func (m *mockRepo) UpdateSet(_ context.Context, set *models.GuardrailSet) error 
 	return nil
 }
 
-func (m *mockRepo) DeleteSet(_ context.Context, id string) error {
+func (m *mockRepo) DeleteSet(_ context.Context, _ string, id string) error {
 	s, ok := m.sets[id]
 	if !ok {
 		return ErrSetNotFound
@@ -153,7 +153,7 @@ func (m *mockRepo) DeleteSet(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *mockRepo) ListSets(_ context.Context, afterID string, limit int) ([]models.GuardrailSet, error) {
+func (m *mockRepo) ListSets(_ context.Context, _ string, afterID string, limit int) ([]models.GuardrailSet, error) {
 	var result []models.GuardrailSet
 	for _, s := range m.sets {
 		if afterID != "" && s.ID <= afterID {
@@ -193,7 +193,7 @@ func copyLabels(m map[string]string) map[string]string {
 
 func TestCreateRule_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
-	rule, err := svc.CreateRule(context.Background(), "deny-exec", "Block exec calls",
+	rule, err := svc.CreateRule(context.Background(), "test-tenant", "deny-exec", "Block exec calls",
 		models.RuleTypeToolFilter, "tool == 'exec'", models.RuleActionDeny, 10, nil, models.RuleScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -216,24 +216,24 @@ func TestCreateRule_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.CreateRule(ctx, "", "desc", models.RuleTypeToolFilter, "cond", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "test-tenant", "", "desc", models.RuleTypeToolFilter, "cond", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
 	}
-	if _, err := svc.CreateRule(ctx, "name", "desc", models.RuleTypeToolFilter, "", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "test-tenant", "name", "desc", models.RuleTypeToolFilter, "", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty condition, got: %v", err)
 	}
-	if _, err := svc.CreateRule(ctx, "name", "desc", "bad_type", "cond", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "test-tenant", "name", "desc", "bad_type", "cond", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid type, got: %v", err)
 	}
-	if _, err := svc.CreateRule(ctx, "name", "desc", models.RuleTypeToolFilter, "cond", "bad_action", 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "test-tenant", "name", "desc", models.RuleTypeToolFilter, "cond", "bad_action", 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid action, got: %v", err)
 	}
 }
 
 func TestGetRule_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.CreateRule(context.Background(), "r", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil, models.RuleScope{})
-	got, err := svc.GetRule(context.Background(), created.ID)
+	created, _ := svc.CreateRule(context.Background(), "test-tenant", "r", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil, models.RuleScope{})
+	got, err := svc.GetRule(context.Background(), "test-tenant", created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestGetRule_Found(t *testing.T) {
 
 func TestGetRule_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetRule(context.Background(), "nonexistent-id")
+	_, err := svc.GetRule(context.Background(), "test-tenant", "nonexistent-id")
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("expected ErrRuleNotFound, got: %v", err)
 	}
@@ -253,11 +253,11 @@ func TestGetRule_NotFound(t *testing.T) {
 func TestUpdateRule_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	created, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 5, nil, models.RuleScope{})
+	created, _ := svc.CreateRule(ctx, "test-tenant", "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 5, nil, models.RuleScope{})
 
 	created.Name = "updated"
 	created.Priority = 20
-	updated, err := svc.UpdateRule(ctx, created)
+	updated, err := svc.UpdateRule(ctx, "test-tenant", created)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,12 +273,12 @@ func TestUpdateRule_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	_, err := svc.UpdateRule(ctx, &models.GuardrailRule{ID: "", Name: "n", Condition: "c", Type: models.RuleTypeToolFilter, Action: models.RuleActionDeny})
+	_, err := svc.UpdateRule(ctx, "test-tenant", &models.GuardrailRule{ID: "", Name: "n", Condition: "c", Type: models.RuleTypeToolFilter, Action: models.RuleActionDeny})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty ID, got: %v", err)
 	}
 
-	_, err = svc.UpdateRule(ctx, &models.GuardrailRule{ID: "x", Name: "", Condition: "c", Type: models.RuleTypeToolFilter, Action: models.RuleActionDeny})
+	_, err = svc.UpdateRule(ctx, "test-tenant", &models.GuardrailRule{ID: "x", Name: "", Condition: "c", Type: models.RuleTypeToolFilter, Action: models.RuleActionDeny})
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
 	}
@@ -287,13 +287,13 @@ func TestUpdateRule_Validation(t *testing.T) {
 func TestDeleteRule_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
 
-	if err := svc.DeleteRule(ctx, rule.ID); err != nil {
+	if err := svc.DeleteRule(ctx, "test-tenant", rule.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	_, err := svc.GetRule(ctx, rule.ID)
+	_, err := svc.GetRule(ctx, "test-tenant", rule.ID)
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("expected ErrRuleNotFound after delete, got: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestDeleteRule_Success(t *testing.T) {
 
 func TestDeleteRule_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	err := svc.DeleteRule(context.Background(), "no-such-id")
+	err := svc.DeleteRule(context.Background(), "test-tenant", "no-such-id")
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("expected ErrRuleNotFound, got: %v", err)
 	}
@@ -311,12 +311,12 @@ func TestListRules_WithFilters(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	svc.CreateRule(ctx, "r1", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
-	svc.CreateRule(ctx, "r2", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil, models.RuleScope{})
-	svc.CreateRule(ctx, "r3", "", models.RuleTypeToolFilter, "c", models.RuleActionAllow, 0, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "test-tenant", "r1", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "test-tenant", "r2", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "test-tenant", "r3", "", models.RuleTypeToolFilter, "c", models.RuleActionAllow, 0, nil, models.RuleScope{})
 
 	// Filter by type
-	rules, _, err := svc.ListRules(ctx, models.RuleTypeToolFilter, false, 50, "")
+	rules, _, err := svc.ListRules(ctx, "test-tenant", models.RuleTypeToolFilter, false, 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -325,7 +325,7 @@ func TestListRules_WithFilters(t *testing.T) {
 	}
 
 	// All rules
-	rules, _, err = svc.ListRules(ctx, "", false, 50, "")
+	rules, _, err = svc.ListRules(ctx, "test-tenant", "", false, 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,10 +340,10 @@ func TestListRules_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.CreateRule(ctx, fmt.Sprintf("rule-%d", i), "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
+		svc.CreateRule(ctx, "test-tenant", fmt.Sprintf("rule-%d", i), "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
 	}
 
-	rules, nextToken, err := svc.ListRules(ctx, "", false, 3, "")
+	rules, nextToken, err := svc.ListRules(ctx, "test-tenant", "", false, 3, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -354,7 +354,7 @@ func TestListRules_Pagination(t *testing.T) {
 		t.Error("expected a next page token")
 	}
 
-	rules2, nextToken2, err := svc.ListRules(ctx, "", false, 3, nextToken)
+	rules2, nextToken2, err := svc.ListRules(ctx, "test-tenant", "", false, 3, nextToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -372,11 +372,11 @@ func TestCompilePolicy(t *testing.T) {
 	ctx := context.Background()
 
 	// Create rules first so CompilePolicy can fetch them
-	r1, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
-	r2, _ := svc.CreateRule(ctx, "log-read", "Log reads", models.RuleTypeToolFilter, "read_file", models.RuleActionLog, 20, nil, models.RuleScope{})
-	r3, _ := svc.CreateRule(ctx, "check-path", "Check path", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil, models.RuleScope{})
+	r1, _ := svc.CreateRule(ctx, "test-tenant", "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
+	r2, _ := svc.CreateRule(ctx, "test-tenant", "log-read", "Log reads", models.RuleTypeToolFilter, "read_file", models.RuleActionLog, 20, nil, models.RuleScope{})
+	r3, _ := svc.CreateRule(ctx, "test-tenant", "check-path", "Check path", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil, models.RuleScope{})
 
-	compiled, count, err := svc.CompilePolicy(ctx, []string{r1.ID, r2.ID, r3.ID})
+	compiled, count, err := svc.CompilePolicy(ctx, "test-tenant", []string{r1.ID, r2.ID, r3.ID})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestCompilePolicy(t *testing.T) {
 
 func TestCompilePolicy_Empty(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, _, err := svc.CompilePolicy(context.Background(), nil)
+	_, _, err := svc.CompilePolicy(context.Background(), "test-tenant", nil)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty rule IDs, got: %v", err)
 	}
@@ -419,7 +419,7 @@ func TestCompilePolicy_Empty(t *testing.T) {
 
 func TestCompilePolicy_NotFoundRule(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, _, err := svc.CompilePolicy(context.Background(), []string{"nonexistent-id"})
+	_, _, err := svc.CompilePolicy(context.Background(), "test-tenant", []string{"nonexistent-id"})
 	if !errors.Is(err, ErrRuleNotFound) {
 		t.Errorf("expected ErrRuleNotFound for nonexistent rule, got: %v", err)
 	}
@@ -429,9 +429,9 @@ func TestSimulatePolicy_ToolFilterMatch(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
-	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "exec", nil, "agent-1")
+	result, err := svc.SimulatePolicy(ctx, "test-tenant", []string{rule.ID}, "exec", nil, "agent-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -450,9 +450,9 @@ func TestSimulatePolicy_ToolFilterNoMatch(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
-	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "read_file", nil, "agent-1")
+	result, err := svc.SimulatePolicy(ctx, "test-tenant", []string{rule.ID}, "read_file", nil, "agent-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -468,9 +468,9 @@ func TestSimulatePolicy_ParameterCheckMatch(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "block-shadow", "Block /etc/shadow", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil, models.RuleScope{})
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "block-shadow", "Block /etc/shadow", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil, models.RuleScope{})
 
-	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "read_file", map[string]string{"path": "/etc/shadow"}, "agent-1")
+	result, err := svc.SimulatePolicy(ctx, "test-tenant", []string{rule.ID}, "read_file", map[string]string{"path": "/etc/shadow"}, "agent-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,10 +487,10 @@ func TestSimulatePolicy_PriorityOrdering(t *testing.T) {
 	ctx := context.Background()
 
 	// Lower priority number = higher precedence
-	allowRule, _ := svc.CreateRule(ctx, "allow-read", "Allow reads", models.RuleTypeToolFilter, "read_file", models.RuleActionAllow, 1, nil, models.RuleScope{})
-	svc.CreateRule(ctx, "deny-read", "Deny reads", models.RuleTypeToolFilter, "read_file", models.RuleActionDeny, 10, nil, models.RuleScope{})
+	allowRule, _ := svc.CreateRule(ctx, "test-tenant", "allow-read", "Allow reads", models.RuleTypeToolFilter, "read_file", models.RuleActionAllow, 1, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "test-tenant", "deny-read", "Deny reads", models.RuleTypeToolFilter, "read_file", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
-	result, err := svc.SimulatePolicy(ctx, []string{allowRule.ID}, "read_file", nil, "agent-1")
+	result, err := svc.SimulatePolicy(ctx, "test-tenant", []string{allowRule.ID}, "read_file", nil, "agent-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -504,13 +504,13 @@ func TestSimulatePolicy_DisabledRulesSkipped(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 10, nil, models.RuleScope{})
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
 	// Disable the rule
 	rule.Enabled = false
-	svc.UpdateRule(ctx, rule)
+	svc.UpdateRule(ctx, "test-tenant", rule)
 
-	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "exec", nil, "agent-1")
+	result, err := svc.SimulatePolicy(ctx, "test-tenant", []string{rule.ID}, "exec", nil, "agent-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -523,9 +523,9 @@ func TestSimulatePolicy_EscalateVerdict(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "escalate-deploy", "Escalate deployments", models.RuleTypeToolFilter, "deploy", models.RuleActionEscalate, 5, nil, models.RuleScope{})
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "escalate-deploy", "Escalate deployments", models.RuleTypeToolFilter, "deploy", models.RuleActionEscalate, 5, nil, models.RuleScope{})
 
-	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "deploy", nil, "agent-1")
+	result, err := svc.SimulatePolicy(ctx, "test-tenant", []string{rule.ID}, "deploy", nil, "agent-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestSimulatePolicy_EscalateVerdict(t *testing.T) {
 
 func TestSimulatePolicy_EmptyRules(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.SimulatePolicy(context.Background(), nil, "exec", nil, "agent-1")
+	_, err := svc.SimulatePolicy(context.Background(), "test-tenant", nil, "exec", nil, "agent-1")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
 	}
@@ -545,8 +545,8 @@ func TestSimulatePolicy_EmptyRules(t *testing.T) {
 func TestSimulatePolicy_EmptyToolName(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 0, nil, models.RuleScope{})
-	_, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "", nil, "agent-1")
+	rule, _ := svc.CreateRule(ctx, "test-tenant", "r", "", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 0, nil, models.RuleScope{})
+	_, err := svc.SimulatePolicy(ctx, "test-tenant", []string{rule.ID}, "", nil, "agent-1")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestSimulatePolicy_EmptyToolName(t *testing.T) {
 
 func TestCreateSet_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
-	set, err := svc.CreateSet(context.Background(), "invoice-rules", "Rules for invoice processing", []string{"rule-1", "rule-2"}, nil)
+	set, err := svc.CreateSet(context.Background(), "test-tenant", "invoice-rules", "Rules for invoice processing", []string{"rule-1", "rule-2"}, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -575,21 +575,21 @@ func TestCreateSet_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.CreateSet(ctx, "", "desc", []string{"r1"}, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateSet(ctx, "test-tenant", "", "desc", []string{"r1"}, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
 	}
-	if _, err := svc.CreateSet(ctx, "name", "desc", nil, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateSet(ctx, "test-tenant", "name", "desc", nil, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for nil rule_ids, got: %v", err)
 	}
-	if _, err := svc.CreateSet(ctx, "name", "desc", []string{}, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateSet(ctx, "test-tenant", "name", "desc", []string{}, nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty rule_ids, got: %v", err)
 	}
 }
 
 func TestGetSet_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.CreateSet(context.Background(), "test-set", "", []string{"r1"}, nil)
-	got, err := svc.GetSet(context.Background(), created.ID)
+	created, _ := svc.CreateSet(context.Background(), "test-tenant", "test-set", "", []string{"r1"}, nil)
+	got, err := svc.GetSet(context.Background(), "test-tenant", created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -600,7 +600,7 @@ func TestGetSet_Found(t *testing.T) {
 
 func TestGetSet_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetSet(context.Background(), "nonexistent-id")
+	_, err := svc.GetSet(context.Background(), "test-tenant", "nonexistent-id")
 	if !errors.Is(err, ErrSetNotFound) {
 		t.Errorf("expected ErrSetNotFound, got: %v", err)
 	}
@@ -608,8 +608,8 @@ func TestGetSet_NotFound(t *testing.T) {
 
 func TestGetSetByName_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.CreateSet(context.Background(), "my-set", "", []string{"r1"}, nil)
-	got, err := svc.GetSetByName(context.Background(), "my-set")
+	created, _ := svc.CreateSet(context.Background(), "test-tenant", "my-set", "", []string{"r1"}, nil)
+	got, err := svc.GetSetByName(context.Background(), "test-tenant", "my-set")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -620,7 +620,7 @@ func TestGetSetByName_Found(t *testing.T) {
 
 func TestGetSetByName_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetSetByName(context.Background(), "no-such-set")
+	_, err := svc.GetSetByName(context.Background(), "test-tenant", "no-such-set")
 	if !errors.Is(err, ErrSetNotFound) {
 		t.Errorf("expected ErrSetNotFound, got: %v", err)
 	}
@@ -629,11 +629,11 @@ func TestGetSetByName_NotFound(t *testing.T) {
 func TestUpdateSet_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	created, _ := svc.CreateSet(ctx, "s", "", []string{"r1"}, nil)
+	created, _ := svc.CreateSet(ctx, "test-tenant", "s", "", []string{"r1"}, nil)
 
 	created.Name = "updated"
 	created.RuleIDs = []string{"r1", "r2", "r3"}
-	updated, err := svc.UpdateSet(ctx, created)
+	updated, err := svc.UpdateSet(ctx, "test-tenant", created)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -648,11 +648,11 @@ func TestUpdateSet_Success(t *testing.T) {
 func TestDeleteSet_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	set, _ := svc.CreateSet(ctx, "s", "", []string{"r1"}, nil)
-	if err := svc.DeleteSet(ctx, set.ID); err != nil {
+	set, _ := svc.CreateSet(ctx, "test-tenant", "s", "", []string{"r1"}, nil)
+	if err := svc.DeleteSet(ctx, "test-tenant", set.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	_, err := svc.GetSet(ctx, set.ID)
+	_, err := svc.GetSet(ctx, "test-tenant", set.ID)
 	if !errors.Is(err, ErrSetNotFound) {
 		t.Errorf("expected ErrSetNotFound after delete, got: %v", err)
 	}
@@ -662,10 +662,10 @@ func TestListSets_Pagination(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
-		svc.CreateSet(ctx, fmt.Sprintf("set-%d", i), "", []string{"r1"}, nil)
+		svc.CreateSet(ctx, "test-tenant", fmt.Sprintf("set-%d", i), "", []string{"r1"}, nil)
 	}
 
-	sets, nextToken, err := svc.ListSets(ctx, 3, "")
+	sets, nextToken, err := svc.ListSets(ctx, "test-tenant", 3, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -676,7 +676,7 @@ func TestListSets_Pagination(t *testing.T) {
 		t.Error("expected a next page token")
 	}
 
-	sets2, nextToken2, err := svc.ListSets(ctx, 3, nextToken)
+	sets2, nextToken2, err := svc.ListSets(ctx, "test-tenant", 3, nextToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -691,9 +691,9 @@ func TestListSets_Pagination(t *testing.T) {
 func TestResolveRuleIDs_SetPrefix(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	svc.CreateSet(ctx, "invoice-rules", "", []string{"rule-a", "rule-b", "rule-c"}, nil)
+	svc.CreateSet(ctx, "test-tenant", "invoice-rules", "", []string{"rule-a", "rule-b", "rule-c"}, nil)
 
-	ids, err := svc.ResolveRuleIDs(ctx, "set:invoice-rules")
+	ids, err := svc.ResolveRuleIDs(ctx, "test-tenant", "set:invoice-rules")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -707,7 +707,7 @@ func TestResolveRuleIDs_SetPrefix(t *testing.T) {
 
 func TestResolveRuleIDs_CommaSeparated(t *testing.T) {
 	svc := NewService(newMockRepo())
-	ids, err := svc.ResolveRuleIDs(context.Background(), "r1, r2, r3")
+	ids, err := svc.ResolveRuleIDs(context.Background(), "test-tenant", "r1, r2, r3")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -721,7 +721,7 @@ func TestResolveRuleIDs_CommaSeparated(t *testing.T) {
 
 func TestResolveRuleIDs_SetNotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.ResolveRuleIDs(context.Background(), "set:nonexistent")
+	_, err := svc.ResolveRuleIDs(context.Background(), "test-tenant", "set:nonexistent")
 	if !errors.Is(err, ErrSetNotFound) {
 		t.Errorf("expected ErrSetNotFound, got: %v", err)
 	}

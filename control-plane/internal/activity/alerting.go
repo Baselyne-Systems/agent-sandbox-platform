@@ -110,7 +110,8 @@ func (e *AlertEngine) checkCondition(ctx context.Context, cfg models.AlertConfig
 		EndTime:   &end,
 		Limit:     10000, // large enough window
 	}
-	records, err := e.activity.QueryActions(ctx, filter)
+	// TODO: AlertEngine should be scoped per-tenant once alert configs carry tenant_id.
+	records, err := e.activity.QueryActions(ctx, "", filter)
 	if err != nil || len(records) == 0 {
 		return false, ""
 	}

@@ -36,8 +36,13 @@ func (m *mockRepo) CreateAgent(_ context.Context, agent *models.Agent) error {
 	agent.UpdatedAt = agent.CreatedAt
 	cp := *agent
 	cp.Capabilities = copyStringSlice(agent.Capabilities)
-	m.agents[agent.ID] = &cp
+	m.agents[m.tenantKey(agent.TenantID, agent.ID)] = &cp
 	return nil
+}
+
+// tenantKey returns a composite key for tenant-scoped lookups.
+func (m *mockRepo) tenantKey(tenantID, id string) string {
+	return tenantID + "/" + id
 }
 
 func copyStringSlice(s []string) []string {
@@ -49,8 +54,8 @@ func copyStringSlice(s []string) []string {
 	return cp
 }
 
-func (m *mockRepo) GetAgent(_ context.Context, id string) (*models.Agent, error) {
-	a, ok := m.agents[id]
+func (m *mockRepo) GetAgent(_ context.Context, tenantID, id string) (*models.Agent, error) {
+	a, ok := m.agents[m.tenantKey(tenantID, id)]
 	if !ok {
 		return nil, nil
 	}
@@ -58,9 +63,12 @@ func (m *mockRepo) GetAgent(_ context.Context, id string) (*models.Agent, error)
 	return &cp, nil
 }
 
-func (m *mockRepo) ListAgents(_ context.Context, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error) {
+func (m *mockRepo) ListAgents(_ context.Context, tenantID, ownerID string, status models.AgentStatus, afterID string, limit int) ([]models.Agent, error) {
 	var result []models.Agent
 	for _, a := range m.agents {
+		if a.TenantID != tenantID {
+			continue
+		}
 		if ownerID != "" && a.OwnerID != ownerID {
 			continue
 		}
@@ -79,22 +87,22 @@ func (m *mockRepo) ListAgents(_ context.Context, ownerID string, status models.A
 	return result, nil
 }
 
-func (m *mockRepo) DeactivateAgent(_ context.Context, id string) error {
-	a, ok := m.agents[id]
+func (m *mockRepo) DeactivateAgent(_ context.Context, tenantID, id string) error {
+	a, ok := m.agents[m.tenantKey(tenantID, id)]
 	if !ok {
 		return ErrAgentNotFound
 	}
 	a.Status = models.AgentStatusInactive
 	for _, c := range m.credentials {
-		if c.AgentID == id {
+		if c.AgentID == id && c.TenantID == tenantID {
 			c.Revoked = true
 		}
 	}
 	return nil
 }
 
-func (m *mockRepo) UpdateTrustLevel(_ context.Context, agentID string, level models.AgentTrustLevel) error {
-	a, ok := m.agents[agentID]
+func (m *mockRepo) UpdateTrustLevel(_ context.Context, tenantID, agentID string, level models.AgentTrustLevel) error {
+	a, ok := m.agents[m.tenantKey(tenantID, agentID)]
 	if !ok {
 		return ErrAgentNotFound
 	}
@@ -106,8 +114,8 @@ func (m *mockRepo) UpdateTrustLevel(_ context.Context, agentID string, level mod
 	return nil
 }
 
-func (m *mockRepo) UpdateAgentStatus(_ context.Context, agentID string, from []models.AgentStatus, to models.AgentStatus) error {
-	a, ok := m.agents[agentID]
+func (m *mockRepo) UpdateAgentStatus(_ context.Context, tenantID, agentID string, from []models.AgentStatus, to models.AgentStatus) error {
+	a, ok := m.agents[m.tenantKey(tenantID, agentID)]
 	if !ok {
 		return ErrAgentNotFound
 	}
@@ -130,12 +138,12 @@ func (m *mockRepo) CreateCredential(_ context.Context, cred *models.ScopedCreden
 	cred.ID = m.nextUUID()
 	cred.CreatedAt = time.Now()
 	cp := *cred
-	m.credentials[cred.ID] = &cp
+	m.credentials[m.tenantKey(cred.TenantID, cred.ID)] = &cp
 	return nil
 }
 
-func (m *mockRepo) RevokeCredential(_ context.Context, id string) error {
-	c, ok := m.credentials[id]
+func (m *mockRepo) RevokeCredential(_ context.Context, tenantID, id string) error {
+	c, ok := m.credentials[m.tenantKey(tenantID, id)]
 	if !ok || c.Revoked {
 		return ErrCredentialNotFound
 	}
@@ -143,14 +151,19 @@ func (m *mockRepo) RevokeCredential(_ context.Context, id string) error {
 	return nil
 }
 
+const testTenant = "test-tenant"
+
 func TestRegisterAgent_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
-	agent, err := svc.RegisterAgent(context.Background(), "test-agent", "A test agent", "owner-1", nil, "invoice processing", models.AgentTrustLevelNew, []string{"bash", "curl"})
+	agent, err := svc.RegisterAgent(context.Background(), testTenant, "test-agent", "A test agent", "owner-1", nil, "invoice processing", models.AgentTrustLevelNew, []string{"bash", "curl"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if agent.ID == "" {
 		t.Error("expected agent ID to be set")
+	}
+	if agent.TenantID != testTenant {
+		t.Errorf("expected tenant_id %q, got %q", testTenant, agent.TenantID)
 	}
 	if agent.Name != "test-agent" {
 		t.Errorf("expected name 'test-agent', got %q", agent.Name)
@@ -175,17 +188,20 @@ func TestRegisterAgent_Success(t *testing.T) {
 func TestRegisterAgent_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 
-	if _, err := svc.RegisterAgent(context.Background(), "", "desc", "owner", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.RegisterAgent(context.Background(), "", "name", "desc", "owner", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty tenant, got: %v", err)
+	}
+	if _, err := svc.RegisterAgent(context.Background(), testTenant, "", "desc", "owner", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
 	}
-	if _, err := svc.RegisterAgent(context.Background(), "name", "desc", "", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.RegisterAgent(context.Background(), testTenant, "name", "desc", "", nil, "", "", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty owner, got: %v", err)
 	}
 }
 
 func TestRegisterAgent_Defaults(t *testing.T) {
 	svc := NewService(newMockRepo())
-	agent, err := svc.RegisterAgent(context.Background(), "a", "", "o", nil, "", "", nil)
+	agent, err := svc.RegisterAgent(context.Background(), testTenant, "a", "", "o", nil, "", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -199,8 +215,8 @@ func TestRegisterAgent_Defaults(t *testing.T) {
 
 func TestGetAgent_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.RegisterAgent(context.Background(), "a", "", "o", nil, "", "", nil)
-	got, err := svc.GetAgent(context.Background(), created.ID)
+	created, _ := svc.RegisterAgent(context.Background(), testTenant, "a", "", "o", nil, "", "", nil)
+	got, err := svc.GetAgent(context.Background(), testTenant, created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -211,7 +227,7 @@ func TestGetAgent_Found(t *testing.T) {
 
 func TestGetAgent_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetAgent(context.Background(), "nonexistent-id")
+	_, err := svc.GetAgent(context.Background(), testTenant, "nonexistent-id")
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got: %v", err)
 	}
@@ -223,10 +239,10 @@ func TestListAgents_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.RegisterAgent(ctx, fmt.Sprintf("agent-%d", i), "", "owner", nil, "", "", nil)
+		svc.RegisterAgent(ctx, testTenant, fmt.Sprintf("agent-%d", i), "", "owner", nil, "", "", nil)
 	}
 
-	agents, nextToken, err := svc.ListAgents(ctx, "", "", 3, "")
+	agents, nextToken, err := svc.ListAgents(ctx, testTenant, "", "", 3, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -237,7 +253,7 @@ func TestListAgents_Pagination(t *testing.T) {
 		t.Error("expected a next page token")
 	}
 
-	agents2, nextToken2, err := svc.ListAgents(ctx, "", "", 3, nextToken)
+	agents2, nextToken2, err := svc.ListAgents(ctx, testTenant, "", "", 3, nextToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,21 +270,21 @@ func TestDeactivateAgent(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, 3600)
 
-	if err := svc.DeactivateAgent(ctx, agent.ID); err != nil {
+	if err := svc.DeactivateAgent(ctx, testTenant, agent.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got, _ := svc.GetAgent(ctx, agent.ID)
+	got, _ := svc.GetAgent(ctx, testTenant, agent.ID)
 	if got.Status != models.AgentStatusInactive {
 		t.Errorf("expected inactive, got %q", got.Status)
 	}
 
 	// Credentials should be revoked
 	for _, c := range repo.credentials {
-		if c.AgentID == agent.ID && !c.Revoked {
+		if c.AgentID == agent.ID && c.TenantID == testTenant && !c.Revoked {
 			t.Error("expected credential to be revoked")
 		}
 	}
@@ -276,7 +292,7 @@ func TestDeactivateAgent(t *testing.T) {
 
 func TestDeactivateAgent_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	err := svc.DeactivateAgent(context.Background(), "no-such-id")
+	err := svc.DeactivateAgent(context.Background(), testTenant, "no-such-id")
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got: %v", err)
 	}
@@ -287,13 +303,16 @@ func TestMintCredential_Success(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	cred, rawToken, err := svc.MintCredential(ctx, agent.ID, []string{"read", "write"}, 3600)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	cred, rawToken, err := svc.MintCredential(ctx, testTenant, agent.ID, []string{"read", "write"}, 3600)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cred.ID == "" {
 		t.Error("expected credential ID")
+	}
+	if cred.TenantID != testTenant {
+		t.Errorf("expected tenant_id %q, got %q", testTenant, cred.TenantID)
 	}
 	if rawToken == "" {
 		t.Error("expected raw token")
@@ -311,10 +330,10 @@ func TestMintCredential_InactiveAgent(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	svc.DeactivateAgent(ctx, agent.ID)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	svc.DeactivateAgent(ctx, testTenant, agent.ID)
 
-	_, _, err := svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
+	_, _, err := svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, 3600)
 	if !errors.Is(err, ErrAgentInactive) {
 		t.Errorf("expected ErrAgentInactive, got: %v", err)
 	}
@@ -325,22 +344,22 @@ func TestMintCredential_TTLBounds(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
 
 	// Zero TTL
-	_, _, err := svc.MintCredential(ctx, agent.ID, []string{"read"}, 0)
+	_, _, err := svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, 0)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for zero TTL, got: %v", err)
 	}
 
 	// Negative TTL
-	_, _, err = svc.MintCredential(ctx, agent.ID, []string{"read"}, -1)
+	_, _, err = svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, -1)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for negative TTL, got: %v", err)
 	}
 
 	// Over 24h
-	_, _, err = svc.MintCredential(ctx, agent.ID, []string{"read"}, 86401)
+	_, _, err = svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, 86401)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for TTL > 24h, got: %v", err)
 	}
@@ -348,7 +367,7 @@ func TestMintCredential_TTLBounds(t *testing.T) {
 
 func TestMintCredential_AgentNotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, _, err := svc.MintCredential(context.Background(), "no-such-agent", []string{"read"}, 3600)
+	_, _, err := svc.MintCredential(context.Background(), testTenant, "no-such-agent", []string{"read"}, 3600)
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got: %v", err)
 	}
@@ -359,15 +378,15 @@ func TestRevokeCredential(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	cred, _, _ := svc.MintCredential(ctx, agent.ID, []string{"read"}, 3600)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	cred, _, _ := svc.MintCredential(ctx, testTenant, agent.ID, []string{"read"}, 3600)
 
-	if err := svc.RevokeCredential(ctx, cred.ID); err != nil {
+	if err := svc.RevokeCredential(ctx, testTenant, cred.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
 	// Revoking again should fail
-	err := svc.RevokeCredential(ctx, cred.ID)
+	err := svc.RevokeCredential(ctx, testTenant, cred.ID)
 	if !errors.Is(err, ErrCredentialNotFound) {
 		t.Errorf("expected ErrCredentialNotFound on double-revoke, got: %v", err)
 	}
@@ -377,9 +396,9 @@ func TestUpdateTrustLevel_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
 
-	updated, err := svc.UpdateTrustLevel(ctx, agent.ID, models.AgentTrustLevelEstablished, "passed validation checks")
+	updated, err := svc.UpdateTrustLevel(ctx, testTenant, agent.ID, models.AgentTrustLevelEstablished, "passed validation checks")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -388,7 +407,7 @@ func TestUpdateTrustLevel_Success(t *testing.T) {
 	}
 
 	// Upgrade again to trusted
-	updated, err = svc.UpdateTrustLevel(ctx, agent.ID, models.AgentTrustLevelTrusted, "fully verified")
+	updated, err = svc.UpdateTrustLevel(ctx, testTenant, agent.ID, models.AgentTrustLevelTrusted, "fully verified")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -401,9 +420,9 @@ func TestUpdateTrustLevel_InvalidLevel(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
 
-	_, err := svc.UpdateTrustLevel(ctx, agent.ID, "bogus", "no reason")
+	_, err := svc.UpdateTrustLevel(ctx, testTenant, agent.ID, "bogus", "no reason")
 	if !errors.Is(err, ErrInvalidTrustLevel) {
 		t.Errorf("expected ErrInvalidTrustLevel, got: %v", err)
 	}
@@ -411,7 +430,7 @@ func TestUpdateTrustLevel_InvalidLevel(t *testing.T) {
 
 func TestUpdateTrustLevel_AgentNotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.UpdateTrustLevel(context.Background(), "no-such-agent", models.AgentTrustLevelEstablished, "test")
+	_, err := svc.UpdateTrustLevel(context.Background(), testTenant, "no-such-agent", models.AgentTrustLevelEstablished, "test")
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got: %v", err)
 	}
@@ -421,10 +440,10 @@ func TestUpdateTrustLevel_DeactivatedAgent(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
-	svc.DeactivateAgent(ctx, agent.ID)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", models.AgentTrustLevelNew, nil)
+	svc.DeactivateAgent(ctx, testTenant, agent.ID)
 
-	_, err := svc.UpdateTrustLevel(ctx, agent.ID, models.AgentTrustLevelEstablished, "test")
+	_, err := svc.UpdateTrustLevel(ctx, testTenant, agent.ID, models.AgentTrustLevelEstablished, "test")
 	if !errors.Is(err, ErrAgentInactive) {
 		t.Errorf("expected ErrAgentInactive, got: %v", err)
 	}
@@ -432,7 +451,7 @@ func TestUpdateTrustLevel_DeactivatedAgent(t *testing.T) {
 
 func TestUpdateTrustLevel_EmptyID(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.UpdateTrustLevel(context.Background(), "", models.AgentTrustLevelEstablished, "test")
+	_, err := svc.UpdateTrustLevel(context.Background(), testTenant, "", models.AgentTrustLevelEstablished, "test")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
 	}
@@ -443,9 +462,9 @@ func TestUpdateTrustLevel_EmptyID(t *testing.T) {
 func TestSuspendAgent_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
 
-	suspended, err := svc.SuspendAgent(ctx, agent.ID)
+	suspended, err := svc.SuspendAgent(ctx, testTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -457,11 +476,11 @@ func TestSuspendAgent_Success(t *testing.T) {
 func TestSuspendAgent_AlreadySuspended(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
 
-	svc.SuspendAgent(ctx, agent.ID)
+	svc.SuspendAgent(ctx, testTenant, agent.ID)
 	// Suspending again should be idempotent.
-	suspended, err := svc.SuspendAgent(ctx, agent.ID)
+	suspended, err := svc.SuspendAgent(ctx, testTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -472,7 +491,7 @@ func TestSuspendAgent_AlreadySuspended(t *testing.T) {
 
 func TestSuspendAgent_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.SuspendAgent(context.Background(), "nonexistent")
+	_, err := svc.SuspendAgent(context.Background(), testTenant, "nonexistent")
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got: %v", err)
 	}
@@ -480,7 +499,7 @@ func TestSuspendAgent_NotFound(t *testing.T) {
 
 func TestSuspendAgent_EmptyID(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.SuspendAgent(context.Background(), "")
+	_, err := svc.SuspendAgent(context.Background(), testTenant, "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)
 	}
@@ -489,10 +508,10 @@ func TestSuspendAgent_EmptyID(t *testing.T) {
 func TestSuspendAgent_InactiveAgent(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	svc.DeactivateAgent(ctx, agent.ID)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	svc.DeactivateAgent(ctx, testTenant, agent.ID)
 
-	_, err := svc.SuspendAgent(ctx, agent.ID)
+	_, err := svc.SuspendAgent(ctx, testTenant, agent.ID)
 	if !errors.Is(err, ErrInvalidStatusTransition) {
 		t.Errorf("expected ErrInvalidStatusTransition, got: %v", err)
 	}
@@ -503,10 +522,10 @@ func TestSuspendAgent_InactiveAgent(t *testing.T) {
 func TestReactivateAgent_FromSuspended(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	svc.SuspendAgent(ctx, agent.ID)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	svc.SuspendAgent(ctx, testTenant, agent.ID)
 
-	reactivated, err := svc.ReactivateAgent(ctx, agent.ID)
+	reactivated, err := svc.ReactivateAgent(ctx, testTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -518,10 +537,10 @@ func TestReactivateAgent_FromSuspended(t *testing.T) {
 func TestReactivateAgent_FromInactive(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
-	svc.DeactivateAgent(ctx, agent.ID)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
+	svc.DeactivateAgent(ctx, testTenant, agent.ID)
 
-	reactivated, err := svc.ReactivateAgent(ctx, agent.ID)
+	reactivated, err := svc.ReactivateAgent(ctx, testTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -533,9 +552,9 @@ func TestReactivateAgent_FromInactive(t *testing.T) {
 func TestReactivateAgent_AlreadyActive(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	agent, _ := svc.RegisterAgent(ctx, "a", "", "o", nil, "", "", nil)
+	agent, _ := svc.RegisterAgent(ctx, testTenant, "a", "", "o", nil, "", "", nil)
 
-	reactivated, err := svc.ReactivateAgent(ctx, agent.ID)
+	reactivated, err := svc.ReactivateAgent(ctx, testTenant, agent.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -546,8 +565,103 @@ func TestReactivateAgent_AlreadyActive(t *testing.T) {
 
 func TestReactivateAgent_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.ReactivateAgent(context.Background(), "nonexistent")
+	_, err := svc.ReactivateAgent(context.Background(), testTenant, "nonexistent")
 	if !errors.Is(err, ErrAgentNotFound) {
 		t.Errorf("expected ErrAgentNotFound, got: %v", err)
+	}
+}
+
+// --- Cross-tenant isolation tests ---
+
+func TestCrossTenantIsolation_GetAgent(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Create agent in tenant-A
+	agent, err := svc.RegisterAgent(ctx, "tenant-A", "isolated-agent", "", "o", nil, "", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Lookup from tenant-A should succeed
+	got, err := svc.GetAgent(ctx, "tenant-A", agent.ID)
+	if err != nil {
+		t.Fatalf("unexpected error fetching from tenant-A: %v", err)
+	}
+	if got.ID != agent.ID {
+		t.Errorf("expected agent ID %q, got %q", agent.ID, got.ID)
+	}
+
+	// Lookup from tenant-B with the same agent ID should return not found
+	_, err = svc.GetAgent(ctx, "tenant-B", agent.ID)
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound for cross-tenant lookup, got: %v", err)
+	}
+}
+
+func TestCrossTenantIsolation_ListAgents(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Create agents in two different tenants
+	svc.RegisterAgent(ctx, "tenant-A", "agent-A1", "", "o", nil, "", "", nil)
+	svc.RegisterAgent(ctx, "tenant-A", "agent-A2", "", "o", nil, "", "", nil)
+	svc.RegisterAgent(ctx, "tenant-B", "agent-B1", "", "o", nil, "", "", nil)
+
+	// List from tenant-A should only see 2 agents
+	agentsA, _, err := svc.ListAgents(ctx, "tenant-A", "", "", 100, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(agentsA) != 2 {
+		t.Errorf("expected 2 agents for tenant-A, got %d", len(agentsA))
+	}
+
+	// List from tenant-B should only see 1 agent
+	agentsB, _, err := svc.ListAgents(ctx, "tenant-B", "", "", 100, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(agentsB) != 1 {
+		t.Errorf("expected 1 agent for tenant-B, got %d", len(agentsB))
+	}
+}
+
+func TestCrossTenantIsolation_DeactivateAgent(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Create agent in tenant-A
+	agent, _ := svc.RegisterAgent(ctx, "tenant-A", "a", "", "o", nil, "", "", nil)
+
+	// Attempt to deactivate from tenant-B should fail
+	err := svc.DeactivateAgent(ctx, "tenant-B", agent.ID)
+	if !errors.Is(err, ErrAgentNotFound) {
+		t.Errorf("expected ErrAgentNotFound for cross-tenant deactivation, got: %v", err)
+	}
+
+	// Original tenant-A agent should still be active
+	got, _ := svc.GetAgent(ctx, "tenant-A", agent.ID)
+	if got.Status != models.AgentStatusActive {
+		t.Errorf("expected agent to still be active, got %q", got.Status)
+	}
+}
+
+func TestCrossTenantIsolation_RevokeCredential(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	agent, _ := svc.RegisterAgent(ctx, "tenant-A", "a", "", "o", nil, "", "", nil)
+	cred, _, _ := svc.MintCredential(ctx, "tenant-A", agent.ID, []string{"read"}, 3600)
+
+	// Attempt to revoke from tenant-B should fail
+	err := svc.RevokeCredential(ctx, "tenant-B", cred.ID)
+	if !errors.Is(err, ErrCredentialNotFound) {
+		t.Errorf("expected ErrCredentialNotFound for cross-tenant revocation, got: %v", err)
+	}
+
+	// Revoking from tenant-A should succeed
+	if err := svc.RevokeCredential(ctx, "tenant-A", cred.ID); err != nil {
+		t.Fatalf("unexpected error revoking from correct tenant: %v", err)
 	}
 }

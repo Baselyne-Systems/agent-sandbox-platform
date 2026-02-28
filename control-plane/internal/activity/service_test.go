@@ -35,7 +35,7 @@ func (m *mockRepo) InsertAction(_ context.Context, record *models.ActionRecord) 
 	return nil
 }
 
-func (m *mockRepo) GetAction(_ context.Context, id string) (*models.ActionRecord, error) {
+func (m *mockRepo) GetAction(_ context.Context, _, id string) (*models.ActionRecord, error) {
 	r, ok := m.records[id]
 	if !ok {
 		return nil, nil
@@ -44,7 +44,7 @@ func (m *mockRepo) GetAction(_ context.Context, id string) (*models.ActionRecord
 	return &cp, nil
 }
 
-func (m *mockRepo) QueryActions(_ context.Context, filter QueryFilter) ([]models.ActionRecord, error) {
+func (m *mockRepo) QueryActions(_ context.Context, _ string, filter QueryFilter) ([]models.ActionRecord, error) {
 	var result []models.ActionRecord
 	for _, r := range m.records {
 		if filter.WorkspaceID != "" && r.WorkspaceID != filter.WorkspaceID {
@@ -125,7 +125,7 @@ func TestGetAction_Found(t *testing.T) {
 	rec := validRecord()
 	id, _ := svc.RecordAction(context.Background(), rec)
 
-	got, err := svc.GetAction(context.Background(), id)
+	got, err := svc.GetAction(context.Background(), "tenant-1", id)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestGetAction_Found(t *testing.T) {
 
 func TestGetAction_NotFound(t *testing.T) {
 	svc := NewService(newMockRepo())
-	_, err := svc.GetAction(context.Background(), "nonexistent")
+	_, err := svc.GetAction(context.Background(), "tenant-1", "nonexistent")
 	if !errors.Is(err, ErrRecordNotFound) {
 		t.Errorf("expected ErrRecordNotFound, got: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestQueryActions_WithFilters(t *testing.T) {
 		svc.RecordAction(ctx, rec)
 	}
 
-	records, _, err := svc.QueryActions(ctx, QueryFilter{WorkspaceID: "ws-0", Limit: 10})
+	records, _, err := svc.QueryActions(ctx, "tenant-1", QueryFilter{WorkspaceID: "ws-0", Limit: 10})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestQueryActions_Pagination(t *testing.T) {
 		svc.RecordAction(ctx, rec)
 	}
 
-	records, nextToken, err := svc.QueryActions(ctx, QueryFilter{Limit: 3})
+	records, nextToken, err := svc.QueryActions(ctx, "tenant-1", QueryFilter{Limit: 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -257,7 +257,7 @@ func TestQueryActions_Pagination(t *testing.T) {
 		t.Error("expected next page token")
 	}
 
-	records2, nextToken2, err := svc.QueryActions(ctx, QueryFilter{AfterID: nextToken, Limit: 3})
+	records2, nextToken2, err := svc.QueryActions(ctx, "tenant-1", QueryFilter{AfterID: nextToken, Limit: 3})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

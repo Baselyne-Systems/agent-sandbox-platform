@@ -41,6 +41,7 @@ message HumanRequest {
   HumanRequestType type = 13;
   HumanRequestUrgency urgency = 14;
   string task_id = 15;
+  string tenant_id = 16;
 }
 
 enum HumanRequestStatus {
@@ -119,6 +120,7 @@ message DeliveryChannelConfig {
   bool enabled = 5;
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp updated_at = 7;
+  string tenant_id = 8;
 }
 
 message ConfigureDeliveryChannelRequest {
@@ -150,6 +152,7 @@ message TimeoutPolicy {
   repeated string escalation_targets = 6;
   google.protobuf.Timestamp created_at = 7;
   google.protobuf.Timestamp updated_at = 8;
+  string tenant_id = 9;
 }
 
 message SetTimeoutPolicyRequest {

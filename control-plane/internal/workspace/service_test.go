@@ -36,6 +36,7 @@ func (m *mockRepo) CreateWorkspace(_ context.Context, ws *models.Workspace) erro
 	ws.CreatedAt = time.Now()
 	ws.UpdatedAt = ws.CreatedAt
 	cp := *ws
+	cp.TenantID = ws.TenantID
 	cp.Spec.AllowedTools = copyStrings(ws.Spec.AllowedTools)
 	cp.Spec.EnvVars = copyMap(ws.Spec.EnvVars)
 	cp.Spec.EgressAllowlist = copyStrings(ws.Spec.EgressAllowlist)
@@ -48,9 +49,9 @@ func (m *mockRepo) CreateWorkspace(_ context.Context, ws *models.Workspace) erro
 	return nil
 }
 
-func (m *mockRepo) GetWorkspace(_ context.Context, id string) (*models.Workspace, error) {
+func (m *mockRepo) GetWorkspace(_ context.Context, tenantID, id string) (*models.Workspace, error) {
 	ws, ok := m.workspaces[id]
-	if !ok {
+	if !ok || ws.TenantID != tenantID {
 		return nil, nil
 	}
 	cp := *ws
@@ -63,9 +64,12 @@ func (m *mockRepo) GetWorkspace(_ context.Context, id string) (*models.Workspace
 	return &cp, nil
 }
 
-func (m *mockRepo) ListWorkspaces(_ context.Context, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
+func (m *mockRepo) ListWorkspaces(_ context.Context, tenantID string, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
 	var result []models.Workspace
 	for _, ws := range m.workspaces {
+		if ws.TenantID != tenantID {
+			continue
+		}
 		if agentID != "" && ws.AgentID != agentID {
 			continue
 		}
@@ -87,9 +91,9 @@ func (m *mockRepo) ListWorkspaces(_ context.Context, agentID string, status mode
 	return result, nil
 }
 
-func (m *mockRepo) UpdateWorkspaceStatus(_ context.Context, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error {
+func (m *mockRepo) UpdateWorkspaceStatus(_ context.Context, tenantID, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error {
 	ws, ok := m.workspaces[id]
-	if !ok {
+	if !ok || ws.TenantID != tenantID {
 		return ErrWorkspaceNotFound
 	}
 	ws.Status = status
@@ -106,9 +110,9 @@ func (m *mockRepo) UpdateWorkspaceStatus(_ context.Context, id string, status mo
 	return nil
 }
 
-func (m *mockRepo) SetSnapshotID(_ context.Context, workspaceID, snapshotID string) error {
+func (m *mockRepo) SetSnapshotID(_ context.Context, tenantID, workspaceID, snapshotID string) error {
 	ws, ok := m.workspaces[workspaceID]
-	if !ok {
+	if !ok || ws.TenantID != tenantID {
 		return ErrWorkspaceNotFound
 	}
 	ws.SnapshotID = snapshotID
@@ -124,12 +128,13 @@ func (m *mockRepo) CreateSnapshot(_ context.Context, snapshot *models.WorkspaceS
 	return nil
 }
 
-func (m *mockRepo) GetSnapshot(_ context.Context, snapshotID string) (*models.WorkspaceSnapshot, error) {
-	// Look through workspaces to find one with matching snapshot ID.
+func (m *mockRepo) GetSnapshot(_ context.Context, tenantID, snapshotID string) (*models.WorkspaceSnapshot, error) {
+	// Look through workspaces to find one with matching snapshot ID and tenant.
 	for _, ws := range m.workspaces {
-		if ws.SnapshotID == snapshotID {
+		if ws.SnapshotID == snapshotID && ws.TenantID == tenantID {
 			return &models.WorkspaceSnapshot{
 				ID:          snapshotID,
+				TenantID:    tenantID,
 				WorkspaceID: ws.ID,
 				AgentID:     ws.AgentID,
 				TaskID:      ws.TaskID,
@@ -140,9 +145,9 @@ func (m *mockRepo) GetSnapshot(_ context.Context, snapshotID string) (*models.Wo
 	return nil, nil
 }
 
-func (m *mockRepo) TerminateWorkspace(_ context.Context, id string, reason string) error {
+func (m *mockRepo) TerminateWorkspace(_ context.Context, tenantID, id string, reason string) error {
 	ws, ok := m.workspaces[id]
-	if !ok {
+	if !ok || ws.TenantID != tenantID {
 		return ErrWorkspaceNotFound
 	}
 	if ws.Status == models.WorkspaceStatusTerminated || ws.Status == models.WorkspaceStatusFailed {
@@ -191,11 +196,11 @@ type mockPolicyCompiler struct {
 	err      error
 }
 
-func (m *mockPolicyCompiler) CompilePolicy(_ context.Context, _ []string) ([]byte, int, error) {
+func (m *mockPolicyCompiler) CompilePolicy(_ context.Context, _ string, _ []string) ([]byte, int, error) {
 	return m.compiled, m.count, m.err
 }
 
-func (m *mockPolicyCompiler) ResolveRuleIDs(_ context.Context, policyID string) ([]string, error) {
+func (m *mockPolicyCompiler) ResolveRuleIDs(_ context.Context, _ string, policyID string) ([]string, error) {
 	// Simple mock: split on comma, same as legacy behavior.
 	ids := strings.Split(policyID, ",")
 	for i := range ids {
@@ -261,7 +266,7 @@ func TestCreateWorkspace_Success(t *testing.T) {
 		CpuMillicores: 1000,
 		DiskMb:        2048,
 	}
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", spec)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "task-1", spec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -281,7 +286,7 @@ func TestCreateWorkspace_Success(t *testing.T) {
 
 func TestCreateWorkspace_Validation(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	_, err := svc.CreateWorkspace(context.Background(), "", "task-1", nil)
+	_, err := svc.CreateWorkspace(context.Background(), "test-tenant", "", "task-1", nil)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty agentID, got: %v", err)
 	}
@@ -289,7 +294,7 @@ func TestCreateWorkspace_Validation(t *testing.T) {
 
 func TestCreateWorkspace_DefaultSpec(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "", nil)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -309,7 +314,7 @@ func TestCreateWorkspace_DefaultSpec(t *testing.T) {
 
 func TestCreateWorkspace_NilCollections(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "", nil)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -337,7 +342,7 @@ func TestCreateWorkspace_WithOrchestration(t *testing.T) {
 	svc := newOrchestratedService(repo, compute, guardrails, hostAgentClient)
 	ctx := context.Background()
 
-	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", &models.WorkspaceSpec{
+	ws, err := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", &models.WorkspaceSpec{
 		MemoryMb:      1024,
 		CpuMillicores: 1000,
 		DiskMb:        2048,
@@ -358,7 +363,7 @@ func TestCreateWorkspace_WithOrchestration(t *testing.T) {
 	}
 
 	// Verify the workspace is also updated in the repo.
-	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	got, _ := svc.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if got.Status != models.WorkspaceStatusRunning {
 		t.Errorf("expected repo status running, got %q", got.Status)
 	}
@@ -375,7 +380,7 @@ func TestCreateWorkspace_PlacementFailure(t *testing.T) {
 	svc := newOrchestratedService(repo, compute, nil, hostAgentClient)
 	ctx := context.Background()
 
-	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	ws, err := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error (should not propagate): %v", err)
 	}
@@ -392,7 +397,7 @@ func TestCreateWorkspace_RuntimeFailure(t *testing.T) {
 	svc := newOrchestratedService(repo, compute, nil, hostAgentClient)
 	ctx := context.Background()
 
-	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	ws, err := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -418,7 +423,7 @@ func TestCreateWorkspace_WithGuardrails(t *testing.T) {
 	svc := newOrchestratedService(repo, compute, guardrails, hostAgentClient)
 	ctx := context.Background()
 
-	ws, err := svc.CreateWorkspace(ctx, "agent-1", "task-1", &models.WorkspaceSpec{
+	ws, err := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", &models.WorkspaceSpec{
 		GuardrailPolicyID: "rule-1,rule-2",
 	})
 	if err != nil {
@@ -433,8 +438,8 @@ func TestCreateWorkspace_WithGuardrails(t *testing.T) {
 
 func TestGetWorkspace_Found(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	created, _ := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", nil)
-	got, err := svc.GetWorkspace(context.Background(), created.ID)
+	created, _ := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "task-1", nil)
+	got, err := svc.GetWorkspace(context.Background(), "test-tenant", created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -445,7 +450,7 @@ func TestGetWorkspace_Found(t *testing.T) {
 
 func TestGetWorkspace_NotFound(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	_, err := svc.GetWorkspace(context.Background(), "nonexistent-id")
+	_, err := svc.GetWorkspace(context.Background(), "test-tenant", "nonexistent-id")
 	if !errors.Is(err, ErrWorkspaceNotFound) {
 		t.Errorf("expected ErrWorkspaceNotFound, got: %v", err)
 	}
@@ -453,7 +458,7 @@ func TestGetWorkspace_NotFound(t *testing.T) {
 
 func TestGetWorkspace_EmptyID(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	_, err := svc.GetWorkspace(context.Background(), "")
+	_, err := svc.GetWorkspace(context.Background(), "test-tenant", "")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty ID, got: %v", err)
 	}
@@ -465,12 +470,12 @@ func TestListWorkspaces_WithFilters(t *testing.T) {
 	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 
-	svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
-	svc.CreateWorkspace(ctx, "agent-2", "t2", nil)
-	svc.CreateWorkspace(ctx, "agent-1", "t3", nil)
+	svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "t1", nil)
+	svc.CreateWorkspace(ctx, "test-tenant", "agent-2", "t2", nil)
+	svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "t3", nil)
 
 	// Filter by agent
-	ws, _, err := svc.ListWorkspaces(ctx, "agent-1", "", 50, "")
+	ws, _, err := svc.ListWorkspaces(ctx, "test-tenant", "agent-1", "", 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -479,7 +484,7 @@ func TestListWorkspaces_WithFilters(t *testing.T) {
 	}
 
 	// All workspaces
-	ws, _, err = svc.ListWorkspaces(ctx, "", "", 50, "")
+	ws, _, err = svc.ListWorkspaces(ctx, "test-tenant", "", "", 50, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -493,10 +498,10 @@ func TestListWorkspaces_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.CreateWorkspace(ctx, "agent-1", fmt.Sprintf("t%d", i), nil)
+		svc.CreateWorkspace(ctx, "test-tenant", "agent-1", fmt.Sprintf("t%d", i), nil)
 	}
 
-	ws, nextToken, err := svc.ListWorkspaces(ctx, "", "", 3, "")
+	ws, nextToken, err := svc.ListWorkspaces(ctx, "test-tenant", "", "", 3, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -507,7 +512,7 @@ func TestListWorkspaces_Pagination(t *testing.T) {
 		t.Error("expected a next page token")
 	}
 
-	ws2, nextToken2, err := svc.ListWorkspaces(ctx, "", "", 3, nextToken)
+	ws2, nextToken2, err := svc.ListWorkspaces(ctx, "test-tenant", "", "", 3, nextToken)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -522,10 +527,10 @@ func TestListWorkspaces_Pagination(t *testing.T) {
 func TestListWorkspaces_DefaultPageSize(t *testing.T) {
 	svc := newTestService(newMockRepo())
 	ctx := context.Background()
-	svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
+	svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "t1", nil)
 
 	// page_size=0 should use default
-	ws, _, err := svc.ListWorkspaces(ctx, "", "", 0, "")
+	ws, _, err := svc.ListWorkspaces(ctx, "test-tenant", "", "", 0, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -539,13 +544,13 @@ func TestListWorkspaces_DefaultPageSize(t *testing.T) {
 func TestTerminateWorkspace_Success(t *testing.T) {
 	svc := newTestService(newMockRepo())
 	ctx := context.Background()
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "t1", nil)
 
-	if err := svc.TerminateWorkspace(ctx, ws.ID, "done"); err != nil {
+	if err := svc.TerminateWorkspace(ctx, "test-tenant", ws.ID, "done"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	got, _ := svc.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if got.Status != models.WorkspaceStatusTerminated {
 		t.Errorf("expected status terminated, got %q", got.Status)
 	}
@@ -553,7 +558,7 @@ func TestTerminateWorkspace_Success(t *testing.T) {
 
 func TestTerminateWorkspace_NotFound(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	err := svc.TerminateWorkspace(context.Background(), "nonexistent", "reason")
+	err := svc.TerminateWorkspace(context.Background(), "test-tenant", "nonexistent", "reason")
 	if !errors.Is(err, ErrWorkspaceNotFound) {
 		t.Errorf("expected ErrWorkspaceNotFound, got: %v", err)
 	}
@@ -562,11 +567,11 @@ func TestTerminateWorkspace_NotFound(t *testing.T) {
 func TestTerminateWorkspace_AlreadyTerminal(t *testing.T) {
 	svc := newTestService(newMockRepo())
 	ctx := context.Background()
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "t1", nil)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "t1", nil)
 
-	svc.TerminateWorkspace(ctx, ws.ID, "first")
+	svc.TerminateWorkspace(ctx, "test-tenant", ws.ID, "first")
 
-	err := svc.TerminateWorkspace(ctx, ws.ID, "second")
+	err := svc.TerminateWorkspace(ctx, "test-tenant", ws.ID, "second")
 	if !errors.Is(err, ErrWorkspaceAlreadyTerminal) {
 		t.Errorf("expected ErrWorkspaceAlreadyTerminal, got: %v", err)
 	}
@@ -574,7 +579,7 @@ func TestTerminateWorkspace_AlreadyTerminal(t *testing.T) {
 
 func TestTerminateWorkspace_EmptyID(t *testing.T) {
 	svc := newTestService(newMockRepo())
-	err := svc.TerminateWorkspace(context.Background(), "", "reason")
+	err := svc.TerminateWorkspace(context.Background(), "test-tenant", "", "reason")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty ID, got: %v", err)
 	}
@@ -594,16 +599,16 @@ func TestTerminateWorkspace_WithSandboxTeardown(t *testing.T) {
 	svc := newOrchestratedService(repo, compute, nil, hostAgentClient)
 	ctx := context.Background()
 
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 	if ws.Status != models.WorkspaceStatusRunning {
 		t.Fatalf("expected running, got %q", ws.Status)
 	}
 
-	if err := svc.TerminateWorkspace(ctx, ws.ID, "done"); err != nil {
+	if err := svc.TerminateWorkspace(ctx, "test-tenant", ws.ID, "done"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	got, _ := svc.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if got.Status != models.WorkspaceStatusTerminated {
 		t.Errorf("expected status terminated, got %q", got.Status)
 	}
@@ -658,12 +663,12 @@ func TestSnapshotWorkspace_Success(t *testing.T) {
 	svc := newSnapshotService(repo, compute, hostAgentClient, snapStore)
 	ctx := context.Background()
 
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 	if ws.Status != models.WorkspaceStatusRunning {
 		t.Fatalf("expected running, got %q", ws.Status)
 	}
 
-	snapshot, err := svc.SnapshotWorkspace(ctx, ws.ID)
+	snapshot, err := svc.SnapshotWorkspace(ctx, "test-tenant", ws.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -677,7 +682,7 @@ func TestSnapshotWorkspace_Success(t *testing.T) {
 		t.Errorf("expected 1 save call, got %d", snapStore.saveCalls)
 	}
 
-	got, _ := svc.GetWorkspace(ctx, ws.ID)
+	got, _ := svc.GetWorkspace(ctx, "test-tenant", ws.ID)
 	if got.Status != models.WorkspaceStatusPaused {
 		t.Errorf("expected paused after snapshot, got %q", got.Status)
 	}
@@ -690,10 +695,10 @@ func TestSnapshotWorkspace_NotRunning(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
 	// ws is in Pending state (no orchestration)
 
-	_, err := svc.SnapshotWorkspace(ctx, ws.ID)
+	_, err := svc.SnapshotWorkspace(ctx, "test-tenant", ws.ID)
 	if !errors.Is(err, ErrWorkspaceNotRunning) {
 		t.Errorf("expected ErrWorkspaceNotRunning, got: %v", err)
 	}
@@ -703,8 +708,8 @@ func TestSnapshotWorkspace_NoSnapshotStore(t *testing.T) {
 	svc := newTestService(newMockRepo())
 	ctx := context.Background()
 
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
-	_, err := svc.SnapshotWorkspace(ctx, ws.ID)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
+	_, err := svc.SnapshotWorkspace(ctx, "test-tenant", ws.ID)
 	if err == nil {
 		t.Error("expected error when snapshot store not configured")
 	}
@@ -721,10 +726,10 @@ func TestRestoreWorkspace_Success(t *testing.T) {
 	svc := newSnapshotService(repo, compute, hostAgentClient, snapStore)
 	ctx := context.Background()
 
-	ws, _ := svc.CreateWorkspace(ctx, "agent-1", "task-1", nil)
-	snapshot, _ := svc.SnapshotWorkspace(ctx, ws.ID)
+	ws, _ := svc.CreateWorkspace(ctx, "test-tenant", "agent-1", "task-1", nil)
+	snapshot, _ := svc.SnapshotWorkspace(ctx, "test-tenant", ws.ID)
 
-	restored, err := svc.RestoreWorkspace(ctx, snapshot.ID)
+	restored, err := svc.RestoreWorkspace(ctx, "test-tenant", snapshot.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -741,7 +746,7 @@ func TestRestoreWorkspace_SnapshotNotFound(t *testing.T) {
 		Repo:      newMockRepo(),
 		Snapshots: &mockSnapshotStore{},
 	})
-	_, err := svc.RestoreWorkspace(context.Background(), "nonexistent")
+	_, err := svc.RestoreWorkspace(context.Background(), "test-tenant", "nonexistent")
 	if !errors.Is(err, ErrSnapshotNotFound) {
 		t.Errorf("expected ErrSnapshotNotFound, got: %v", err)
 	}
@@ -781,7 +786,7 @@ func TestCreateWorkspace_WithCredentialInjection(t *testing.T) {
 	spec := &models.WorkspaceSpec{
 		AllowedTools: []string{"read_file", "write_file"},
 	}
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-007", "task-1", spec)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-007", "task-1", spec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -820,7 +825,7 @@ func TestCreateWorkspace_CredentialMintFailureContinues(t *testing.T) {
 		Credentials:   minter,
 	})
 
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "", nil)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -870,7 +875,7 @@ func TestCreateWorkspace_AutoSelectsTierForNewAgent(t *testing.T) {
 		Identity:      identity,
 	})
 
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", nil)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "task-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -910,7 +915,7 @@ func TestCreateWorkspace_ExplicitTierOverride(t *testing.T) {
 
 	// Explicitly set tier to standard — should not be overridden.
 	spec := &models.WorkspaceSpec{IsolationTier: models.IsolationTierStandard}
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", spec)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "task-1", spec)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -936,11 +941,78 @@ func TestCreateWorkspace_DefaultsToStandardWithoutIdentity(t *testing.T) {
 		DialHostAgent: dialer,
 	})
 
-	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "task-1", nil)
+	ws, err := svc.CreateWorkspace(context.Background(), "test-tenant", "agent-1", "task-1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if ws.Spec.IsolationTier != models.IsolationTierStandard {
 		t.Errorf("expected default tier 'standard', got %q", ws.Spec.IsolationTier)
+	}
+}
+
+// --- Cross-tenant isolation test ---
+
+func TestCrossTenantIsolation(t *testing.T) {
+	svc := newTestService(newMockRepo())
+	ctx := context.Background()
+
+	// Create workspaces for two different tenants.
+	wsA, err := svc.CreateWorkspace(ctx, "tenant-a", "agent-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error creating tenant-a workspace: %v", err)
+	}
+	wsB, err := svc.CreateWorkspace(ctx, "tenant-b", "agent-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("unexpected error creating tenant-b workspace: %v", err)
+	}
+
+	// Tenant A can see its own workspace.
+	got, err := svc.GetWorkspace(ctx, "tenant-a", wsA.ID)
+	if err != nil {
+		t.Fatalf("tenant-a should see own workspace: %v", err)
+	}
+	if got.ID != wsA.ID {
+		t.Errorf("expected workspace ID %q, got %q", wsA.ID, got.ID)
+	}
+
+	// Tenant A cannot see tenant B's workspace.
+	_, err = svc.GetWorkspace(ctx, "tenant-a", wsB.ID)
+	if !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Errorf("tenant-a should not see tenant-b workspace, got: %v", err)
+	}
+
+	// Tenant B cannot see tenant A's workspace.
+	_, err = svc.GetWorkspace(ctx, "tenant-b", wsA.ID)
+	if !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Errorf("tenant-b should not see tenant-a workspace, got: %v", err)
+	}
+
+	// ListWorkspaces scoped to tenant.
+	listA, _, err := svc.ListWorkspaces(ctx, "tenant-a", "", "", 50, "")
+	if err != nil {
+		t.Fatalf("unexpected error listing tenant-a: %v", err)
+	}
+	if len(listA) != 1 {
+		t.Errorf("expected 1 workspace for tenant-a, got %d", len(listA))
+	}
+
+	listB, _, err := svc.ListWorkspaces(ctx, "tenant-b", "", "", 50, "")
+	if err != nil {
+		t.Fatalf("unexpected error listing tenant-b: %v", err)
+	}
+	if len(listB) != 1 {
+		t.Errorf("expected 1 workspace for tenant-b, got %d", len(listB))
+	}
+
+	// Tenant A cannot terminate tenant B's workspace.
+	err = svc.TerminateWorkspace(ctx, "tenant-a", wsB.ID, "cross-tenant attempt")
+	if !errors.Is(err, ErrWorkspaceNotFound) {
+		t.Errorf("tenant-a should not terminate tenant-b workspace, got: %v", err)
+	}
+
+	// Tenant B can terminate its own workspace.
+	err = svc.TerminateWorkspace(ctx, "tenant-b", wsB.ID, "done")
+	if err != nil {
+		t.Fatalf("tenant-b should terminate own workspace: %v", err)
 	}
 }

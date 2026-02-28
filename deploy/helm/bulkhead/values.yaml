@@ -1,0 +1,64 @@
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+
+postgres:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+  storage:
+    size: 10Gi
+    storageClassName: ""
+  credentials:
+    username: postgres
+    password: postgres
+    database: sandbox
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 250m
+    limits:
+      memory: 1Gi
+      cpu: "1"
+
+migration:
+  enabled: true
+  backoffLimit: 3
+
+controlPlane:
+  image:
+    repository: bulkhead/control-plane
+    tag: latest
+    pullPolicy: IfNotPresent
+  logLevel: info
+  replicaCount: 1
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+
+hostAgent:
+  enabled: true
+  image:
+    repository: bulkhead/host-agent
+    tag: latest
+    pullPolicy: IfNotPresent
+  port: 50052
+  enableDocker: true
+  rustLog: info
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 200m
+    limits:
+      memory: 1Gi
+      cpu: "1"
+
+networkPolicy:
+  enabled: true
+
+serviceType: ClusterIP

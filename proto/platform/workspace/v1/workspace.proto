@@ -39,6 +39,7 @@ message Workspace {
   google.protobuf.Timestamp expires_at = 9;
   string snapshot_id = 10;
   IsolationTier isolation_tier = 11;    // resolved isolation tier for this workspace
+  string tenant_id = 12;
 }
 
 enum WorkspaceStatus {

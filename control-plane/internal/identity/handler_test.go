@@ -4,10 +4,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/identity/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// tenantCtx returns a context with the test tenant ID set.
+func tenantCtx() context.Context {
+	return middleware.ContextWithTenantID(context.Background(), testTenant)
+}
 
 func newTestHandler() *Handler {
 	return NewHandler(NewService(newMockRepo()))
@@ -15,7 +21,8 @@ func newTestHandler() *Handler {
 
 func TestHandler_RegisterAgent_Success(t *testing.T) {
 	h := newTestHandler()
-	resp, err := h.RegisterAgent(context.Background(), &pb.RegisterAgentRequest{
+	resp, err := h.RegisterAgent(tenantCtx(), &pb.RegisterAgentRequest{
+		TenantId:    testTenant,
 		Name:        "test-agent",
 		Description: "A test agent",
 		OwnerId:     "owner-1",
@@ -29,6 +36,9 @@ func TestHandler_RegisterAgent_Success(t *testing.T) {
 	}
 	if resp.Agent.AgentId == "" {
 		t.Error("expected agent ID")
+	}
+	if resp.Agent.TenantId != testTenant {
+		t.Errorf("tenant_id = %q, want %q", resp.Agent.TenantId, testTenant)
 	}
 	if resp.Agent.Name != "test-agent" {
 		t.Errorf("name = %q, want 'test-agent'", resp.Agent.Name)
@@ -49,9 +59,10 @@ func TestHandler_RegisterAgent_Success(t *testing.T) {
 
 func TestHandler_RegisterAgent_InvalidInput(t *testing.T) {
 	h := newTestHandler()
-	_, err := h.RegisterAgent(context.Background(), &pb.RegisterAgentRequest{
-		Name:    "",
-		OwnerId: "owner-1",
+	_, err := h.RegisterAgent(tenantCtx(), &pb.RegisterAgentRequest{
+		TenantId: testTenant,
+		Name:     "",
+		OwnerId:  "owner-1",
 	})
 	if err == nil {
 		t.Fatal("expected error")
@@ -67,11 +78,12 @@ func TestHandler_RegisterAgent_InvalidInput(t *testing.T) {
 
 func TestHandler_GetAgent_Success(t *testing.T) {
 	h := newTestHandler()
-	created, _ := h.RegisterAgent(context.Background(), &pb.RegisterAgentRequest{
-		Name: "a", OwnerId: "o",
+	ctx := tenantCtx()
+	created, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{
+		TenantId: testTenant, Name: "a", OwnerId: "o",
 	})
 
-	resp, err := h.GetAgent(context.Background(), &pb.GetAgentRequest{
+	resp, err := h.GetAgent(ctx, &pb.GetAgentRequest{
 		AgentId: created.Agent.AgentId,
 	})
 	if err != nil {
@@ -84,7 +96,7 @@ func TestHandler_GetAgent_Success(t *testing.T) {
 
 func TestHandler_GetAgent_NotFound(t *testing.T) {
 	h := newTestHandler()
-	_, err := h.GetAgent(context.Background(), &pb.GetAgentRequest{
+	_, err := h.GetAgent(tenantCtx(), &pb.GetAgentRequest{
 		AgentId: "nonexistent",
 	})
 	st, _ := status.FromError(err)
@@ -95,11 +107,11 @@ func TestHandler_GetAgent_NotFound(t *testing.T) {
 
 func TestHandler_ListAgents_Success(t *testing.T) {
 	h := newTestHandler()
-	ctx := context.Background()
+	ctx := tenantCtx()
 
 	for i := 0; i < 3; i++ {
 		h.RegisterAgent(ctx, &pb.RegisterAgentRequest{
-			Name: "agent", OwnerId: "owner",
+			TenantId: testTenant, Name: "agent", OwnerId: "owner",
 		})
 	}
 
@@ -114,10 +126,10 @@ func TestHandler_ListAgents_Success(t *testing.T) {
 
 func TestHandler_ListAgents_StatusFilter(t *testing.T) {
 	h := newTestHandler()
-	ctx := context.Background()
+	ctx := tenantCtx()
 
-	h.RegisterAgent(ctx, &pb.RegisterAgentRequest{Name: "a", OwnerId: "o"})
-	created, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{Name: "b", OwnerId: "o"})
+	h.RegisterAgent(ctx, &pb.RegisterAgentRequest{TenantId: testTenant, Name: "a", OwnerId: "o"})
+	created, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{TenantId: testTenant, Name: "b", OwnerId: "o"})
 	h.DeactivateAgent(ctx, &pb.DeactivateAgentRequest{AgentId: created.Agent.AgentId})
 
 	resp, err := h.ListAgents(ctx, &pb.ListAgentsRequest{
@@ -134,9 +146,9 @@ func TestHandler_ListAgents_StatusFilter(t *testing.T) {
 
 func TestHandler_DeactivateAgent_Success(t *testing.T) {
 	h := newTestHandler()
-	ctx := context.Background()
+	ctx := tenantCtx()
 
-	created, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{Name: "a", OwnerId: "o"})
+	created, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{TenantId: testTenant, Name: "a", OwnerId: "o"})
 	_, err := h.DeactivateAgent(ctx, &pb.DeactivateAgentRequest{AgentId: created.Agent.AgentId})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -150,7 +162,7 @@ func TestHandler_DeactivateAgent_Success(t *testing.T) {
 
 func TestHandler_DeactivateAgent_NotFound(t *testing.T) {
 	h := newTestHandler()
-	_, err := h.DeactivateAgent(context.Background(), &pb.DeactivateAgentRequest{
+	_, err := h.DeactivateAgent(tenantCtx(), &pb.DeactivateAgentRequest{
 		AgentId: "nonexistent",
 	})
 	st, _ := status.FromError(err)
@@ -161,9 +173,9 @@ func TestHandler_DeactivateAgent_NotFound(t *testing.T) {
 
 func TestHandler_MintCredential_Success(t *testing.T) {
 	h := newTestHandler()
-	ctx := context.Background()
+	ctx := tenantCtx()
 
-	agent, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{Name: "a", OwnerId: "o"})
+	agent, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{TenantId: testTenant, Name: "a", OwnerId: "o"})
 
 	resp, err := h.MintCredential(ctx, &pb.MintCredentialRequest{
 		AgentId:    agent.Agent.AgentId,
@@ -182,6 +194,9 @@ func TestHandler_MintCredential_Success(t *testing.T) {
 	if resp.Credential.CredentialId == "" {
 		t.Error("expected credential ID")
 	}
+	if resp.Credential.TenantId != testTenant {
+		t.Errorf("tenant_id = %q, want %q", resp.Credential.TenantId, testTenant)
+	}
 	if resp.Credential.AgentId != agent.Agent.AgentId {
 		t.Errorf("agent_id = %q, want %q", resp.Credential.AgentId, agent.Agent.AgentId)
 	}
@@ -195,9 +210,9 @@ func TestHandler_MintCredential_Success(t *testing.T) {
 
 func TestHandler_MintCredential_InactiveAgent(t *testing.T) {
 	h := newTestHandler()
-	ctx := context.Background()
+	ctx := tenantCtx()
 
-	agent, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{Name: "a", OwnerId: "o"})
+	agent, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{TenantId: testTenant, Name: "a", OwnerId: "o"})
 	h.DeactivateAgent(ctx, &pb.DeactivateAgentRequest{AgentId: agent.Agent.AgentId})
 
 	_, err := h.MintCredential(ctx, &pb.MintCredentialRequest{
@@ -213,9 +228,9 @@ func TestHandler_MintCredential_InactiveAgent(t *testing.T) {
 
 func TestHandler_RevokeCredential_Success(t *testing.T) {
 	h := newTestHandler()
-	ctx := context.Background()
+	ctx := tenantCtx()
 
-	agent, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{Name: "a", OwnerId: "o"})
+	agent, _ := h.RegisterAgent(ctx, &pb.RegisterAgentRequest{TenantId: testTenant, Name: "a", OwnerId: "o"})
 	cred, _ := h.MintCredential(ctx, &pb.MintCredentialRequest{
 		AgentId: agent.Agent.AgentId, Scopes: []string{"read"}, TtlSeconds: 3600,
 	})
@@ -230,7 +245,7 @@ func TestHandler_RevokeCredential_Success(t *testing.T) {
 
 func TestHandler_RevokeCredential_NotFound(t *testing.T) {
 	h := newTestHandler()
-	_, err := h.RevokeCredential(context.Background(), &pb.RevokeCredentialRequest{
+	_, err := h.RevokeCredential(tenantCtx(), &pb.RevokeCredentialRequest{
 		CredentialId: "nonexistent",
 	})
 	st, _ := status.FromError(err)

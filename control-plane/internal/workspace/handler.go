@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/workspace/v1"
 	"google.golang.org/grpc/codes"
@@ -24,11 +25,12 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) CreateWorkspace(ctx context.Context, req *pb.CreateWorkspaceRequest) (*pb.CreateWorkspaceResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	var spec *models.WorkspaceSpec
 	if req.GetSpec() != nil {
 		spec = protoSpecToModel(req.GetSpec())
 	}
-	ws, err := h.svc.CreateWorkspace(ctx, req.GetAgentId(), req.GetTaskId(), spec)
+	ws, err := h.svc.CreateWorkspace(ctx, tenantID, req.GetAgentId(), req.GetTaskId(), spec)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -36,7 +38,8 @@ func (h *Handler) CreateWorkspace(ctx context.Context, req *pb.CreateWorkspaceRe
 }
 
 func (h *Handler) GetWorkspace(ctx context.Context, req *pb.GetWorkspaceRequest) (*pb.GetWorkspaceResponse, error) {
-	ws, err := h.svc.GetWorkspace(ctx, req.GetWorkspaceId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	ws, err := h.svc.GetWorkspace(ctx, tenantID, req.GetWorkspaceId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -44,8 +47,9 @@ func (h *Handler) GetWorkspace(ctx context.Context, req *pb.GetWorkspaceRequest)
 }
 
 func (h *Handler) ListWorkspaces(ctx context.Context, req *pb.ListWorkspacesRequest) (*pb.ListWorkspacesResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	statusFilter := protoWorkspaceStatusToModel(req.GetStatus())
-	workspaces, nextToken, err := h.svc.ListWorkspaces(ctx, req.GetAgentId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
+	workspaces, nextToken, err := h.svc.ListWorkspaces(ctx, tenantID, req.GetAgentId(), statusFilter, int(req.GetPageSize()), req.GetPageToken())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -61,14 +65,16 @@ func (h *Handler) ListWorkspaces(ctx context.Context, req *pb.ListWorkspacesRequ
 }
 
 func (h *Handler) TerminateWorkspace(ctx context.Context, req *pb.TerminateWorkspaceRequest) (*pb.TerminateWorkspaceResponse, error) {
-	if err := h.svc.TerminateWorkspace(ctx, req.GetWorkspaceId(), req.GetReason()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.TerminateWorkspace(ctx, tenantID, req.GetWorkspaceId(), req.GetReason()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.TerminateWorkspaceResponse{}, nil
 }
 
 func (h *Handler) SnapshotWorkspace(ctx context.Context, req *pb.SnapshotWorkspaceRequest) (*pb.SnapshotWorkspaceResponse, error) {
-	snapshot, err := h.svc.SnapshotWorkspace(ctx, req.GetWorkspaceId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	snapshot, err := h.svc.SnapshotWorkspace(ctx, tenantID, req.GetWorkspaceId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -79,7 +85,8 @@ func (h *Handler) SnapshotWorkspace(ctx context.Context, req *pb.SnapshotWorkspa
 }
 
 func (h *Handler) RestoreWorkspace(ctx context.Context, req *pb.RestoreWorkspaceRequest) (*pb.RestoreWorkspaceResponse, error) {
-	ws, err := h.svc.RestoreWorkspace(ctx, req.GetSnapshotId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	ws, err := h.svc.RestoreWorkspace(ctx, tenantID, req.GetSnapshotId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -91,6 +98,7 @@ func (h *Handler) RestoreWorkspace(ctx context.Context, req *pb.RestoreWorkspace
 func workspaceToProto(ws *models.Workspace) *pb.Workspace {
 	p := &pb.Workspace{
 		WorkspaceId: ws.ID,
+		TenantId:    ws.TenantID,
 		AgentId:     ws.AgentID,
 		TaskId:      ws.TaskID,
 		Status:      modelWorkspaceStatusToProto(ws.Status),

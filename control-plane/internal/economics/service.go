@@ -24,7 +24,7 @@ func NewService(repo Repository) *Service {
 
 // RecordUsage validates and persists a usage record, then attempts to
 // increment the agent's budget.Used amount (non-fatal if no budget exists).
-func (s *Service) RecordUsage(ctx context.Context, agentID, workspaceID, resourceType, unit string, quantity, cost float64) (*models.UsageRecord, error) {
+func (s *Service) RecordUsage(ctx context.Context, tenantID, agentID, workspaceID, resourceType, unit string, quantity, cost float64) (*models.UsageRecord, error) {
 	if agentID == "" || resourceType == "" || unit == "" {
 		return nil, ErrInvalidInput
 	}
@@ -33,6 +33,7 @@ func (s *Service) RecordUsage(ctx context.Context, agentID, workspaceID, resourc
 	}
 
 	record := &models.UsageRecord{
+		TenantID:     tenantID,
 		AgentID:      agentID,
 		WorkspaceID:  workspaceID,
 		ResourceType: resourceType,
@@ -46,7 +47,7 @@ func (s *Service) RecordUsage(ctx context.Context, agentID, workspaceID, resourc
 
 	// Best-effort: update budget.Used. Non-fatal if agent has no budget.
 	if cost > 0 {
-		err := s.repo.AddUsedAmount(ctx, agentID, cost)
+		err := s.repo.AddUsedAmount(ctx, tenantID, agentID, cost)
 		if err != nil && !errors.Is(err, ErrBudgetNotFound) {
 			return nil, err
 		}
@@ -56,11 +57,11 @@ func (s *Service) RecordUsage(ctx context.Context, agentID, workspaceID, resourc
 }
 
 // GetBudget returns the budget for the given agent.
-func (s *Service) GetBudget(ctx context.Context, agentID string) (*models.Budget, error) {
+func (s *Service) GetBudget(ctx context.Context, tenantID, agentID string) (*models.Budget, error) {
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
-	budget, err := s.repo.GetBudget(ctx, agentID)
+	budget, err := s.repo.GetBudget(ctx, tenantID, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +72,7 @@ func (s *Service) GetBudget(ctx context.Context, agentID string) (*models.Budget
 }
 
 // SetBudget creates or updates a budget for the given agent with a 30-day period.
-func (s *Service) SetBudget(ctx context.Context, agentID string, limit float64, currency, onExceeded string, warningThreshold float64) (*models.Budget, error) {
+func (s *Service) SetBudget(ctx context.Context, tenantID, agentID string, limit float64, currency, onExceeded string, warningThreshold float64) (*models.Budget, error) {
 	if agentID == "" || currency == "" {
 		return nil, ErrInvalidInput
 	}
@@ -95,6 +96,7 @@ func (s *Service) SetBudget(ctx context.Context, agentID string, limit float64, 
 
 	now := time.Now().UTC()
 	budget := &models.Budget{
+		TenantID:         tenantID,
 		AgentID:          agentID,
 		Currency:         currency,
 		Limit:            limit,
@@ -106,7 +108,7 @@ func (s *Service) SetBudget(ctx context.Context, agentID string, limit float64, 
 	}
 
 	// Check if budget already exists — preserve Used amount on update.
-	existing, err := s.repo.GetBudget(ctx, agentID)
+	existing, err := s.repo.GetBudget(ctx, tenantID, agentID)
 	if err != nil {
 		return nil, err
 	}
@@ -129,12 +131,12 @@ type CostReport struct {
 
 // GetCostReport returns aggregated cost data for the given time window,
 // optionally filtered by agent.
-func (s *Service) GetCostReport(ctx context.Context, agentID string, start, end time.Time) (*CostReport, error) {
+func (s *Service) GetCostReport(ctx context.Context, tenantID, agentID string, start, end time.Time) (*CostReport, error) {
 	if !start.Before(end) {
 		return nil, ErrInvalidInput
 	}
 
-	costs, err := s.repo.GetCostReport(ctx, agentID, start, end)
+	costs, err := s.repo.GetCostReport(ctx, tenantID, agentID, start, end)
 	if err != nil {
 		return nil, err
 	}
@@ -157,12 +159,12 @@ type BudgetCheckResult struct {
 
 // CheckBudget reads the agent's budget and returns whether the estimated
 // cost fits within the remaining headroom, along with enforcement details.
-func (s *Service) CheckBudget(ctx context.Context, agentID string, estimatedCost float64) (*BudgetCheckResult, error) {
+func (s *Service) CheckBudget(ctx context.Context, tenantID, agentID string, estimatedCost float64) (*BudgetCheckResult, error) {
 	if agentID == "" {
 		return nil, ErrInvalidInput
 	}
 
-	budget, err := s.repo.GetBudget(ctx, agentID)
+	budget, err := s.repo.GetBudget(ctx, tenantID, agentID)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,61 @@
+{{- if .Values.hostAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "bulkhead.fullname" . }}-host-agent
+  labels:
+    {{- include "bulkhead.labels" . | nindent 4 }}
+    app.kubernetes.io/component: host-agent
+spec:
+  selector:
+    matchLabels:
+      {{- include "bulkhead.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: host-agent
+  template:
+    metadata:
+      labels:
+        {{- include "bulkhead.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: host-agent
+    spec:
+      containers:
+        - name: host-agent
+          image: "{{ .Values.hostAgent.image.repository }}:{{ .Values.hostAgent.image.tag }}"
+          imagePullPolicy: {{ .Values.hostAgent.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.hostAgent.port }}
+              name: grpc
+          env:
+            - name: GRPC_PORT
+              value: {{ .Values.hostAgent.port | quote }}
+            - name: ADVERTISE_ADDRESS
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: HIS_ENDPOINT
+              value: "http://{{ include "bulkhead.fullname" . }}-human:50051"
+            - name: ACTIVITY_ENDPOINT
+              value: "http://{{ include "bulkhead.fullname" . }}-activity:50051"
+            - name: ECONOMICS_ENDPOINT
+              value: "http://{{ include "bulkhead.fullname" . }}-economics:50051"
+            - name: GOVERNANCE_ENDPOINT
+              value: "http://{{ include "bulkhead.fullname" . }}-governance:50051"
+            - name: COMPUTE_ENDPOINT
+              value: "http://{{ include "bulkhead.fullname" . }}-compute:50051"
+            - name: ENABLE_DOCKER
+              value: {{ .Values.hostAgent.enableDocker | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.hostAgent.rustLog | quote }}
+          volumeMounts:
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+          resources:
+            {{- toYaml .Values.hostAgent.resources | nindent 12 }}
+      volumes:
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+            type: Socket
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+{{- end }}

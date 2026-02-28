@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/guardrails/v1"
 	"google.golang.org/grpc/codes"
@@ -22,7 +23,9 @@ func NewHandler(svc *Service) *Handler {
 }
 
 func (h *Handler) CreateRule(ctx context.Context, req *pb.CreateRuleRequest) (*pb.CreateRuleResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	rule, err := h.svc.CreateRule(ctx,
+		tenantID,
 		req.GetName(),
 		req.GetDescription(),
 		protoRuleTypeToModel(req.GetType()),
@@ -39,7 +42,8 @@ func (h *Handler) CreateRule(ctx context.Context, req *pb.CreateRuleRequest) (*p
 }
 
 func (h *Handler) GetRule(ctx context.Context, req *pb.GetRuleRequest) (*pb.GetRuleResponse, error) {
-	rule, err := h.svc.GetRule(ctx, req.GetRuleId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	rule, err := h.svc.GetRule(ctx, tenantID, req.GetRuleId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -47,8 +51,9 @@ func (h *Handler) GetRule(ctx context.Context, req *pb.GetRuleRequest) (*pb.GetR
 }
 
 func (h *Handler) ListRules(ctx context.Context, req *pb.ListRulesRequest) (*pb.ListRulesResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	typeFilter := protoRuleTypeToModel(req.GetType())
-	rules, nextToken, err := h.svc.ListRules(ctx, typeFilter, req.GetEnabledOnly(), int(req.GetPageSize()), req.GetPageToken())
+	rules, nextToken, err := h.svc.ListRules(ctx, tenantID, typeFilter, req.GetEnabledOnly(), int(req.GetPageSize()), req.GetPageToken())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -64,12 +69,13 @@ func (h *Handler) ListRules(ctx context.Context, req *pb.ListRulesRequest) (*pb.
 }
 
 func (h *Handler) UpdateRule(ctx context.Context, req *pb.UpdateRuleRequest) (*pb.UpdateRuleResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	pbRule := req.GetRule()
 	if pbRule == nil {
 		return nil, status.Error(codes.InvalidArgument, "rule is required")
 	}
 	rule := protoToRule(pbRule)
-	updated, err := h.svc.UpdateRule(ctx, rule)
+	updated, err := h.svc.UpdateRule(ctx, tenantID, rule)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -77,14 +83,16 @@ func (h *Handler) UpdateRule(ctx context.Context, req *pb.UpdateRuleRequest) (*p
 }
 
 func (h *Handler) DeleteRule(ctx context.Context, req *pb.DeleteRuleRequest) (*pb.DeleteRuleResponse, error) {
-	if err := h.svc.DeleteRule(ctx, req.GetRuleId()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.DeleteRule(ctx, tenantID, req.GetRuleId()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.DeleteRuleResponse{}, nil
 }
 
 func (h *Handler) CompilePolicy(ctx context.Context, req *pb.CompilePolicyRequest) (*pb.CompilePolicyResponse, error) {
-	compiled, count, err := h.svc.CompilePolicy(ctx, req.GetRuleIds())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	compiled, count, err := h.svc.CompilePolicy(ctx, tenantID, req.GetRuleIds())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -95,7 +103,8 @@ func (h *Handler) CompilePolicy(ctx context.Context, req *pb.CompilePolicyReques
 }
 
 func (h *Handler) SimulatePolicy(ctx context.Context, req *pb.SimulatePolicyRequest) (*pb.SimulatePolicyResponse, error) {
-	result, err := h.svc.SimulatePolicy(ctx, req.GetRuleIds(), req.GetToolName(), req.GetParameters(), req.GetAgentId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	result, err := h.svc.SimulatePolicy(ctx, tenantID, req.GetRuleIds(), req.GetToolName(), req.GetParameters(), req.GetAgentId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -133,7 +142,8 @@ func (h *Handler) GetBehaviorReport(ctx context.Context, req *pb.GetBehaviorRepo
 // --- GuardrailSet RPCs ---
 
 func (h *Handler) CreateGuardrailSet(ctx context.Context, req *pb.CreateGuardrailSetRequest) (*pb.CreateGuardrailSetResponse, error) {
-	set, err := h.svc.CreateSet(ctx, req.GetName(), req.GetDescription(), req.GetRuleIds(), req.GetLabels())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	set, err := h.svc.CreateSet(ctx, tenantID, req.GetName(), req.GetDescription(), req.GetRuleIds(), req.GetLabels())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -141,7 +151,8 @@ func (h *Handler) CreateGuardrailSet(ctx context.Context, req *pb.CreateGuardrai
 }
 
 func (h *Handler) GetGuardrailSet(ctx context.Context, req *pb.GetGuardrailSetRequest) (*pb.GetGuardrailSetResponse, error) {
-	set, err := h.svc.GetSet(ctx, req.GetSetId())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	set, err := h.svc.GetSet(ctx, tenantID, req.GetSetId())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -149,7 +160,8 @@ func (h *Handler) GetGuardrailSet(ctx context.Context, req *pb.GetGuardrailSetRe
 }
 
 func (h *Handler) ListGuardrailSets(ctx context.Context, req *pb.ListGuardrailSetsRequest) (*pb.ListGuardrailSetsResponse, error) {
-	sets, nextToken, err := h.svc.ListSets(ctx, int(req.GetPageSize()), req.GetPageToken())
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	sets, nextToken, err := h.svc.ListSets(ctx, tenantID, int(req.GetPageSize()), req.GetPageToken())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -164,12 +176,13 @@ func (h *Handler) ListGuardrailSets(ctx context.Context, req *pb.ListGuardrailSe
 }
 
 func (h *Handler) UpdateGuardrailSet(ctx context.Context, req *pb.UpdateGuardrailSetRequest) (*pb.UpdateGuardrailSetResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	pbSet := req.GetSet()
 	if pbSet == nil {
 		return nil, status.Error(codes.InvalidArgument, "set is required")
 	}
 	set := protoToSet(pbSet)
-	updated, err := h.svc.UpdateSet(ctx, set)
+	updated, err := h.svc.UpdateSet(ctx, tenantID, set)
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -177,7 +190,8 @@ func (h *Handler) UpdateGuardrailSet(ctx context.Context, req *pb.UpdateGuardrai
 }
 
 func (h *Handler) DeleteGuardrailSet(ctx context.Context, req *pb.DeleteGuardrailSetRequest) (*pb.DeleteGuardrailSetResponse, error) {
-	if err := h.svc.DeleteSet(ctx, req.GetSetId()); err != nil {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
+	if err := h.svc.DeleteSet(ctx, tenantID, req.GetSetId()); err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.DeleteGuardrailSetResponse{}, nil
@@ -188,6 +202,7 @@ func (h *Handler) DeleteGuardrailSet(ctx context.Context, req *pb.DeleteGuardrai
 func ruleToProto(r *models.GuardrailRule) *pb.GuardrailRule {
 	return &pb.GuardrailRule{
 		RuleId:      r.ID,
+		TenantId:    r.TenantID,
 		Name:        r.Name,
 		Description: r.Description,
 		Type:        modelRuleTypeToProto(r.Type),
@@ -304,6 +319,7 @@ func protoRuleActionToModel(a pb.RuleAction) models.RuleAction {
 func setToProto(s *models.GuardrailSet) *pb.GuardrailSet {
 	return &pb.GuardrailSet{
 		SetId:       s.ID,
+		TenantId:    s.TenantID,
 		Name:        s.Name,
 		Description: s.Description,
 		RuleIds:     s.RuleIDs,

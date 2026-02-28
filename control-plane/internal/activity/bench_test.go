@@ -69,7 +69,7 @@ func BenchmarkGetAction(b *testing.B) {
 	id, _ := svc.RecordAction(ctx, rec)
 
 	for b.Loop() {
-		_, err := svc.GetAction(ctx, id)
+		_, err := svc.GetAction(ctx, "tenant-1", id)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -95,7 +95,7 @@ func BenchmarkQueryActions_Scaling(b *testing.B) {
 
 			b.ResetTimer()
 			for b.Loop() {
-				_, _, err := svc.QueryActions(ctx, QueryFilter{
+				_, _, err := svc.QueryActions(ctx, "tenant-1", QueryFilter{
 					WorkspaceID: "ws-0",
 					Limit:       50,
 				})
@@ -124,7 +124,7 @@ func BenchmarkQueryActions_MultiFilter(b *testing.B) {
 
 	b.ResetTimer()
 	for b.Loop() {
-		_, _, err := svc.QueryActions(ctx, QueryFilter{
+		_, _, err := svc.QueryActions(ctx, "tenant-1", QueryFilter{
 			WorkspaceID: "ws-0",
 			AgentID:     "agent-0",
 			ToolName:    "tool-0",

@@ -1,0 +1,19 @@
+{{- if .Values.hostAgent.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "bulkhead.fullname" . }}-host-agent
+  labels:
+    {{- include "bulkhead.labels" . | nindent 4 }}
+    app.kubernetes.io/component: host-agent
+spec:
+  clusterIP: None
+  ports:
+    - port: {{ .Values.hostAgent.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "bulkhead.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: host-agent
+{{- end }}
