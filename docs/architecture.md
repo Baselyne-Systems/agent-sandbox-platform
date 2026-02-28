@@ -40,9 +40,10 @@ The orchestrator for sandboxed execution environments. When a workspace is creat
 
 **Responsibilities:**
 - Workspace creation with resource specs (memory, CPU, disk, duration)
-- Orchestrated provisioning: placement → policy compilation → sandbox creation
+- Orchestrated provisioning: placement → policy compilation → credential minting → sandbox creation
+- Automatic credential injection (`BULKHEAD_AGENT_TOKEN`, `BULKHEAD_AGENT_ID`) into sandbox environment
 - Workspace termination with sandbox teardown
-- Snapshot and restore for pause/resume workflows
+- Snapshot and restore for pause/resume workflows (local filesystem or S3 backend)
 
 ### Task Service
 
@@ -82,9 +83,30 @@ Manages the fleet of runtime hosts and handles workspace placement. Hosts regist
 Manages guardrail rules and compiles them into binary policies consumed by the Rust evaluator. Rules define conditions (tool name patterns, parameter checks) and actions (allow, deny, escalate, log) with priority ordering. The `CompilePolicy` RPC produces a JSON-serialized `CompiledPolicy` that the runtime deserializes into its evaluator. `SimulatePolicy` provides dry-run testing.
 
 **Responsibilities:**
-- CRUD operations for guardrail rules
+- CRUD operations for guardrail rules with optional scoping
 - Policy compilation (rule IDs → binary bytes)
 - Policy simulation (dry-run against sample tool calls)
+- Considered evaluation tier — periodic behavior analysis via `GetBehaviorReport`
+
+**Rule Scoping:**
+
+Rules can be scoped to restrict when they apply. An empty scope means the rule applies globally (all agents, all tools). Scopes support four dimensions:
+- `agent_ids` — only evaluate for specific agents
+- `tool_names` — only evaluate for specific tools
+- `trust_levels` — only evaluate for agents at specific trust levels (new/established/trusted)
+- `data_classifications` — only evaluate for data at specific classification levels (public/internal/confidential/restricted)
+
+Scopes are compiled into the binary policy and evaluated in the Rust hot path. If a rule's scope doesn't match the current context, the rule is skipped entirely.
+
+**Considered Evaluation Tier:**
+
+In addition to real-time per-call evaluation, the Guardrails Service runs a "considered" evaluation tier that analyzes agent behavior over time windows. The `ConsideredEvaluator` periodically queries the Activity Store and computes:
+- Denial rate (high = agent may be probing boundaries)
+- Error rate (high = agent may be stuck or misconfigured)
+- Action velocity (high = potential runaway loop)
+- Stuck agent detection (consecutive errors on the same tool)
+
+Results are exposed via `GetBehaviorReport` for operators and can trigger alerts.
 
 **Rule Types:**
 | Type | Condition Format | Example |
@@ -96,13 +118,18 @@ Manages guardrail rules and compiles them into binary policies consumed by the R
 
 ### Human Interaction Service (HIS)
 
-Delivers agent requests to humans and collects responses. Supports three request types: approvals, questions, and escalations, each with urgency levels (low/normal/high/critical). Includes configurable delivery channels (Slack, email, Teams) and timeout policies that define what happens when a request expires (escalate, continue, or halt).
+Delivers agent requests to humans and collects responses. Supports three request types: approvals, questions, and escalations, each with urgency levels (low/normal/high/critical). Includes configurable delivery channels and timeout policies that define what happens when a request expires (escalate, continue, or halt).
 
 **Responsibilities:**
 - Create/get/respond to human requests
-- Delivery channel configuration per user
+- Delivery channel configuration per user (generic webhook-based)
 - Timeout policy management (global, per-agent, per-workspace)
 - Background timeout enforcement worker (30s polling interval)
+- Webhook delivery — when a request is created, enabled channels receive a standard JSON payload via HTTP POST
+
+**Webhook Delivery:**
+
+All delivery channels use a standard `WebhookPayload` JSON format. The platform sends HTTP POST requests with `Content-Type: application/json`, `X-Bulkhead-Channel-Type`, and `X-Bulkhead-Request-ID` headers. Community adapters can bridge webhooks to Slack, email, Teams, PagerDuty, etc.
 
 ### Activity Store
 
@@ -112,6 +139,8 @@ An append-only record of every action executed in the platform. Each record capt
 - Append-only action recording (no updates or deletes)
 - Query with filters (workspace, agent, task, tool, outcome, time range)
 - Real-time action streaming with workspace/agent filtering
+- Alert configuration and evaluation (denial rate, error rate, action velocity, budget breach, stuck agent)
+- Background alert engine that periodically evaluates conditions and sends webhook notifications
 
 ### Economics Service
 
@@ -120,8 +149,10 @@ Handles usage metering and budget enforcement. Every tool execution is recorded 
 **Responsibilities:**
 - Usage recording (resource type, quantity, cost)
 - Budget management (set/get per agent, 30-day periods)
-- Budget checking (allowed/denied with remaining balance)
+- Budget checking (allowed/denied with remaining balance and enforcement action)
 - Cost reporting (aggregated by resource type)
+- `on_exceeded` enforcement: `halt` (deny all), `request_increase` (trigger HIS request), `warn` (allow but log warning)
+- `warning_threshold` (0.0–1.0): returns a warning flag when remaining balance drops below threshold
 
 ### Data Governance Service
 
@@ -153,8 +184,9 @@ The Host Agent manages the full lifecycle of agent containers (create, resource-
 - Guardrails evaluation in the hot path (RwLock for concurrent reads, <50ms)
 - Hot-reload of guardrails policies without sandbox restart
 - Policy-only `ExecuteTool` — returns verdict + action_id, no tool execution
+- DLP egress inspection — for allowed tool calls with destination/url parameters, calls the Governance Service's `InspectEgress` RPC to block sensitive data exfiltration
 - `ReportActionResult` — records agent-reported tool outcomes for audit trail
-- Budget checking before tool evaluation (optional, via Economics Service)
+- Budget checking with `on_exceeded` enforcement (halt, request_increase, warn) before tool evaluation
 - Activity recording (optional, via Activity Store)
 - Human interaction forwarding (optional, via HIS)
 
@@ -187,15 +219,19 @@ sequenceDiagram
     Agent->>HA: ExecuteTool (x-sandbox-id)
     Note over HA: 1. Lookup sandbox from header
     Note over HA: 2. Parse parameters (Struct → JSON)
-    HA->>Economics: 3. CheckBudget
-    Economics-->>HA: allowed / denied
-    Note over HA: 4. Guardrails eval (RwLock read)<br/>Allow / Deny(reason) / Escalate(id)
-    Note over HA: 5. Generate action_id (UUID)
-    Note over HA: 6. Increment action counter (atomic)
-    Note over HA: 7. Emit action event (broadcast)
+    HA->>Economics: 3. CheckBudget (+ on_exceeded enforcement)
+    Economics-->>HA: allowed / denied / enforcement_action
+    Note over HA: 4. Guardrails eval with scoping (RwLock read)<br/>Allow / Deny(reason) / Escalate(id)
+    opt Tool has destination/url parameter
+        HA->>Governance: 5. InspectEgress (DLP check)
+        Governance-->>HA: allowed / denied (sensitive data)
+    end
+    Note over HA: 6. Generate action_id (UUID)
+    Note over HA: 7. Increment action counter (atomic)
+    Note over HA: 8. Emit action event (broadcast)
     HA-->>Agent: verdict, action_id, denial_reason
-    HA-)Activity: 8. Record evaluation (fire-and-forget)
-    HA-)Economics: 9. Record usage (fire-and-forget)
+    HA-)Activity: 9. Record evaluation (fire-and-forget)
+    HA-)Economics: 10. Record usage (fire-and-forget)
 
     Note over Agent: 10. Execute tool locally (inside container)
     opt Tool makes outbound network call
@@ -211,7 +247,7 @@ sequenceDiagram
     HA-)Activity: 12. Record execution result (fire-and-forget)
 ```
 
-Steps 8, 9, and 12 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The Python SDK's `@tool` decorator handles steps 10–12 transparently (see [Agent Developer Guide](getting-started/agent-guide.md)). The egress enforcer operates at the kernel level (iptables FORWARD chain) — it filters actual network traffic independently of guardrails evaluation.
+Steps 9, 10, and 13 are fire-and-forget (`tokio::spawn`) — they don't block the response to the agent. The DLP check (step 5) only runs for tool calls with destination/url/endpoint parameters — it inspects outbound content for sensitive data patterns before the agent executes. The Python SDK's `@tool` decorator handles steps 11–13 transparently (see [Agent Developer Guide](getting-started/agent-guide.md)). The egress enforcer operates at the kernel level (iptables FORWARD chain) — it filters actual network traffic independently of guardrails evaluation.
 
 ### Flow 2: Human Interaction (Non-Blocking)
 

@@ -27,6 +27,19 @@ service GuardrailsService {
 
   // SimulatePolicy dry-runs a set of rules against a sample tool call.
   rpc SimulatePolicy(SimulatePolicyRequest) returns (SimulatePolicyResponse);
+
+  // GetBehaviorReport returns a behavior analysis report for an agent over a
+  // time window, produced by the considered evaluation tier.
+  rpc GetBehaviorReport(GetBehaviorReportRequest) returns (GetBehaviorReportResponse);
+}
+
+// RuleScope restricts which agents, tools, trust levels, or data classifications
+// a rule applies to. An empty scope means the rule applies globally.
+message RuleScope {
+  repeated string agent_ids = 1;            // Apply only to these agents (empty = all)
+  repeated string tool_names = 2;           // Apply only to these tools (empty = all)
+  repeated string trust_levels = 3;         // "new", "established", "trusted" (empty = all)
+  repeated string data_classifications = 4; // "public", "internal", "confidential", "restricted" (empty = all)
 }
 
 // GuardrailRule defines a single guardrail rule.
@@ -43,6 +56,8 @@ message GuardrailRule {
   map<string, string> labels = 9;
   google.protobuf.Timestamp created_at = 10;
   google.protobuf.Timestamp updated_at = 11;
+  // Optional scope — restricts when this rule is evaluated.
+  RuleScope scope = 12;
 }
 
 enum RuleType {
@@ -73,6 +88,7 @@ message CreateRuleRequest {
   RuleAction action = 5;
   int32 priority = 6;
   map<string, string> labels = 7;
+  RuleScope scope = 8;
 }
 
 message CreateRuleResponse {
@@ -134,4 +150,27 @@ message SimulatePolicyResponse {
   string matched_rule_id = 2;
   string matched_rule_name = 3;
   string reason = 4;
+}
+
+// BehaviorReport is a summary of an agent's behavior over a time window,
+// produced by the considered evaluation tier.
+message BehaviorReport {
+  string agent_id = 1;
+  google.protobuf.Timestamp window_start = 2;
+  google.protobuf.Timestamp window_end = 3;
+  int64 action_count = 4;
+  double denial_rate = 5;
+  double error_rate = 6;
+  repeated string flags = 7;
+  string recommendation = 8;
+}
+
+message GetBehaviorReportRequest {
+  string agent_id = 1;
+  google.protobuf.Timestamp window_start = 2;
+  google.protobuf.Timestamp window_end = 3;
+}
+
+message GetBehaviorReportResponse {
+  BehaviorReport report = 1;
 }

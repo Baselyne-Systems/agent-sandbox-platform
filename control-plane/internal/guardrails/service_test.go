@@ -106,7 +106,7 @@ func copyLabels(m map[string]string) map[string]string {
 func TestCreateRule_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	rule, err := svc.CreateRule(context.Background(), "deny-exec", "Block exec calls",
-		models.RuleTypeToolFilter, "tool == 'exec'", models.RuleActionDeny, 10, nil)
+		models.RuleTypeToolFilter, "tool == 'exec'", models.RuleActionDeny, 10, nil, models.RuleScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -128,23 +128,23 @@ func TestCreateRule_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.CreateRule(ctx, "", "desc", models.RuleTypeToolFilter, "cond", models.RuleActionDeny, 0, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "", "desc", models.RuleTypeToolFilter, "cond", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty name, got: %v", err)
 	}
-	if _, err := svc.CreateRule(ctx, "name", "desc", models.RuleTypeToolFilter, "", models.RuleActionDeny, 0, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "name", "desc", models.RuleTypeToolFilter, "", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty condition, got: %v", err)
 	}
-	if _, err := svc.CreateRule(ctx, "name", "desc", "bad_type", "cond", models.RuleActionDeny, 0, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "name", "desc", "bad_type", "cond", models.RuleActionDeny, 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid type, got: %v", err)
 	}
-	if _, err := svc.CreateRule(ctx, "name", "desc", models.RuleTypeToolFilter, "cond", "bad_action", 0, nil); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.CreateRule(ctx, "name", "desc", models.RuleTypeToolFilter, "cond", "bad_action", 0, nil, models.RuleScope{}); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for invalid action, got: %v", err)
 	}
 }
 
 func TestGetRule_Found(t *testing.T) {
 	svc := NewService(newMockRepo())
-	created, _ := svc.CreateRule(context.Background(), "r", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil)
+	created, _ := svc.CreateRule(context.Background(), "r", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil, models.RuleScope{})
 	got, err := svc.GetRule(context.Background(), created.ID)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -165,7 +165,7 @@ func TestGetRule_NotFound(t *testing.T) {
 func TestUpdateRule_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	created, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 5, nil)
+	created, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 5, nil, models.RuleScope{})
 
 	created.Name = "updated"
 	created.Priority = 20
@@ -199,7 +199,7 @@ func TestUpdateRule_Validation(t *testing.T) {
 func TestDeleteRule_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil)
+	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
 
 	if err := svc.DeleteRule(ctx, rule.ID); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -223,9 +223,9 @@ func TestListRules_WithFilters(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	svc.CreateRule(ctx, "r1", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil)
-	svc.CreateRule(ctx, "r2", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil)
-	svc.CreateRule(ctx, "r3", "", models.RuleTypeToolFilter, "c", models.RuleActionAllow, 0, nil)
+	svc.CreateRule(ctx, "r1", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "r2", "", models.RuleTypeRateLimit, "c", models.RuleActionLog, 0, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "r3", "", models.RuleTypeToolFilter, "c", models.RuleActionAllow, 0, nil, models.RuleScope{})
 
 	// Filter by type
 	rules, _, err := svc.ListRules(ctx, models.RuleTypeToolFilter, false, 50, "")
@@ -252,7 +252,7 @@ func TestListRules_Pagination(t *testing.T) {
 	ctx := context.Background()
 
 	for i := 0; i < 5; i++ {
-		svc.CreateRule(ctx, fmt.Sprintf("rule-%d", i), "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil)
+		svc.CreateRule(ctx, fmt.Sprintf("rule-%d", i), "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
 	}
 
 	rules, nextToken, err := svc.ListRules(ctx, "", false, 3, "")
@@ -284,9 +284,9 @@ func TestCompilePolicy(t *testing.T) {
 	ctx := context.Background()
 
 	// Create rules first so CompilePolicy can fetch them
-	r1, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil)
-	r2, _ := svc.CreateRule(ctx, "log-read", "Log reads", models.RuleTypeToolFilter, "read_file", models.RuleActionLog, 20, nil)
-	r3, _ := svc.CreateRule(ctx, "check-path", "Check path", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil)
+	r1, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
+	r2, _ := svc.CreateRule(ctx, "log-read", "Log reads", models.RuleTypeToolFilter, "read_file", models.RuleActionLog, 20, nil, models.RuleScope{})
+	r3, _ := svc.CreateRule(ctx, "check-path", "Check path", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil, models.RuleScope{})
 
 	compiled, count, err := svc.CompilePolicy(ctx, []string{r1.ID, r2.ID, r3.ID})
 	if err != nil {
@@ -341,7 +341,7 @@ func TestSimulatePolicy_ToolFilterMatch(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil)
+	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
 	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "exec", nil, "agent-1")
 	if err != nil {
@@ -362,7 +362,7 @@ func TestSimulatePolicy_ToolFilterNoMatch(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil)
+	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec,shell", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
 	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "read_file", nil, "agent-1")
 	if err != nil {
@@ -380,7 +380,7 @@ func TestSimulatePolicy_ParameterCheckMatch(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "block-shadow", "Block /etc/shadow", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil)
+	rule, _ := svc.CreateRule(ctx, "block-shadow", "Block /etc/shadow", models.RuleTypeParameterCheck, "path=/etc/shadow", models.RuleActionDeny, 5, nil, models.RuleScope{})
 
 	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "read_file", map[string]string{"path": "/etc/shadow"}, "agent-1")
 	if err != nil {
@@ -399,8 +399,8 @@ func TestSimulatePolicy_PriorityOrdering(t *testing.T) {
 	ctx := context.Background()
 
 	// Lower priority number = higher precedence
-	allowRule, _ := svc.CreateRule(ctx, "allow-read", "Allow reads", models.RuleTypeToolFilter, "read_file", models.RuleActionAllow, 1, nil)
-	svc.CreateRule(ctx, "deny-read", "Deny reads", models.RuleTypeToolFilter, "read_file", models.RuleActionDeny, 10, nil)
+	allowRule, _ := svc.CreateRule(ctx, "allow-read", "Allow reads", models.RuleTypeToolFilter, "read_file", models.RuleActionAllow, 1, nil, models.RuleScope{})
+	svc.CreateRule(ctx, "deny-read", "Deny reads", models.RuleTypeToolFilter, "read_file", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
 	result, err := svc.SimulatePolicy(ctx, []string{allowRule.ID}, "read_file", nil, "agent-1")
 	if err != nil {
@@ -416,7 +416,7 @@ func TestSimulatePolicy_DisabledRulesSkipped(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 10, nil)
+	rule, _ := svc.CreateRule(ctx, "deny-exec", "Block exec", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 10, nil, models.RuleScope{})
 
 	// Disable the rule
 	rule.Enabled = false
@@ -435,7 +435,7 @@ func TestSimulatePolicy_EscalateVerdict(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "escalate-deploy", "Escalate deployments", models.RuleTypeToolFilter, "deploy", models.RuleActionEscalate, 5, nil)
+	rule, _ := svc.CreateRule(ctx, "escalate-deploy", "Escalate deployments", models.RuleTypeToolFilter, "deploy", models.RuleActionEscalate, 5, nil, models.RuleScope{})
 
 	result, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "deploy", nil, "agent-1")
 	if err != nil {
@@ -457,7 +457,7 @@ func TestSimulatePolicy_EmptyRules(t *testing.T) {
 func TestSimulatePolicy_EmptyToolName(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
-	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 0, nil)
+	rule, _ := svc.CreateRule(ctx, "r", "", models.RuleTypeToolFilter, "exec", models.RuleActionDeny, 0, nil, models.RuleScope{})
 	_, err := svc.SimulatePolicy(ctx, []string{rule.ID}, "", nil, "agent-1")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got: %v", err)

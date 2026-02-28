@@ -30,6 +30,7 @@ func (h *Handler) CreateRule(ctx context.Context, req *pb.CreateRuleRequest) (*p
 		protoRuleActionToModel(req.GetAction()),
 		int(req.GetPriority()),
 		req.GetLabels(),
+		protoScopeToModel(req.GetScope()),
 	)
 	if err != nil {
 		return nil, toGRPCError(err)
@@ -106,6 +107,29 @@ func (h *Handler) SimulatePolicy(ctx context.Context, req *pb.SimulatePolicyRequ
 	}, nil
 }
 
+func (h *Handler) GetBehaviorReport(ctx context.Context, req *pb.GetBehaviorReportRequest) (*pb.GetBehaviorReportResponse, error) {
+	windowStart := req.GetWindowStart().AsTime()
+	windowEnd := req.GetWindowEnd().AsTime()
+
+	report, err := h.svc.GetBehaviorReport(ctx, req.GetAgentId(), windowStart, windowEnd)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+
+	return &pb.GetBehaviorReportResponse{
+		Report: &pb.BehaviorReport{
+			AgentId:        report.AgentID,
+			WindowStart:    timestamppb.New(report.WindowStart),
+			WindowEnd:      timestamppb.New(report.WindowEnd),
+			ActionCount:    report.ActionCount,
+			DenialRate:     report.DenialRate,
+			ErrorRate:      report.ErrorRate,
+			Flags:          report.Flags,
+			Recommendation: report.Recommendation,
+		},
+	}, nil
+}
+
 // --- converters ---
 
 func ruleToProto(r *models.GuardrailRule) *pb.GuardrailRule {
@@ -119,6 +143,7 @@ func ruleToProto(r *models.GuardrailRule) *pb.GuardrailRule {
 		Priority:    int32(r.Priority),
 		Enabled:     r.Enabled,
 		Labels:      r.Labels,
+		Scope:       modelScopeToProto(r.Scope),
 		CreatedAt:   timestamppb.New(r.CreatedAt),
 		UpdatedAt:   timestamppb.New(r.UpdatedAt),
 	}
@@ -135,6 +160,31 @@ func protoToRule(p *pb.GuardrailRule) *models.GuardrailRule {
 		Priority:    int(p.GetPriority()),
 		Enabled:     p.GetEnabled(),
 		Labels:      p.GetLabels(),
+		Scope:       protoScopeToModel(p.GetScope()),
+	}
+}
+
+func modelScopeToProto(s models.RuleScope) *pb.RuleScope {
+	if len(s.AgentIDs) == 0 && len(s.ToolNames) == 0 && len(s.TrustLevels) == 0 && len(s.DataClassifications) == 0 {
+		return nil
+	}
+	return &pb.RuleScope{
+		AgentIds:            s.AgentIDs,
+		ToolNames:           s.ToolNames,
+		TrustLevels:         s.TrustLevels,
+		DataClassifications: s.DataClassifications,
+	}
+}
+
+func protoScopeToModel(p *pb.RuleScope) models.RuleScope {
+	if p == nil {
+		return models.RuleScope{}
+	}
+	return models.RuleScope{
+		AgentIDs:            p.GetAgentIds(),
+		ToolNames:           p.GetToolNames(),
+		TrustLevels:         p.GetTrustLevels(),
+		DataClassifications: p.GetDataClassifications(),
 	}
 }
 

@@ -159,6 +159,7 @@ services:
       HIS_ENDPOINT: http://human:50051
       ACTIVITY_ENDPOINT: http://activity:50051
       ECONOMICS_ENDPOINT: http://economics:50051
+      GOVERNANCE_ENDPOINT: http://governance:50051
       ENABLE_DOCKER: "true"
       RUST_LOG: info
     volumes:
@@ -171,6 +172,8 @@ services:
       activity:
         condition: service_healthy
       economics:
+        condition: service_healthy
+      governance:
         condition: service_healthy
     networks:
       - bulkhead

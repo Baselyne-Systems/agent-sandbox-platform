@@ -49,7 +49,8 @@ func (h *Handler) GetBudget(ctx context.Context, req *pb.GetBudgetRequest) (*pb.
 }
 
 func (h *Handler) SetBudget(ctx context.Context, req *pb.SetBudgetRequest) (*pb.SetBudgetResponse, error) {
-	budget, err := h.svc.SetBudget(ctx, req.GetAgentId(), req.GetLimit(), req.GetCurrency())
+	onExceeded := onExceededProtoToString(req.GetOnExceeded())
+	budget, err := h.svc.SetBudget(ctx, req.GetAgentId(), req.GetLimit(), req.GetCurrency(), onExceeded, req.GetWarningThreshold())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
@@ -57,13 +58,15 @@ func (h *Handler) SetBudget(ctx context.Context, req *pb.SetBudgetRequest) (*pb.
 }
 
 func (h *Handler) CheckBudget(ctx context.Context, req *pb.CheckBudgetRequest) (*pb.CheckBudgetResponse, error) {
-	allowed, remaining, err := h.svc.CheckBudget(ctx, req.GetAgentId(), req.GetEstimatedCost())
+	result, err := h.svc.CheckBudget(ctx, req.GetAgentId(), req.GetEstimatedCost())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}
 	return &pb.CheckBudgetResponse{
-		Allowed:   allowed,
-		Remaining: remaining,
+		Allowed:           result.Allowed,
+		Remaining:         result.Remaining,
+		EnforcementAction: result.EnforcementAction,
+		Warning:           result.Warning,
 	}, nil
 }
 
@@ -96,13 +99,41 @@ func (h *Handler) GetCostReport(ctx context.Context, req *pb.GetCostReportReques
 
 func budgetToProto(b *models.Budget) *pb.Budget {
 	return &pb.Budget{
-		BudgetId:    b.ID,
-		AgentId:     b.AgentID,
-		Limit:       b.Limit,
-		Used:        b.Used,
-		Currency:    b.Currency,
-		PeriodStart: timestamppb.New(b.PeriodStart),
-		PeriodEnd:   timestamppb.New(b.PeriodEnd),
+		BudgetId:         b.ID,
+		AgentId:          b.AgentID,
+		Limit:            b.Limit,
+		Used:             b.Used,
+		Currency:         b.Currency,
+		PeriodStart:      timestamppb.New(b.PeriodStart),
+		PeriodEnd:        timestamppb.New(b.PeriodEnd),
+		OnExceeded:       onExceededStringToProto(b.OnExceeded),
+		WarningThreshold: b.WarningThreshold,
+	}
+}
+
+func onExceededStringToProto(s string) pb.OnExceededAction {
+	switch s {
+	case "halt":
+		return pb.OnExceededAction_ON_EXCEEDED_ACTION_HALT
+	case "request_increase":
+		return pb.OnExceededAction_ON_EXCEEDED_ACTION_REQUEST_INCREASE
+	case "warn":
+		return pb.OnExceededAction_ON_EXCEEDED_ACTION_WARN
+	default:
+		return pb.OnExceededAction_ON_EXCEEDED_ACTION_HALT
+	}
+}
+
+func onExceededProtoToString(a pb.OnExceededAction) string {
+	switch a {
+	case pb.OnExceededAction_ON_EXCEEDED_ACTION_HALT:
+		return "halt"
+	case pb.OnExceededAction_ON_EXCEEDED_ACTION_REQUEST_INCREASE:
+		return "request_increase"
+	case pb.OnExceededAction_ON_EXCEEDED_ACTION_WARN:
+		return "warn"
+	default:
+		return ""
 	}
 }
 

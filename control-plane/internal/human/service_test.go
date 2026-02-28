@@ -165,6 +165,17 @@ func (m *mockRepo) GetTimeoutPolicy(_ context.Context, scope, scopeID string) (*
 	return &cp, nil
 }
 
+func (m *mockRepo) ListEnabledChannels(_ context.Context) ([]models.DeliveryChannelConfig, error) {
+	var result []models.DeliveryChannelConfig
+	for _, cfg := range m.channels {
+		if cfg.Enabled {
+			cp := *cfg
+			result = append(result, cp)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockRepo) ExpirePendingRequests(_ context.Context) (int, error) {
 	count := 0
 	now := time.Now()

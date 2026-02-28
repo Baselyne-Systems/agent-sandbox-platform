@@ -96,6 +96,15 @@ const (
 	RuleActionLog      RuleAction = "log"
 )
 
+// RuleScope restricts which agents/tools/trust-levels/data-classifications a rule applies to.
+// Empty fields mean "match all".
+type RuleScope struct {
+	AgentIDs            []string `json:"agent_ids,omitempty"`
+	ToolNames           []string `json:"tool_names,omitempty"`
+	TrustLevels         []string `json:"trust_levels,omitempty"`
+	DataClassifications []string `json:"data_classifications,omitempty"`
+}
+
 type GuardrailRule struct {
 	ID          string
 	Name        string
@@ -106,6 +115,7 @@ type GuardrailRule struct {
 	Priority    int
 	Enabled     bool
 	Labels      map[string]string
+	Scope       RuleScope
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -124,13 +134,15 @@ type UsageRecord struct {
 
 // Budget represents a spending limit for an agent.
 type Budget struct {
-	ID          string
-	AgentID     string
-	Currency    string
-	Limit       float64
-	Used        float64
-	PeriodStart time.Time
-	PeriodEnd   time.Time
+	ID               string
+	AgentID          string
+	Currency         string
+	Limit            float64
+	Used             float64
+	PeriodStart      time.Time
+	PeriodEnd        time.Time
+	OnExceeded       string  // "halt", "request_increase", "warn", or "" (default: halt)
+	WarningThreshold float64 // 0.0–1.0: fraction of limit that triggers a warning
 }
 
 // WorkspaceStatus represents the lifecycle state of a workspace.
@@ -281,6 +293,53 @@ type HumanRequest struct {
 	CreatedAt   time.Time
 	RespondedAt *time.Time
 	ExpiresAt   *time.Time
+}
+
+// AlertConditionType classifies what condition triggers an alert.
+type AlertConditionType string
+
+const (
+	AlertConditionDenialRate     AlertConditionType = "denial_rate"
+	AlertConditionErrorRate      AlertConditionType = "error_rate"
+	AlertConditionActionVelocity AlertConditionType = "action_velocity"
+	AlertConditionBudgetBreach   AlertConditionType = "budget_breach"
+	AlertConditionStuckAgent     AlertConditionType = "stuck_agent"
+)
+
+// AlertConfig stores an alert rule definition.
+type AlertConfig struct {
+	ID            string
+	Name          string
+	ConditionType AlertConditionType
+	Threshold     float64
+	AgentID       string // optional scope — empty means all agents
+	Enabled       bool
+	WebhookURL    string
+	CreatedAt     time.Time
+}
+
+// Alert represents a triggered alert instance.
+type Alert struct {
+	ID            string
+	ConfigID      string
+	AgentID       string
+	ConditionType AlertConditionType
+	Message       string
+	TriggeredAt   time.Time
+	Resolved      bool
+}
+
+// BehaviorReport summarizes an agent's behavior over a time window
+// (produced by the considered evaluation tier).
+type BehaviorReport struct {
+	AgentID        string
+	WindowStart    time.Time
+	WindowEnd      time.Time
+	ActionCount    int64
+	DenialRate     float64
+	ErrorRate      float64
+	Flags          []string
+	Recommendation string
 }
 
 // TaskStatus represents the lifecycle state of a task.

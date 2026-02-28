@@ -13,6 +13,8 @@ use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceC
 use proto_gen::platform::activity::v1::{ActionOutcome, ActionRecord, RecordActionRequest};
 use proto_gen::platform::economics::v1::economics_service_client::EconomicsServiceClient;
 use proto_gen::platform::economics::v1::{CheckBudgetRequest, RecordUsageRequest, UsageRecord};
+use proto_gen::platform::governance::v1::data_governance_service_client::DataGovernanceServiceClient;
+use proto_gen::platform::governance::v1::InspectEgressRequest;
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::human::v1::{
     CreateHumanRequestRequest, GetHumanRequestRequest, HumanRequestStatus,
@@ -38,6 +40,7 @@ pub struct HostAgentApiServiceImpl {
     his_client: Option<TokioMutex<HumanInteractionServiceClient<tonic::transport::Channel>>>,
     activity_client: Option<Arc<TokioMutex<ActivityServiceClient<tonic::transport::Channel>>>>,
     economics_client: Option<Arc<TokioMutex<EconomicsServiceClient<tonic::transport::Channel>>>>,
+    governance_client: Option<Arc<TokioMutex<DataGovernanceServiceClient<tonic::transport::Channel>>>>,
 }
 
 impl std::fmt::Debug for HostAgentApiServiceImpl {
@@ -47,6 +50,7 @@ impl std::fmt::Debug for HostAgentApiServiceImpl {
             .field("his_configured", &self.his_client.is_some())
             .field("activity_configured", &self.activity_client.is_some())
             .field("economics_configured", &self.economics_client.is_some())
+            .field("governance_configured", &self.governance_client.is_some())
             .finish()
     }
 }
@@ -57,12 +61,14 @@ impl HostAgentApiServiceImpl {
         his_client: Option<HumanInteractionServiceClient<tonic::transport::Channel>>,
         activity_client: Option<ActivityServiceClient<tonic::transport::Channel>>,
         economics_client: Option<EconomicsServiceClient<tonic::transport::Channel>>,
+        governance_client: Option<DataGovernanceServiceClient<tonic::transport::Channel>>,
     ) -> Self {
         Self {
             sandbox_manager,
             his_client: his_client.map(TokioMutex::new),
             activity_client: activity_client.map(|c| Arc::new(TokioMutex::new(c))),
             economics_client: economics_client.map(|c| Arc::new(TokioMutex::new(c))),
+            governance_client: governance_client.map(|c| Arc::new(TokioMutex::new(c))),
         }
     }
 }
@@ -104,7 +110,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             })
             .unwrap_or(serde_json::Value::Null);
 
-        // 3. Budget check — deny if agent has exhausted budget
+        // 3. Budget check — deny or escalate based on on_exceeded policy
         if let Some(economics_mutex) = &self.economics_client {
             let check_result = {
                 let mut client = economics_mutex.lock().await;
@@ -117,19 +123,47 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             };
             match check_result {
                 Ok(resp) => {
-                    if !resp.into_inner().allowed {
+                    let budget_resp = resp.into_inner();
+                    if budget_resp.warning {
                         warn!(
                             agent_id = %sandbox.agent_id,
-                            tool_name = %req.tool_name,
-                            "budget exhausted — denying tool execution"
+                            remaining = %budget_resp.remaining,
+                            "budget warning threshold reached"
                         );
-                        return Ok(Response::new(ExecuteToolResponse {
-                            verdict: ActionVerdict::Deny as i32,
-                            result: None,
-                            denial_reason: "budget exhausted".to_string(),
-                            escalation_id: String::new(),
-                            action_id: action_id.clone(),
-                        }));
+                    }
+                    if !budget_resp.allowed {
+                        let enforcement = budget_resp.enforcement_action.as_str();
+                        match enforcement {
+                            "request_increase" => {
+                                warn!(
+                                    agent_id = %sandbox.agent_id,
+                                    tool_name = %req.tool_name,
+                                    "budget exhausted — escalating for budget increase"
+                                );
+                                return Ok(Response::new(ExecuteToolResponse {
+                                    verdict: ActionVerdict::Escalate as i32,
+                                    result: None,
+                                    denial_reason: String::new(),
+                                    escalation_id: "budget_increase_required".to_string(),
+                                    action_id: action_id.clone(),
+                                }));
+                            }
+                            _ => {
+                                // "halt" or unknown — hard deny
+                                warn!(
+                                    agent_id = %sandbox.agent_id,
+                                    tool_name = %req.tool_name,
+                                    "budget exhausted — denying tool execution"
+                                );
+                                return Ok(Response::new(ExecuteToolResponse {
+                                    verdict: ActionVerdict::Deny as i32,
+                                    result: None,
+                                    denial_reason: "budget exhausted".to_string(),
+                                    escalation_id: String::new(),
+                                    action_id: action_id.clone(),
+                                }));
+                            }
+                        }
                     }
                 }
                 Err(e) => {
@@ -143,16 +177,19 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             tool_name: req.tool_name.clone(),
             parameters: parameters.clone(),
             agent_id: sandbox.agent_id.clone(),
+            trust_level: String::new(),         // TODO: populate from agent metadata
+            data_classification: String::new(), // TODO: populate from governance
         };
 
         // 5. Evaluate guardrails (read lock for hot-reload support)
         let eval_start = Instant::now();
-        let evaluator = sandbox
-            .evaluator
-            .read()
-            .map_err(|e| Status::internal(format!("evaluator lock poisoned: {e}")))?;
-        let verdict = evaluator.evaluate(&eval_ctx);
-        drop(evaluator);
+        let verdict = {
+            let evaluator = sandbox
+                .evaluator
+                .read()
+                .map_err(|e| Status::internal(format!("evaluator lock poisoned: {e}")))?;
+            evaluator.evaluate(&eval_ctx)
+        };
         let eval_latency_us = eval_start.elapsed().as_micros() as i64;
 
         // 6. Map verdict to response fields (NO tool execution — policy only)
@@ -162,6 +199,64 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             Verdict::Escalate(rule_id) => {
                 (ActionVerdict::Escalate, String::new(), rule_id.clone())
             }
+        };
+
+        // 6b. DLP egress inspection — for allowed tool calls with destination/url parameters
+        let (action_verdict, denial_reason, escalation_id) = if matches!(action_verdict, ActionVerdict::Allow) {
+            if let Some(governance_mutex) = &self.governance_client {
+                // Extract destination from parameters (check common field names).
+                let destination = parameters.get("destination")
+                    .or_else(|| parameters.get("url"))
+                    .or_else(|| parameters.get("endpoint"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+
+                if !destination.is_empty() {
+                    let content = parameters.get("content")
+                        .or_else(|| parameters.get("body"))
+                        .or_else(|| parameters.get("data"))
+                        .map(|v| v.to_string())
+                        .unwrap_or_default();
+
+                    let inspect_result = {
+                        let mut client = governance_mutex.lock().await;
+                        client.inspect_egress(InspectEgressRequest {
+                            agent_id: sandbox.agent_id.clone(),
+                            destination: destination.to_string(),
+                            content: content.into_bytes(),
+                            content_type: "application/json".to_string(),
+                        }).await
+                    };
+
+                    match inspect_result {
+                        Ok(resp) => {
+                            let egress_resp = resp.into_inner();
+                            if !egress_resp.allowed {
+                                warn!(
+                                    agent_id = %sandbox.agent_id,
+                                    tool_name = %req.tool_name,
+                                    destination = %destination,
+                                    reason = %egress_resp.reason,
+                                    "DLP egress inspection denied"
+                                );
+                                (ActionVerdict::Deny, format!("DLP denied: {}", egress_resp.reason), String::new())
+                            } else {
+                                (action_verdict, denial_reason, escalation_id)
+                            }
+                        }
+                        Err(e) => {
+                            warn!(error = %e, "DLP egress inspection failed — allowing execution");
+                            (action_verdict, denial_reason, escalation_id)
+                        }
+                    }
+                } else {
+                    (action_verdict, denial_reason, escalation_id)
+                }
+            } else {
+                (action_verdict, denial_reason, escalation_id)
+            }
+        } else {
+            (action_verdict, denial_reason, escalation_id)
         };
 
         // 7. Increment actions counter

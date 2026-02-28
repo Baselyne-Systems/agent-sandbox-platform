@@ -32,6 +32,20 @@ pub enum RuleAction {
     Log,
 }
 
+/// Scope restricts which agents/tools/trust-levels/data-classifications a rule applies to.
+/// Empty or None means "match all".
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct RuleScope {
+    #[serde(default)]
+    pub agent_ids: Vec<String>,
+    #[serde(default)]
+    pub tool_names: Vec<String>,
+    #[serde(default)]
+    pub trust_levels: Vec<String>,
+    #[serde(default)]
+    pub data_classifications: Vec<String>,
+}
+
 /// A single compiled guardrail rule.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledRule {
@@ -45,6 +59,9 @@ pub struct CompiledRule {
     /// Lower number = higher priority.
     pub priority: i32,
     pub enabled: bool,
+    /// Optional scope — restricts when this rule is evaluated.
+    #[serde(default)]
+    pub scope: Option<RuleScope>,
 }
 
 /// A compiled guardrails policy, deserialized from bytes produced by the
@@ -63,6 +80,10 @@ pub struct EvalContext {
     pub parameters: serde_json::Value,
     /// The identity of the agent making the call.
     pub agent_id: String,
+    /// The trust level of the agent (e.g. "new", "established", "trusted").
+    pub trust_level: String,
+    /// The data classification relevant to this call (e.g. "public", "confidential").
+    pub data_classification: String,
 }
 
 /// The outcome of evaluating a single action against the loaded policy.
@@ -105,6 +126,9 @@ impl Evaluator {
         rules.sort_by_key(|r| r.priority);
 
         for rule in rules {
+            if !self.scope_matches(rule, ctx) {
+                continue;
+            }
             if self.matches_rule(rule, ctx) {
                 debug!(
                     rule_id = %rule.id,
@@ -138,6 +162,32 @@ impl Evaluator {
             "no rule matched — default allow"
         );
         Verdict::Allow
+    }
+
+    /// Check whether the rule's scope applies to the current context.
+    /// Empty scope fields mean "match all".
+    fn scope_matches(&self, rule: &CompiledRule, ctx: &EvalContext) -> bool {
+        let scope = match &rule.scope {
+            Some(s) => s,
+            None => return true, // No scope = applies globally
+        };
+        if !scope.agent_ids.is_empty() && !scope.agent_ids.contains(&ctx.agent_id) {
+            return false;
+        }
+        if !scope.tool_names.is_empty() && !scope.tool_names.contains(&ctx.tool_name) {
+            return false;
+        }
+        if !scope.trust_levels.is_empty() && !ctx.trust_level.is_empty()
+            && !scope.trust_levels.contains(&ctx.trust_level)
+        {
+            return false;
+        }
+        if !scope.data_classifications.is_empty() && !ctx.data_classification.is_empty()
+            && !scope.data_classifications.contains(&ctx.data_classification)
+        {
+            return false;
+        }
+        true
     }
 
     /// Check whether a single rule matches the given context.
@@ -190,6 +240,8 @@ mod tests {
             tool_name: tool.to_string(),
             parameters: params,
             agent_id: "agent-001".to_string(),
+            trust_level: String::new(),
+            data_classification: String::new(),
         }
     }
 
@@ -203,6 +255,7 @@ mod tests {
             action: RuleAction::Deny,
             priority: 10,
             enabled: true,
+            scope: None,
         }]);
         let evaluator = Evaluator::load(&bytes).unwrap();
 
@@ -230,6 +283,7 @@ mod tests {
                 action: RuleAction::Deny,
                 priority: 10,
                 enabled: true,
+                scope: None,
             },
             CompiledRule {
                 id: "r-allow".into(),
@@ -239,6 +293,7 @@ mod tests {
                 action: RuleAction::Allow,
                 priority: 1,
                 enabled: true,
+                scope: None,
             },
         ]);
         let evaluator = Evaluator::load(&bytes).unwrap();
@@ -257,6 +312,7 @@ mod tests {
             action: RuleAction::Deny,
             priority: 5,
             enabled: true,
+            scope: None,
         }]);
         let evaluator = Evaluator::load(&bytes).unwrap();
 
@@ -279,6 +335,7 @@ mod tests {
             action: RuleAction::Deny,
             priority: 10,
             enabled: true,
+            scope: None,
         }]);
         let evaluator = Evaluator::load(&bytes).unwrap();
 
@@ -296,6 +353,7 @@ mod tests {
             action: RuleAction::Escalate,
             priority: 5,
             enabled: true,
+            scope: None,
         }]);
         let evaluator = Evaluator::load(&bytes).unwrap();
 
@@ -316,6 +374,7 @@ mod tests {
             action: RuleAction::Deny,
             priority: 1,
             enabled: false,
+            scope: None,
         }]);
         let evaluator = Evaluator::load(&bytes).unwrap();
 
@@ -333,6 +392,7 @@ mod tests {
             action: RuleAction::Log,
             priority: 5,
             enabled: true,
+            scope: None,
         }]);
         let evaluator = Evaluator::load(&bytes).unwrap();
 
@@ -347,5 +407,100 @@ mod tests {
 
         let ctx = make_ctx("anything", serde_json::json!({"key": "value"}));
         assert_eq!(evaluator.evaluate(&ctx), Verdict::Allow);
+    }
+
+    #[test]
+    fn scope_agent_id_match() {
+        let bytes = make_policy(vec![CompiledRule {
+            id: "r1".into(),
+            name: "deny-exec-for-agent".into(),
+            rule_type: RuleType::ToolFilter,
+            condition: "exec".into(),
+            action: RuleAction::Deny,
+            priority: 10,
+            enabled: true,
+            scope: Some(RuleScope {
+                agent_ids: vec!["agent-001".into()],
+                ..Default::default()
+            }),
+        }]);
+        let evaluator = Evaluator::load(&bytes).unwrap();
+
+        // Matching agent — should deny
+        let ctx = make_ctx("exec", serde_json::json!({}));
+        assert!(matches!(evaluator.evaluate(&ctx), Verdict::Deny(_)));
+
+        // Different agent — scope doesn't match, should allow
+        let ctx = EvalContext {
+            tool_name: "exec".to_string(),
+            parameters: serde_json::json!({}),
+            agent_id: "agent-999".to_string(),
+            trust_level: String::new(),
+            data_classification: String::new(),
+        };
+        assert_eq!(evaluator.evaluate(&ctx), Verdict::Allow);
+    }
+
+    #[test]
+    fn scope_trust_level_match() {
+        let bytes = make_policy(vec![CompiledRule {
+            id: "r1".into(),
+            name: "deny-exec-for-new".into(),
+            rule_type: RuleType::ToolFilter,
+            condition: "exec".into(),
+            action: RuleAction::Deny,
+            priority: 10,
+            enabled: true,
+            scope: Some(RuleScope {
+                trust_levels: vec!["new".into()],
+                ..Default::default()
+            }),
+        }]);
+        let evaluator = Evaluator::load(&bytes).unwrap();
+
+        // "new" trust level — should deny
+        let ctx = EvalContext {
+            tool_name: "exec".to_string(),
+            parameters: serde_json::json!({}),
+            agent_id: "agent-001".to_string(),
+            trust_level: "new".to_string(),
+            data_classification: String::new(),
+        };
+        assert!(matches!(evaluator.evaluate(&ctx), Verdict::Deny(_)));
+
+        // "trusted" trust level — scope doesn't match
+        let ctx = EvalContext {
+            tool_name: "exec".to_string(),
+            parameters: serde_json::json!({}),
+            agent_id: "agent-001".to_string(),
+            trust_level: "trusted".to_string(),
+            data_classification: String::new(),
+        };
+        assert_eq!(evaluator.evaluate(&ctx), Verdict::Allow);
+    }
+
+    #[test]
+    fn scope_no_scope_applies_globally() {
+        let bytes = make_policy(vec![CompiledRule {
+            id: "r1".into(),
+            name: "deny-exec-global".into(),
+            rule_type: RuleType::ToolFilter,
+            condition: "exec".into(),
+            action: RuleAction::Deny,
+            priority: 10,
+            enabled: true,
+            scope: None,
+        }]);
+        let evaluator = Evaluator::load(&bytes).unwrap();
+
+        // Should deny for any agent
+        let ctx = EvalContext {
+            tool_name: "exec".to_string(),
+            parameters: serde_json::json!({}),
+            agent_id: "any-agent".to_string(),
+            trust_level: "trusted".to_string(),
+            data_classification: "confidential".to_string(),
+        };
+        assert!(matches!(evaluator.evaluate(&ctx), Verdict::Deny(_)));
     }
 }

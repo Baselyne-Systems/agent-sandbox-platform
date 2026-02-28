@@ -71,22 +71,38 @@ func (s *Service) GetBudget(ctx context.Context, agentID string) (*models.Budget
 }
 
 // SetBudget creates or updates a budget for the given agent with a 30-day period.
-func (s *Service) SetBudget(ctx context.Context, agentID string, limit float64, currency string) (*models.Budget, error) {
+func (s *Service) SetBudget(ctx context.Context, agentID string, limit float64, currency, onExceeded string, warningThreshold float64) (*models.Budget, error) {
 	if agentID == "" || currency == "" {
 		return nil, ErrInvalidInput
 	}
 	if limit <= 0 {
 		return nil, ErrInvalidInput
 	}
+	if warningThreshold < 0 || warningThreshold > 1 {
+		return nil, ErrInvalidInput
+	}
+
+	// Default on_exceeded to "halt" if not specified.
+	if onExceeded == "" {
+		onExceeded = "halt"
+	}
+	switch onExceeded {
+	case "halt", "request_increase", "warn":
+		// valid
+	default:
+		return nil, ErrInvalidInput
+	}
 
 	now := time.Now().UTC()
 	budget := &models.Budget{
-		AgentID:     agentID,
-		Currency:    currency,
-		Limit:       limit,
-		Used:        0,
-		PeriodStart: now,
-		PeriodEnd:   now.AddDate(0, 0, 30),
+		AgentID:          agentID,
+		Currency:         currency,
+		Limit:            limit,
+		Used:             0,
+		PeriodStart:      now,
+		PeriodEnd:        now.AddDate(0, 0, 30),
+		OnExceeded:       onExceeded,
+		WarningThreshold: warningThreshold,
 	}
 
 	// Check if budget already exists — preserve Used amount on update.
@@ -131,23 +147,56 @@ func (s *Service) GetCostReport(ctx context.Context, agentID string, start, end 
 	return report, nil
 }
 
+// BudgetCheckResult holds the full result of a budget check.
+type BudgetCheckResult struct {
+	Allowed           bool
+	Remaining         float64
+	EnforcementAction string // "halt", "request_increase", or "" when allowed
+	Warning           bool   // true when remaining < warning_threshold * limit
+}
+
 // CheckBudget reads the agent's budget and returns whether the estimated
-// cost fits within the remaining headroom.
-func (s *Service) CheckBudget(ctx context.Context, agentID string, estimatedCost float64) (bool, float64, error) {
+// cost fits within the remaining headroom, along with enforcement details.
+func (s *Service) CheckBudget(ctx context.Context, agentID string, estimatedCost float64) (*BudgetCheckResult, error) {
 	if agentID == "" {
-		return false, 0, ErrInvalidInput
+		return nil, ErrInvalidInput
 	}
 
 	budget, err := s.repo.GetBudget(ctx, agentID)
 	if err != nil {
-		return false, 0, err
+		return nil, err
 	}
 	if budget == nil {
 		// No budget means no constraint — allow.
-		return true, 0, nil
+		return &BudgetCheckResult{Allowed: true}, nil
 	}
 
 	remaining := budget.Limit - budget.Used
-	allowed := remaining >= estimatedCost
-	return allowed, remaining, nil
+	result := &BudgetCheckResult{
+		Allowed:   remaining >= estimatedCost,
+		Remaining: remaining,
+	}
+
+	// Check warning threshold.
+	if budget.WarningThreshold > 0 && remaining < budget.WarningThreshold*budget.Limit {
+		result.Warning = true
+	}
+
+	// If not allowed, determine enforcement action.
+	if !result.Allowed {
+		switch budget.OnExceeded {
+		case "request_increase":
+			result.EnforcementAction = "request_increase"
+		case "warn":
+			// Warn mode: allow the call but flag it.
+			result.Allowed = true
+			result.Warning = true
+			result.EnforcementAction = "warn"
+		default:
+			// "halt" or unset — hard deny.
+			result.EnforcementAction = "halt"
+		}
+	}
+
+	return result, nil
 }

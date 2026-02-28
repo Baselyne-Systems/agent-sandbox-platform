@@ -14,7 +14,7 @@ func BenchmarkCreateRule(b *testing.B) {
 	labels := map[string]string{"env": "prod", "team": "security"}
 
 	for b.Loop() {
-		_, err := svc.CreateRule(ctx, "bench-rule", "benchmark", models.RuleTypeToolFilter, "tool == 'exec'", models.RuleActionDeny, 10, labels)
+		_, err := svc.CreateRule(ctx, "bench-rule", "benchmark", models.RuleTypeToolFilter, "tool == 'exec'", models.RuleActionDeny, 10, labels, models.RuleScope{})
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -25,7 +25,7 @@ func BenchmarkGetRule(b *testing.B) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	rule, _ := svc.CreateRule(ctx, "bench-rule", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil)
+	rule, _ := svc.CreateRule(ctx, "bench-rule", "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
 
 	for b.Loop() {
 		_, err := svc.GetRule(ctx, rule.ID)
@@ -42,7 +42,7 @@ func BenchmarkListRules_Scaling(b *testing.B) {
 			ctx := context.Background()
 
 			for i := 0; i < n; i++ {
-				svc.CreateRule(ctx, fmt.Sprintf("rule-%d", i), "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil)
+				svc.CreateRule(ctx, fmt.Sprintf("rule-%d", i), "", models.RuleTypeToolFilter, "c", models.RuleActionDeny, 0, nil, models.RuleScope{})
 			}
 
 			b.ResetTimer()

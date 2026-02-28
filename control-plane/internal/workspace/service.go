@@ -51,6 +51,11 @@ type SnapshotStore interface {
 	LoadSnapshot(ctx context.Context, snapshotID string) error
 }
 
+// CredentialMinter mints scoped, time-limited credentials for agents.
+type CredentialMinter interface {
+	MintCredential(ctx context.Context, agentID string, scopes []string, ttlSeconds int64) (token string, err error)
+}
+
 // Service implements workspace business logic with Host Agent orchestration.
 type Service struct {
 	repo           Repository
@@ -58,6 +63,7 @@ type Service struct {
 	guardrails     PolicyCompiler
 	dialHostAgent    HostAgentDialer
 	snapshots      SnapshotStore
+	credentials    CredentialMinter
 	logger         *zap.Logger
 }
 
@@ -70,6 +76,7 @@ type ServiceConfig struct {
 	Guardrails  PolicyCompiler
 	DialHostAgent HostAgentDialer
 	Snapshots   SnapshotStore
+	Credentials CredentialMinter
 	Logger      *zap.Logger
 }
 
@@ -84,6 +91,7 @@ func NewService(cfg ServiceConfig) *Service {
 		guardrails:  cfg.Guardrails,
 		dialHostAgent: cfg.DialHostAgent,
 		snapshots:   cfg.Snapshots,
+		credentials: cfg.Credentials,
 		logger:      logger,
 	}
 }
@@ -170,6 +178,21 @@ func (s *Service) provisionSandbox(ctx context.Context, ws *models.Workspace) er
 		zap.String("host_id", hostID),
 		zap.String("host_address", hostAddress),
 	)
+
+	// 2b. Mint and inject agent credentials if a credential minter is available.
+	if s.credentials != nil {
+		scopes := ws.Spec.AllowedTools
+		token, err := s.credentials.MintCredential(ctx, ws.AgentID, scopes, ws.Spec.MaxDurationSecs)
+		if err != nil {
+			s.logger.Warn("credential minting failed, proceeding without injection",
+				zap.String("workspace_id", ws.ID),
+				zap.Error(err),
+			)
+		} else {
+			ws.Spec.EnvVars["BULKHEAD_AGENT_TOKEN"] = token
+			ws.Spec.EnvVars["BULKHEAD_AGENT_ID"] = ws.AgentID
+		}
+	}
 
 	// 3. Compile guardrail policy if policy ID is set.
 	var compiledGuardrails []byte

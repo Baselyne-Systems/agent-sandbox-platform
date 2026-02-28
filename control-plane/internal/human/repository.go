@@ -22,6 +22,9 @@ type Repository interface {
 	UpsertTimeoutPolicy(ctx context.Context, policy *models.TimeoutPolicy) error
 	GetTimeoutPolicy(ctx context.Context, scope, scopeID string) (*models.TimeoutPolicy, error)
 
+	// ListEnabledChannels returns all enabled delivery channels (across all users).
+	ListEnabledChannels(ctx context.Context) ([]models.DeliveryChannelConfig, error)
+
 	// ExpirePendingRequests marks all pending requests past their deadline as expired.
 	ExpirePendingRequests(ctx context.Context) (int, error)
 }
@@ -239,6 +242,26 @@ func (r *PostgresRepository) GetTimeoutPolicy(ctx context.Context, scope, scopeI
 		return nil, fmt.Errorf("unmarshal escalation_targets: %w", err)
 	}
 	return &policy, nil
+}
+
+func (r *PostgresRepository) ListEnabledChannels(ctx context.Context) ([]models.DeliveryChannelConfig, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, user_id, channel_type, endpoint, enabled, created_at, updated_at
+		 FROM delivery_channels WHERE enabled = true`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []models.DeliveryChannelConfig
+	for rows.Next() {
+		var cfg models.DeliveryChannelConfig
+		if err := rows.Scan(&cfg.ID, &cfg.UserID, &cfg.ChannelType, &cfg.Endpoint, &cfg.Enabled, &cfg.CreatedAt, &cfg.UpdatedAt); err != nil {
+			return nil, err
+		}
+		channels = append(channels, cfg)
+	}
+	return channels, rows.Err()
 }
 
 func (r *PostgresRepository) ExpirePendingRequests(ctx context.Context) (int, error) {

@@ -222,6 +222,7 @@ Rule management and policy compilation.
 | `DeleteRule` | Delete a rule by ID. |
 | `CompilePolicy` | Compile a set of rules (by ID) into binary bytes for the Rust evaluator. Returns compiled bytes and rule count. |
 | `SimulatePolicy` | Dry-run a policy against a sample tool call. Returns the verdict and matched rule without executing anything. |
+| `GetBehaviorReport` | Get a behavior analysis report for an agent over a time window. Returns action count, denial rate, error rate, anomaly flags, and recommendation. |
 
 ### Key Messages
 
@@ -237,6 +238,31 @@ message GuardrailRule {
   int32 priority = 7;             // Lower number = higher priority
   bool enabled = 8;
   map<string, string> labels = 9;
+  RuleScope scope = 12;           // Optional — restricts when this rule is evaluated
+}
+```
+
+**RuleScope:**
+```protobuf
+message RuleScope {
+  repeated string agent_ids = 1;            // Apply only to these agents (empty = all)
+  repeated string tool_names = 2;           // Apply only to these tools (empty = all)
+  repeated string trust_levels = 3;         // "new", "established", "trusted" (empty = all)
+  repeated string data_classifications = 4; // "public", "internal", "confidential", "restricted"
+}
+```
+
+**BehaviorReport:**
+```protobuf
+message BehaviorReport {
+  string agent_id = 1;
+  google.protobuf.Timestamp window_start = 2;
+  google.protobuf.Timestamp window_end = 3;
+  int64 action_count = 4;
+  double denial_rate = 5;        // 0.0–1.0
+  double error_rate = 6;         // 0.0–1.0
+  repeated string flags = 7;     // e.g., "high_denial_rate:70%", "stuck_agent:api_call"
+  string recommendation = 8;     // Human-readable recommendation
 }
 ```
 
@@ -303,6 +329,10 @@ Append-only action records with query and streaming support.
 | `GetAction` | Retrieve a single action record by ID. |
 | `QueryActions` | Query records with filters (workspace, agent, task, tool, outcome, time range). Cursor-based pagination. |
 | `StreamActions` | Server-streaming RPC. Subscribe to real-time action records with workspace/agent filtering. |
+| `ConfigureAlert` | Create or update an alert configuration. Conditions: denial_rate, error_rate, action_velocity, budget_breach, stuck_agent. |
+| `ListAlerts` | List triggered alerts with optional agent filter and active-only toggle. Cursor-based pagination. |
+| `GetAlert` | Retrieve a specific alert by ID. |
+| `ResolveAlert` | Mark an alert as resolved. |
 
 ### Key Messages
 
@@ -325,6 +355,33 @@ message ActionRecord {
 }
 ```
 
+**AlertConfig:**
+```protobuf
+message AlertConfig {
+  string config_id = 1;
+  string name = 2;
+  AlertConditionType condition_type = 3;  // DENIAL_RATE, ERROR_RATE, ACTION_VELOCITY, BUDGET_BREACH, STUCK_AGENT
+  double threshold = 4;
+  string agent_id = 5;            // Optional scope (empty = all agents)
+  bool enabled = 6;
+  string webhook_url = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+```
+
+**Alert:**
+```protobuf
+message Alert {
+  string alert_id = 1;
+  string config_id = 2;
+  string agent_id = 3;
+  AlertConditionType condition_type = 4;
+  string message = 5;
+  google.protobuf.Timestamp triggered_at = 6;
+  bool resolved = 7;
+}
+```
+
 ---
 
 ## Economics Service
@@ -340,8 +397,8 @@ Usage metering, budget management, and cost reporting.
 |-----|-------------|
 | `RecordUsage` | Record a usage event (resource type, quantity, cost). Also increments the agent's budget used amount. |
 | `GetBudget` | Retrieve an agent's budget (limit, used, remaining). |
-| `SetBudget` | Set or update an agent's budget limit. Creates a 30-day budget period. Preserves existing used amount on update. |
-| `CheckBudget` | Check if an agent can proceed given an estimated cost. Returns allowed (bool) and remaining balance. Called in the runtime hot path. |
+| `SetBudget` | Set or update an agent's budget limit with optional `on_exceeded` action and `warning_threshold`. Creates a 30-day budget period. Preserves existing used amount on update. |
+| `CheckBudget` | Check if an agent can proceed given an estimated cost. Returns allowed (bool), remaining balance, enforcement_action (halt/request_increase), and warning flag. Called in the runtime hot path. |
 | `GetCostReport` | Generate a cost report aggregated by resource type. Supports optional agent filter and time range. |
 
 ### Key Messages
@@ -356,6 +413,18 @@ message Budget {
   string currency = 5;
   google.protobuf.Timestamp period_start = 6;
   google.protobuf.Timestamp period_end = 7;
+  OnExceededAction on_exceeded = 8;    // HALT, REQUEST_INCREASE, WARN
+  double warning_threshold = 9;        // 0.0–1.0 fraction of limit
+}
+```
+
+**CheckBudgetResponse:**
+```protobuf
+message CheckBudgetResponse {
+  bool allowed = 1;
+  double remaining = 2;
+  string enforcement_action = 3;  // "halt", "request_increase", or "" (budget OK)
+  bool warning = 4;               // true if remaining < warning_threshold * limit
 }
 ```
 

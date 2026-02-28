@@ -18,6 +18,18 @@ service ActivityService {
 
   // StreamActions returns a live stream of action records.
   rpc StreamActions(StreamActionsRequest) returns (stream ActionRecord);
+
+  // ConfigureAlert creates or updates an alert configuration.
+  rpc ConfigureAlert(ConfigureAlertRequest) returns (ConfigureAlertResponse);
+
+  // ListAlerts returns alerts matching the given filter.
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsResponse);
+
+  // GetAlert retrieves a single alert by ID.
+  rpc GetAlert(GetAlertRequest) returns (GetAlertResponse);
+
+  // ResolveAlert marks an active alert as resolved.
+  rpc ResolveAlert(ResolveAlertRequest) returns (ResolveAlertResponse);
 }
 
 // ActionRecord is an immutable record of a single agent action.
@@ -83,3 +95,73 @@ message StreamActionsRequest {
   string workspace_id = 1;
   string agent_id = 2;
 }
+
+// --- Alert Configuration ---
+
+enum AlertConditionType {
+  ALERT_CONDITION_TYPE_UNSPECIFIED = 0;
+  ALERT_CONDITION_TYPE_DENIAL_RATE = 1;
+  ALERT_CONDITION_TYPE_ERROR_RATE = 2;
+  ALERT_CONDITION_TYPE_ACTION_VELOCITY = 3;
+  ALERT_CONDITION_TYPE_BUDGET_BREACH = 4;
+  ALERT_CONDITION_TYPE_STUCK_AGENT = 5;
+}
+
+message AlertConfig {
+  string config_id = 1;
+  string name = 2;
+  AlertConditionType condition_type = 3;
+  double threshold = 4;
+  string agent_id = 5;  // optional scope — empty means all agents
+  bool enabled = 6;
+  string webhook_url = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+message Alert {
+  string alert_id = 1;
+  string config_id = 2;
+  string agent_id = 3;
+  AlertConditionType condition_type = 4;
+  string message = 5;
+  google.protobuf.Timestamp triggered_at = 6;
+  bool resolved = 7;
+}
+
+message ConfigureAlertRequest {
+  string name = 1;
+  AlertConditionType condition_type = 2;
+  double threshold = 3;
+  string agent_id = 4;
+  string webhook_url = 5;
+}
+
+message ConfigureAlertResponse {
+  AlertConfig config = 1;
+}
+
+message ListAlertsRequest {
+  string agent_id = 1;
+  bool active_only = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListAlertsResponse {
+  repeated Alert alerts = 1;
+  string next_page_token = 2;
+}
+
+message GetAlertRequest {
+  string alert_id = 1;
+}
+
+message GetAlertResponse {
+  Alert alert = 1;
+}
+
+message ResolveAlertRequest {
+  string alert_id = 1;
+}
+
+message ResolveAlertResponse {}

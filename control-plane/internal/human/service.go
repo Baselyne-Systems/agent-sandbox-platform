@@ -24,11 +24,17 @@ const (
 
 // Service implements human interaction business logic on top of a Repository.
 type Service struct {
-	repo Repository
+	repo      Repository
+	deliverer Deliverer
 }
 
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
+}
+
+// SetDeliverer attaches a delivery adapter for sending notifications.
+func (s *Service) SetDeliverer(d Deliverer) {
+	s.deliverer = d
 }
 
 func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, question string, options []string, requestContext string, timeoutSeconds int64, requestType models.HumanRequestType, urgency models.HumanRequestUrgency, taskID string) (*models.HumanRequest, error) {
@@ -70,6 +76,10 @@ func (s *Service) CreateRequest(ctx context.Context, workspaceID, agentID, quest
 	if err := s.repo.CreateRequest(ctx, req); err != nil {
 		return nil, err
 	}
+
+	// Best-effort notification delivery.
+	s.notifyChannels(ctx, req)
+
 	return req, nil
 }
 

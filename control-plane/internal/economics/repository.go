@@ -46,10 +46,12 @@ func (r *PostgresRepository) InsertUsage(ctx context.Context, record *models.Usa
 func (r *PostgresRepository) GetBudget(ctx context.Context, agentID string) (*models.Budget, error) {
 	b := &models.Budget{}
 	err := r.db.QueryRowContext(ctx,
-		`SELECT id, agent_id, currency, "limit", used, period_start, period_end
+		`SELECT id, agent_id, currency, "limit", used, period_start, period_end,
+		        COALESCE(on_exceeded, 'halt'), COALESCE(warning_threshold, 0)
 		 FROM budgets WHERE agent_id = $1`,
 		agentID,
-	).Scan(&b.ID, &b.AgentID, &b.Currency, &b.Limit, &b.Used, &b.PeriodStart, &b.PeriodEnd)
+	).Scan(&b.ID, &b.AgentID, &b.Currency, &b.Limit, &b.Used, &b.PeriodStart, &b.PeriodEnd,
+		&b.OnExceeded, &b.WarningThreshold)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -61,16 +63,19 @@ func (r *PostgresRepository) GetBudget(ctx context.Context, agentID string) (*mo
 
 func (r *PostgresRepository) UpsertBudget(ctx context.Context, budget *models.Budget) error {
 	return r.db.QueryRowContext(ctx,
-		`INSERT INTO budgets (agent_id, currency, "limit", used, period_start, period_end)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO budgets (agent_id, currency, "limit", used, period_start, period_end, on_exceeded, warning_threshold)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 ON CONFLICT (agent_id) DO UPDATE SET
 		   currency = EXCLUDED.currency,
 		   "limit" = EXCLUDED."limit",
 		   used = EXCLUDED.used,
 		   period_start = EXCLUDED.period_start,
-		   period_end = EXCLUDED.period_end
+		   period_end = EXCLUDED.period_end,
+		   on_exceeded = EXCLUDED.on_exceeded,
+		   warning_threshold = EXCLUDED.warning_threshold
 		 RETURNING id, period_start, period_end`,
 		budget.AgentID, budget.Currency, budget.Limit, budget.Used, budget.PeriodStart, budget.PeriodEnd,
+		budget.OnExceeded, budget.WarningThreshold,
 	).Scan(&budget.ID, &budget.PeriodStart, &budget.PeriodEnd)
 }
 

@@ -234,10 +234,122 @@ func jsonToStruct(data json.RawMessage) (*structpb.Struct, error) {
 	return s, nil
 }
 
+// --- Alert handlers ---
+
+func (h *Handler) ConfigureAlert(ctx context.Context, req *pb.ConfigureAlertRequest) (*pb.ConfigureAlertResponse, error) {
+	condType := protoConditionToModel(req.GetConditionType())
+	config, err := h.svc.ConfigureAlert(ctx, req.GetName(), condType, req.GetThreshold(), req.GetAgentId(), req.GetWebhookUrl())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.ConfigureAlertResponse{
+		Config: alertConfigToProto(config),
+	}, nil
+}
+
+func (h *Handler) ListAlerts(ctx context.Context, req *pb.ListAlertsRequest) (*pb.ListAlertsResponse, error) {
+	alerts, nextToken, err := h.svc.ListAlerts(ctx, req.GetAgentId(), req.GetActiveOnly(), int(req.GetPageSize()), req.GetPageToken())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	pbAlerts := make([]*pb.Alert, len(alerts))
+	for i := range alerts {
+		pbAlerts[i] = alertToProto(&alerts[i])
+	}
+	return &pb.ListAlertsResponse{
+		Alerts:        pbAlerts,
+		NextPageToken: nextToken,
+	}, nil
+}
+
+func (h *Handler) GetAlert(ctx context.Context, req *pb.GetAlertRequest) (*pb.GetAlertResponse, error) {
+	alert, err := h.svc.GetAlert(ctx, req.GetAlertId())
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.GetAlertResponse{
+		Alert: alertToProto(alert),
+	}, nil
+}
+
+func (h *Handler) ResolveAlert(ctx context.Context, req *pb.ResolveAlertRequest) (*pb.ResolveAlertResponse, error) {
+	if err := h.svc.ResolveAlert(ctx, req.GetAlertId()); err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.ResolveAlertResponse{}, nil
+}
+
+// --- Alert converters ---
+
+func protoConditionToModel(ct pb.AlertConditionType) models.AlertConditionType {
+	switch ct {
+	case pb.AlertConditionType_ALERT_CONDITION_TYPE_DENIAL_RATE:
+		return models.AlertConditionDenialRate
+	case pb.AlertConditionType_ALERT_CONDITION_TYPE_ERROR_RATE:
+		return models.AlertConditionErrorRate
+	case pb.AlertConditionType_ALERT_CONDITION_TYPE_ACTION_VELOCITY:
+		return models.AlertConditionActionVelocity
+	case pb.AlertConditionType_ALERT_CONDITION_TYPE_BUDGET_BREACH:
+		return models.AlertConditionBudgetBreach
+	case pb.AlertConditionType_ALERT_CONDITION_TYPE_STUCK_AGENT:
+		return models.AlertConditionStuckAgent
+	default:
+		return ""
+	}
+}
+
+func modelConditionToProto(ct models.AlertConditionType) pb.AlertConditionType {
+	switch ct {
+	case models.AlertConditionDenialRate:
+		return pb.AlertConditionType_ALERT_CONDITION_TYPE_DENIAL_RATE
+	case models.AlertConditionErrorRate:
+		return pb.AlertConditionType_ALERT_CONDITION_TYPE_ERROR_RATE
+	case models.AlertConditionActionVelocity:
+		return pb.AlertConditionType_ALERT_CONDITION_TYPE_ACTION_VELOCITY
+	case models.AlertConditionBudgetBreach:
+		return pb.AlertConditionType_ALERT_CONDITION_TYPE_BUDGET_BREACH
+	case models.AlertConditionStuckAgent:
+		return pb.AlertConditionType_ALERT_CONDITION_TYPE_STUCK_AGENT
+	default:
+		return pb.AlertConditionType_ALERT_CONDITION_TYPE_UNSPECIFIED
+	}
+}
+
+func alertConfigToProto(c *models.AlertConfig) *pb.AlertConfig {
+	return &pb.AlertConfig{
+		ConfigId:      c.ID,
+		Name:          c.Name,
+		ConditionType: modelConditionToProto(c.ConditionType),
+		Threshold:     c.Threshold,
+		AgentId:       c.AgentID,
+		Enabled:       c.Enabled,
+		WebhookUrl:    c.WebhookURL,
+		CreatedAt:     timestamppb.New(c.CreatedAt),
+	}
+}
+
+func alertToProto(a *models.Alert) *pb.Alert {
+	return &pb.Alert{
+		AlertId:       a.ID,
+		ConfigId:      a.ConfigID,
+		AgentId:       a.AgentID,
+		ConditionType: modelConditionToProto(a.ConditionType),
+		Message:       a.Message,
+		TriggeredAt:   timestamppb.New(a.TriggeredAt),
+		Resolved:      a.Resolved,
+	}
+}
+
 func toGRPCError(err error) error {
 	switch {
 	case errors.Is(err, ErrRecordNotFound):
 		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrAlertNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrAlertConfigNotFound):
+		return status.Error(codes.NotFound, err.Error())
+	case errors.Is(err, ErrAlertsNotEnabled):
+		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())
 	default:

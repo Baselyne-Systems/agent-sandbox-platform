@@ -251,14 +251,31 @@ Then reference the image in your workspace config when creating a task (see [Ope
 
 ## Environment Variables
 
-These environment variables are automatically injected into your container by the Host Agent:
+These environment variables are automatically injected into your container during workspace provisioning:
 
 | Variable | Description |
 |----------|-------------|
 | `BULKHEAD_ENDPOINT` | gRPC endpoint of the Host Agent (e.g., `host-agent:50052`) |
 | `BULKHEAD_SANDBOX_ID` | Your sandbox's unique identifier |
+| `BULKHEAD_AGENT_TOKEN` | Scoped credential for authenticated API calls (auto-minted at provisioning) |
+| `BULKHEAD_AGENT_ID` | Your agent's unique identifier |
 
-The SDK reads these automatically — you don't need to configure them manually. Any additional environment variables specified in the workspace config are also injected.
+The SDK reads these automatically — you don't need to configure them manually. The `BULKHEAD_AGENT_TOKEN` is a time-limited credential scoped to your agent's allowed tools, minted automatically during workspace provisioning. It expires when the workspace's max duration elapses. Any additional environment variables specified in the workspace config are also injected.
+
+---
+
+## Data Loss Prevention (DLP)
+
+When your agent calls `ExecuteTool` with a tool that includes a `destination`, `url`, or `endpoint` parameter, the Host Agent automatically inspects the outbound content for sensitive data patterns (SSNs, credit card numbers, AWS keys, etc.) before returning the verdict.
+
+If the content contains sensitive data targeting a non-approved destination, the verdict will be `DENY` with a reason like `"DLP denied: restricted data cannot be sent to external destination"`. This happens transparently — your code simply sees a `DENY` verdict and should handle it like any other guardrail denial.
+
+**What gets inspected:**
+- Parameters named `destination`, `url`, or `endpoint` are treated as the target
+- Parameters named `content`, `body`, or `data` are scanned for sensitive patterns
+- Sensitive patterns include: SSNs, credit card numbers, AWS keys, email addresses, phone numbers
+
+DLP inspection is a best-effort check — if the Governance Service is unavailable, the tool call proceeds normally.
 
 ---
 
@@ -305,11 +322,12 @@ Egress enforcement is one layer of the sandbox security model:
 
 | Layer | What it controls | How |
 |-------|-----------------|-----|
-| **Guardrails** | What the agent *intends* to do (tool calls) | Policy evaluation (<50ms) |
+| **Guardrails** | What the agent *intends* to do (tool calls) | Scoped policy evaluation (<50ms) |
+| **DLP** | What *data* leaves the sandbox | Content inspection via Governance Service |
 | **Egress allowlist** | Where the agent can *actually* connect | iptables FORWARD rules per container |
 | **Container isolation** | Process boundary and resource limits | Docker namespaces + cgroups |
 
-Guardrails evaluate intent; egress enforces network behavior. A tool call can be ALLOWED by guardrails but still fail if it tries to reach a non-allowlisted destination.
+Guardrails evaluate intent; DLP inspects content; egress enforces network behavior. A tool call can be ALLOWED by guardrails but blocked by DLP (sensitive data) or egress (non-allowlisted destination).
 
 ---
 

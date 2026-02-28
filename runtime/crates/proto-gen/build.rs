@@ -17,6 +17,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         proto_dir.join("platform/workspace/v1/workspace.proto"),
         proto_dir.join("platform/human/v1/human.proto"),
         proto_dir.join("platform/economics/v1/economics.proto"),
+        proto_dir.join("platform/governance/v1/governance.proto"),
     ];
 
     tonic_build::configure()

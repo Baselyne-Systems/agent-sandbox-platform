@@ -12,6 +12,7 @@ use tracing::info;
 
 use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
 use proto_gen::platform::economics::v1::economics_service_client::EconomicsServiceClient;
+use proto_gen::platform::governance::v1::data_governance_service_client::DataGovernanceServiceClient;
 use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::host_agent::v1::host_agent_api_service_server::HostAgentApiServiceServer;
 use proto_gen::platform::host_agent::v1::host_agent_service_server::HostAgentServiceServer;
@@ -76,6 +77,19 @@ async fn main() -> Result<()> {
         }
     };
 
+    // Optional Governance Service endpoint for DLP egress inspection.
+    let governance_client = match std::env::var("GOVERNANCE_ENDPOINT") {
+        Ok(endpoint) => {
+            info!(endpoint = %endpoint, "connecting to Governance Service");
+            let client = DataGovernanceServiceClient::connect(endpoint).await?;
+            Some(client)
+        }
+        Err(_) => {
+            info!("GOVERNANCE_ENDPOINT not set — DLP egress inspection disabled");
+            None
+        }
+    };
+
     let advertise_addr = std::env::var("ADVERTISE_ADDRESS").unwrap_or_else(|_| "localhost".to_string());
     let advertise_endpoint = format!("{advertise_addr}:{port}");
     info!(advertise_endpoint = %advertise_endpoint, "agent API advertise endpoint");
@@ -93,7 +107,7 @@ async fn main() -> Result<()> {
     let sandbox_manager = SandboxManager::new(container_runtime);
     let host_agent_service = HostAgentServiceImpl::new(sandbox_manager.clone(), advertise_endpoint);
     let host_agent_api_service =
-        HostAgentApiServiceImpl::new(sandbox_manager, his_client, activity_client, economics_client);
+        HostAgentApiServiceImpl::new(sandbox_manager, his_client, activity_client, economics_client, governance_client);
 
     info!("Host Agent starting on :{port}");
 

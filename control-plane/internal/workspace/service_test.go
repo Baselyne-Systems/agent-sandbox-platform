@@ -734,3 +734,90 @@ func TestRestoreWorkspace_SnapshotNotFound(t *testing.T) {
 		t.Errorf("expected ErrSnapshotNotFound, got: %v", err)
 	}
 }
+
+// --- Credential injection tests ---
+
+type mockCredentialMinter struct {
+	token string
+	err   error
+	calls int
+}
+
+func (m *mockCredentialMinter) MintCredential(_ context.Context, _ string, _ []string, _ int64) (string, error) {
+	m.calls++
+	return m.token, m.err
+}
+
+func TestCreateWorkspace_WithCredentialInjection(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host-1:50052"}
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{SandboxId: "sandbox-1", AgentApiEndpoint: "localhost:9090"},
+	}
+	minter := &mockCredentialMinter{token: "test-token-abc"}
+
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
+	}
+	svc := NewService(ServiceConfig{
+		Repo:          repo,
+		Compute:       compute,
+		DialHostAgent: dialer,
+		Credentials:   minter,
+	})
+
+	spec := &models.WorkspaceSpec{
+		AllowedTools: []string{"read_file", "write_file"},
+	}
+	ws, err := svc.CreateWorkspace(context.Background(), "agent-007", "task-1", spec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ws.Status != models.WorkspaceStatusRunning {
+		t.Errorf("expected running, got %q", ws.Status)
+	}
+	if minter.calls != 1 {
+		t.Errorf("expected 1 mint call, got %d", minter.calls)
+	}
+
+	// Verify env vars were injected into the workspace returned by the service.
+	// (The env vars are injected during provisionSandbox, after the initial repo save.)
+	if ws.Spec.EnvVars["BULKHEAD_AGENT_TOKEN"] != "test-token-abc" {
+		t.Errorf("expected BULKHEAD_AGENT_TOKEN=test-token-abc, got %q", ws.Spec.EnvVars["BULKHEAD_AGENT_TOKEN"])
+	}
+	if ws.Spec.EnvVars["BULKHEAD_AGENT_ID"] != "agent-007" {
+		t.Errorf("expected BULKHEAD_AGENT_ID=agent-007, got %q", ws.Spec.EnvVars["BULKHEAD_AGENT_ID"])
+	}
+}
+
+func TestCreateWorkspace_CredentialMintFailureContinues(t *testing.T) {
+	repo := newMockRepo()
+	compute := &mockComputePlacer{hostID: "host-1", hostAddress: "host-1:50052"}
+	hostAgentClient := &mockHostAgentServiceClient{
+		createResp: &hostagentpb.CreateSandboxResponse{SandboxId: "sandbox-1", AgentApiEndpoint: "localhost:9090"},
+	}
+	minter := &mockCredentialMinter{err: errors.New("identity service unavailable")}
+
+	dialer := func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
+		return hostAgentClient, nil
+	}
+	svc := NewService(ServiceConfig{
+		Repo:          repo,
+		Compute:       compute,
+		DialHostAgent: dialer,
+		Credentials:   minter,
+	})
+
+	ws, err := svc.CreateWorkspace(context.Background(), "agent-1", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Should still succeed — credential mint failure is non-fatal.
+	if ws.Status != models.WorkspaceStatusRunning {
+		t.Errorf("expected running despite mint failure, got %q", ws.Status)
+	}
+	// No token should be set on the returned workspace.
+	if _, ok := ws.Spec.EnvVars["BULKHEAD_AGENT_TOKEN"]; ok {
+		t.Error("expected no BULKHEAD_AGENT_TOKEN after mint failure")
+	}
+}

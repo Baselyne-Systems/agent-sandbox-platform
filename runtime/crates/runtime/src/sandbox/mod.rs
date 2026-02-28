@@ -377,6 +377,7 @@ mod tests {
                 action: guardrails_eval::RuleAction::Deny,
                 priority: 1,
                 enabled: true,
+                scope: None,
             }],
         })
         .unwrap();
@@ -387,6 +388,8 @@ mod tests {
             tool_name: "dangerous_tool".to_string(),
             parameters: serde_json::Value::Null,
             agent_id: "agent-005".to_string(),
+            trust_level: String::new(),
+            data_classification: String::new(),
         };
         let evaluator = state.evaluator.read().unwrap();
         let verdict = evaluator.evaluate(&ctx);

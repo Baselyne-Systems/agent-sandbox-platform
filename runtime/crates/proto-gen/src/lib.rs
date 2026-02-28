@@ -37,4 +37,9 @@ pub mod platform {
             include!("gen/platform.economics.v1.rs");
         }
     }
+    pub mod governance {
+        pub mod v1 {
+            include!("gen/platform.governance.v1.rs");
+        }
+    }
 }

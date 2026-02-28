@@ -24,6 +24,14 @@ message UsageRecord {
   google.protobuf.Timestamp recorded_at = 8;
 }
 
+// OnExceededAction determines what happens when a budget is exhausted.
+enum OnExceededAction {
+  ON_EXCEEDED_ACTION_UNSPECIFIED = 0;
+  ON_EXCEEDED_ACTION_HALT = 1;             // Hard stop — deny all further tool calls
+  ON_EXCEEDED_ACTION_REQUEST_INCREASE = 2; // Escalate to human for budget increase
+  ON_EXCEEDED_ACTION_WARN = 3;             // Allow but flag with warning
+}
+
 message Budget {
   string budget_id = 1;
   string agent_id = 2;
@@ -32,6 +40,8 @@ message Budget {
   string currency = 5;
   google.protobuf.Timestamp period_start = 6;
   google.protobuf.Timestamp period_end = 7;
+  OnExceededAction on_exceeded = 8;   // What to do when budget is exhausted
+  double warning_threshold = 9;       // 0.0–1.0: fraction of limit that triggers a warning
 }
 
 message RecordUsageRequest {
@@ -54,6 +64,8 @@ message SetBudgetRequest {
   string agent_id = 1;
   double limit = 2;
   string currency = 3;
+  OnExceededAction on_exceeded = 4;   // What to do when budget is exhausted
+  double warning_threshold = 5;       // 0.0–1.0: fraction of limit that triggers a warning
 }
 
 message SetBudgetResponse {
@@ -68,6 +80,8 @@ message CheckBudgetRequest {
 message CheckBudgetResponse {
   bool allowed = 1;
   double remaining = 2;
+  string enforcement_action = 3; // "halt", "request_increase", or "" (when allowed)
+  bool warning = 4;              // true when remaining < warning_threshold * limit
 }
 
 message GetCostReportRequest {

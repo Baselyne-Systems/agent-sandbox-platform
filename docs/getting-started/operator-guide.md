@@ -55,8 +55,10 @@ grpcurl -plaintext -d '{
 
 ## 3. Create Guardrail Rules and Compile a Policy
 
+Rules can be scoped to specific agents, tools, trust levels, or data classifications. An empty scope means the rule applies globally.
+
 ```bash
-# Create a rule that denies shell execution
+# Create a rule that denies shell execution (global scope)
 grpcurl -plaintext -d '{
   "name": "deny-shell",
   "description": "Block shell and exec tools",
@@ -65,6 +67,19 @@ grpcurl -plaintext -d '{
   "action": "RULE_ACTION_DENY",
   "priority": 1,
   "enabled": true
+}' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateRule
+
+# Create a scoped rule — only applies to "new" trust-level agents
+grpcurl -plaintext -d '{
+  "name": "restrict-new-agents",
+  "description": "Block network tools for new agents",
+  "type": "RULE_TYPE_TOOL_FILTER",
+  "condition": "http_request,curl,wget",
+  "action": "RULE_ACTION_DENY",
+  "priority": 2,
+  "scope": {
+    "trust_levels": ["new"]
+  }
 }' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateRule
 
 # Create a rule that escalates file deletions to humans
@@ -96,14 +111,18 @@ grpcurl -plaintext -d '{
 
 ---
 
-## 4. Set a Budget
+## 4. Set a Budget with Enforcement Policy
+
+Budgets now support `on_exceeded` actions and `warning_threshold`:
 
 ```bash
-# Set a $100 budget for the agent
+# Set a $100 budget with halt-on-exceeded and 80% warning
 grpcurl -plaintext -d '{
   "agent_id": "<agent_id>",
   "limit": 100.00,
-  "currency": "USD"
+  "currency": "USD",
+  "on_exceeded": "ON_EXCEEDED_ACTION_HALT",
+  "warning_threshold": 0.8
 }' localhost:50066 platform.economics.v1.EconomicsService/SetBudget
 
 # Check if the agent can proceed
@@ -111,8 +130,15 @@ grpcurl -plaintext -d '{
   "agent_id": "<agent_id>",
   "estimated_cost": 0.50
 }' localhost:50066 platform.economics.v1.EconomicsService/CheckBudget
-# Returns: allowed: true, remaining: 100.00
+# Returns: allowed: true, remaining: 100.00, warning: false, enforcement_action: ""
 ```
+
+**`on_exceeded` actions:**
+| Action | Behavior |
+|--------|----------|
+| `HALT` (default) | Deny all subsequent tool calls |
+| `REQUEST_INCREASE` | Trigger a human interaction request for budget increase |
+| `WARN` | Allow execution but return `warning: true` |
 
 ---
 
@@ -255,7 +281,103 @@ grpcurl -plaintext -d '{
 
 ---
 
-## 9. Tear Down
+## 9. Configure Alerts
+
+Set up automated alerts for anomalous agent behavior:
+
+```bash
+# Alert when any agent's denial rate exceeds 50%
+grpcurl -plaintext -d '{
+  "name": "high-denial-rate",
+  "condition_type": "ALERT_CONDITION_TYPE_DENIAL_RATE",
+  "threshold": 0.5,
+  "webhook_url": "https://hooks.example.com/bulkhead-alerts"
+}' localhost:50065 platform.activity.v1.ActivityStoreService/ConfigureAlert
+
+# Alert when a specific agent gets stuck (repeated errors)
+grpcurl -plaintext -d '{
+  "name": "stuck-invoice-agent",
+  "condition_type": "ALERT_CONDITION_TYPE_STUCK_AGENT",
+  "threshold": 5,
+  "agent_id": "<agent_id>",
+  "webhook_url": "https://hooks.example.com/bulkhead-alerts"
+}' localhost:50065 platform.activity.v1.ActivityStoreService/ConfigureAlert
+
+# List active alerts
+grpcurl -plaintext -d '{
+  "active_only": true
+}' localhost:50065 platform.activity.v1.ActivityStoreService/ListAlerts
+
+# Resolve an alert
+grpcurl -plaintext -d '{
+  "alert_id": "<alert_id>"
+}' localhost:50065 platform.activity.v1.ActivityStoreService/ResolveAlert
+```
+
+**Alert condition types:**
+| Condition | Threshold meaning |
+|-----------|------------------|
+| `DENIAL_RATE` | Fraction (0.0–1.0) of denied actions in evaluation window |
+| `ERROR_RATE` | Fraction of errored actions in evaluation window |
+| `ACTION_VELOCITY` | Maximum actions per evaluation window |
+| `BUDGET_BREACH` | Budget usage fraction triggering alert |
+| `STUCK_AGENT` | Consecutive errors on same tool |
+
+---
+
+## 10. Get Behavior Reports
+
+The considered evaluation tier analyzes agent behavior over time windows:
+
+```bash
+grpcurl -plaintext -d '{
+  "agent_id": "<agent_id>",
+  "window_start": "2026-02-28T00:00:00Z",
+  "window_end": "2026-02-28T12:00:00Z"
+}' localhost:50062 platform.guardrails.v1.GuardrailsService/GetBehaviorReport
+# Returns: action_count, denial_rate, error_rate, flags[], recommendation
+```
+
+**Flags include:**
+- `high_denial_rate:70%` — agent may be probing boundaries
+- `high_error_rate:40%` — agent may need tool configuration help
+- `high_velocity:150_actions` — potential runaway loop
+- `stuck_agent:repeated_errors_on_api_call` — agent retrying failed tool
+
+---
+
+## 11. Configure Delivery Channels
+
+Set up webhook delivery for human interaction requests:
+
+```bash
+grpcurl -plaintext -d '{
+  "user_id": "user-jane",
+  "channel_type": "webhook",
+  "endpoint": "https://hooks.example.com/bulkhead-his",
+  "enabled": true
+}' localhost:50063 platform.human.v1.HumanInteractionService/ConfigureDeliveryChannel
+```
+
+When an agent creates a human interaction request, enabled channels receive a webhook POST with a standard JSON payload:
+
+```json
+{
+  "request_id": "req-001",
+  "workspace_id": "ws-001",
+  "agent_id": "agent-001",
+  "question": "Approve payment?",
+  "options": ["approve", "reject"],
+  "urgency": "high",
+  "expires_at": "2026-02-28T13:00:00Z"
+}
+```
+
+Community adapters can bridge this webhook to Slack, email, Teams, PagerDuty, etc.
+
+---
+
+## 12. Tear Down
 
 ```bash
 # Cancel the task (terminates workspace + sandbox)
@@ -266,6 +388,32 @@ grpcurl -plaintext -d '{
 # Stop the stack
 docker compose -f deploy/docker-compose.yml down
 ```
+
+---
+
+## Configuration Reference
+
+### Environment Variables (Host Agent)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GRPC_PORT` | `50052` | gRPC listen port |
+| `ADVERTISE_ADDRESS` | `localhost` | Address agents use to reach the Host Agent |
+| `HIS_ENDPOINT` | (not set) | HIS gRPC endpoint for human interaction forwarding |
+| `ACTIVITY_ENDPOINT` | (not set) | Activity Store gRPC endpoint for audit trail |
+| `ECONOMICS_ENDPOINT` | (not set) | Economics Service gRPC endpoint for budget checks |
+| `GOVERNANCE_ENDPOINT` | (not set) | Governance Service gRPC endpoint for DLP egress inspection |
+| `ENABLE_DOCKER` | `false` | Enable Docker container lifecycle management |
+| `RUST_LOG` | `info` | Logging level |
+
+### Snapshot Backends
+
+The Workspace Service supports pluggable snapshot backends:
+
+| Backend | `SNAPSHOT_BACKEND` | Description |
+|---------|-------------------|-------------|
+| Local | `local` (default) | Stores snapshots as tarballs on the local filesystem |
+| S3 | `s3` | Stores snapshots in an S3-compatible bucket |
 
 ---
 

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
@@ -36,14 +37,28 @@ var validRuleActions = map[models.RuleAction]bool{
 
 // Service implements guardrails business logic on top of a Repository.
 type Service struct {
-	repo Repository
+	repo      Repository
+	considered *ConsideredEvaluator
 }
 
 func NewService(repo Repository) *Service {
 	return &Service{repo: repo}
 }
 
-func (s *Service) CreateRule(ctx context.Context, name, description string, ruleType models.RuleType, condition string, action models.RuleAction, priority int, labels map[string]string) (*models.GuardrailRule, error) {
+// SetConsideredEvaluator attaches the considered evaluation tier.
+func (s *Service) SetConsideredEvaluator(ce *ConsideredEvaluator) {
+	s.considered = ce
+}
+
+// GetBehaviorReport delegates to the considered evaluator.
+func (s *Service) GetBehaviorReport(ctx context.Context, agentID string, windowStart, windowEnd time.Time) (*models.BehaviorReport, error) {
+	if s.considered == nil {
+		return nil, errors.New("considered evaluator not configured")
+	}
+	return s.considered.GenerateReport(ctx, agentID, windowStart, windowEnd)
+}
+
+func (s *Service) CreateRule(ctx context.Context, name, description string, ruleType models.RuleType, condition string, action models.RuleAction, priority int, labels map[string]string, scope models.RuleScope) (*models.GuardrailRule, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -69,6 +84,7 @@ func (s *Service) CreateRule(ctx context.Context, name, description string, rule
 		Priority:    priority,
 		Enabled:     true,
 		Labels:      labels,
+		Scope:       scope,
 	}
 	if err := s.repo.CreateRule(ctx, rule); err != nil {
 		return nil, err
@@ -149,15 +165,24 @@ func (s *Service) ListRules(ctx context.Context, ruleType models.RuleType, enabl
 	return rules, nextToken, nil
 }
 
+// compiledRuleScope matches the Rust evaluator's RuleScope struct.
+type compiledRuleScope struct {
+	AgentIDs            []string `json:"agent_ids,omitempty"`
+	ToolNames           []string `json:"tool_names,omitempty"`
+	TrustLevels         []string `json:"trust_levels,omitempty"`
+	DataClassifications []string `json:"data_classifications,omitempty"`
+}
+
 // compiledRule matches the Rust evaluator's CompiledRule struct for JSON deserialization.
 type compiledRule struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	RuleType string `json:"rule_type"`
-	Condition string `json:"condition"`
-	Action   string `json:"action"`
-	Priority int    `json:"priority"`
-	Enabled  bool   `json:"enabled"`
+	ID        string             `json:"id"`
+	Name      string             `json:"name"`
+	RuleType  string             `json:"rule_type"`
+	Condition string             `json:"condition"`
+	Action    string             `json:"action"`
+	Priority  int                `json:"priority"`
+	Enabled   bool               `json:"enabled"`
+	Scope     *compiledRuleScope `json:"scope,omitempty"`
 }
 
 // compiledPolicy matches the Rust evaluator's CompiledPolicy struct.
@@ -181,15 +206,26 @@ func (s *Service) CompilePolicy(ctx context.Context, ruleIDs []string) ([]byte, 
 		if rule == nil {
 			return nil, 0, ErrRuleNotFound
 		}
-		rules = append(rules, compiledRule{
-			ID:       rule.ID,
-			Name:     rule.Name,
-			RuleType: string(rule.Type),
+		cr := compiledRule{
+			ID:        rule.ID,
+			Name:      rule.Name,
+			RuleType:  string(rule.Type),
 			Condition: rule.Condition,
-			Action:   string(rule.Action),
-			Priority: rule.Priority,
-			Enabled:  rule.Enabled,
-		})
+			Action:    string(rule.Action),
+			Priority:  rule.Priority,
+			Enabled:   rule.Enabled,
+		}
+		// Include scope if any field is non-empty.
+		s := rule.Scope
+		if len(s.AgentIDs) > 0 || len(s.ToolNames) > 0 || len(s.TrustLevels) > 0 || len(s.DataClassifications) > 0 {
+			cr.Scope = &compiledRuleScope{
+				AgentIDs:            s.AgentIDs,
+				ToolNames:           s.ToolNames,
+				TrustLevels:         s.TrustLevels,
+				DataClassifications: s.DataClassifications,
+			}
+		}
+		rules = append(rules, cr)
 	}
 
 	policy := compiledPolicy{Rules: rules}

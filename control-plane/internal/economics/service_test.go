@@ -130,7 +130,7 @@ func TestRecordUsage_UpdatesBudget(t *testing.T) {
 	ctx := context.Background()
 
 	// Set up a budget first.
-	_, err := svc.SetBudget(ctx, "agent-1", 100, "USD")
+	_, err := svc.SetBudget(ctx, "agent-1", 100, "USD", "", 0)
 	if err != nil {
 		t.Fatalf("failed to set budget: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestGetBudget_Found(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	svc.SetBudget(ctx, "agent-1", 100, "USD")
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "", 0)
 
 	budget, err := svc.GetBudget(ctx, "agent-1")
 	if err != nil {
@@ -188,7 +188,7 @@ func TestGetBudget_EmptyID(t *testing.T) {
 
 func TestSetBudget_Create(t *testing.T) {
 	svc := NewService(newMockRepo())
-	budget, err := svc.SetBudget(context.Background(), "agent-1", 500, "USD")
+	budget, err := svc.SetBudget(context.Background(), "agent-1", 500, "USD", "", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -211,13 +211,13 @@ func TestSetBudget_Update(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	svc.SetBudget(ctx, "agent-1", 100, "USD")
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "", 0)
 
 	// Simulate some usage.
 	repo.budgets["agent-1"].Used = 25
 
 	// Update budget — should preserve Used.
-	budget, err := svc.SetBudget(ctx, "agent-1", 200, "EUR")
+	budget, err := svc.SetBudget(ctx, "agent-1", 200, "EUR", "", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -233,13 +233,13 @@ func TestSetBudget_Validation(t *testing.T) {
 	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
-	if _, err := svc.SetBudget(ctx, "", 100, "USD"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetBudget(ctx, "", 100, "USD", "", 0); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty agentID, got: %v", err)
 	}
-	if _, err := svc.SetBudget(ctx, "a", 0, "USD"); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetBudget(ctx, "a", 0, "USD", "", 0); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for zero limit, got: %v", err)
 	}
-	if _, err := svc.SetBudget(ctx, "a", 100, ""); !errors.Is(err, ErrInvalidInput) {
+	if _, err := svc.SetBudget(ctx, "a", 100, "", "", 0); !errors.Is(err, ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty currency, got: %v", err)
 	}
 }
@@ -251,17 +251,17 @@ func TestCheckBudget_Allowed(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	svc.SetBudget(ctx, "agent-1", 100, "USD")
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "", 0)
 
-	allowed, remaining, err := svc.CheckBudget(ctx, "agent-1", 50)
+	result, err := svc.CheckBudget(ctx, "agent-1", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !allowed {
+	if !result.Allowed {
 		t.Error("expected allowed=true")
 	}
-	if remaining != 100 {
-		t.Errorf("expected remaining=100, got %f", remaining)
+	if result.Remaining != 100 {
+		t.Errorf("expected remaining=100, got %f", result.Remaining)
 	}
 }
 
@@ -270,18 +270,21 @@ func TestCheckBudget_Denied(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	svc.SetBudget(ctx, "agent-1", 100, "USD")
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "", 0)
 	repo.budgets["agent-1"].Used = 90
 
-	allowed, remaining, err := svc.CheckBudget(ctx, "agent-1", 20)
+	result, err := svc.CheckBudget(ctx, "agent-1", 20)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if allowed {
+	if result.Allowed {
 		t.Error("expected allowed=false")
 	}
-	if remaining != 10 {
-		t.Errorf("expected remaining=10, got %f", remaining)
+	if result.Remaining != 10 {
+		t.Errorf("expected remaining=10, got %f", result.Remaining)
+	}
+	if result.EnforcementAction != "halt" {
+		t.Errorf("expected enforcement_action=halt, got %q", result.EnforcementAction)
 	}
 }
 
@@ -290,29 +293,92 @@ func TestCheckBudget_ExactLimit(t *testing.T) {
 	svc := NewService(repo)
 	ctx := context.Background()
 
-	svc.SetBudget(ctx, "agent-1", 100, "USD")
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "", 0)
 	repo.budgets["agent-1"].Used = 50
 
-	allowed, remaining, err := svc.CheckBudget(ctx, "agent-1", 50)
+	result, err := svc.CheckBudget(ctx, "agent-1", 50)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !allowed {
+	if !result.Allowed {
 		t.Error("expected allowed=true at exact limit")
 	}
-	if remaining != 50 {
-		t.Errorf("expected remaining=50, got %f", remaining)
+	if result.Remaining != 50 {
+		t.Errorf("expected remaining=50, got %f", result.Remaining)
 	}
 }
 
 func TestCheckBudget_NoBudget(t *testing.T) {
 	svc := NewService(newMockRepo())
-	allowed, _, err := svc.CheckBudget(context.Background(), "agent-1", 1000)
+	result, err := svc.CheckBudget(context.Background(), "agent-1", 1000)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !allowed {
+	if !result.Allowed {
 		t.Error("expected allowed=true when no budget exists")
+	}
+}
+
+func TestCheckBudget_WarningThreshold(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "halt", 0.2) // warn at 20% remaining
+	repo.budgets["agent-1"].Used = 85                        // 15% remaining
+
+	result, err := svc.CheckBudget(ctx, "agent-1", 5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Allowed {
+		t.Error("expected allowed=true (15 remaining, only need 5)")
+	}
+	if !result.Warning {
+		t.Error("expected warning=true (15 remaining < 20% of 100)")
+	}
+}
+
+func TestCheckBudget_RequestIncrease(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "request_increase", 0)
+	repo.budgets["agent-1"].Used = 100
+
+	result, err := svc.CheckBudget(ctx, "agent-1", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Allowed {
+		t.Error("expected allowed=false")
+	}
+	if result.EnforcementAction != "request_increase" {
+		t.Errorf("expected enforcement_action=request_increase, got %q", result.EnforcementAction)
+	}
+}
+
+func TestCheckBudget_WarnMode(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	svc.SetBudget(ctx, "agent-1", 100, "USD", "warn", 0)
+	repo.budgets["agent-1"].Used = 100
+
+	result, err := svc.CheckBudget(ctx, "agent-1", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Allowed {
+		t.Error("expected allowed=true in warn mode")
+	}
+	if !result.Warning {
+		t.Error("expected warning=true in warn mode when over budget")
+	}
+	if result.EnforcementAction != "warn" {
+		t.Errorf("expected enforcement_action=warn, got %q", result.EnforcementAction)
 	}
 }
 
