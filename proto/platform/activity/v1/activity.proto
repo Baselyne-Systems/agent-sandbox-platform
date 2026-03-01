@@ -30,6 +30,9 @@ service ActivityService {
 
   // ResolveAlert marks an active alert as resolved.
   rpc ResolveAlert(ResolveAlertRequest) returns (ResolveAlertResponse);
+
+  // ExportActions streams action records in the requested format (JSON or CSV).
+  rpc ExportActions(ExportActionsRequest) returns (stream ExportActionsResponse);
 }
 
 // ActionRecord is an immutable record of a single agent action.
@@ -166,3 +169,28 @@ message ResolveAlertRequest {
 }
 
 message ResolveAlertResponse {}
+
+// --- Export ---
+
+enum ExportFormat {
+  EXPORT_FORMAT_UNSPECIFIED = 0;
+  EXPORT_FORMAT_JSON = 1;
+  EXPORT_FORMAT_CSV = 2;
+}
+
+message ExportActionsRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string task_id = 3;
+  string tool_name = 4;
+  ActionOutcome outcome = 5;
+  google.protobuf.Timestamp start_time = 6;
+  google.protobuf.Timestamp end_time = 7;
+  ExportFormat format = 8;
+}
+
+message ExportActionsResponse {
+  bytes data = 1;         // Chunk of formatted data (NDJSON lines or CSV rows)
+  int32 record_count = 2; // Number of records in this chunk
+  bool is_last = 3;       // True when this is the final chunk
+}

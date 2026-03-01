@@ -151,6 +151,47 @@ func (h *Handler) StreamActions(req *pb.StreamActionsRequest, stream grpc.Server
 	}
 }
 
+func (h *Handler) ExportActions(req *pb.ExportActionsRequest, stream grpc.ServerStreamingServer[pb.ExportActionsResponse]) error {
+	tenantID, _ := middleware.TenantIDFromContext(stream.Context())
+
+	filter := QueryFilter{
+		WorkspaceID: req.GetWorkspaceId(),
+		AgentID:     req.GetAgentId(),
+		TaskID:      req.GetTaskId(),
+		ToolName:    req.GetToolName(),
+		Outcome:     protoOutcomeToModel(req.GetOutcome()),
+	}
+	if req.GetStartTime() != nil {
+		t := req.GetStartTime().AsTime()
+		filter.StartTime = &t
+	}
+	if req.GetEndTime() != nil {
+		t := req.GetEndTime().AsTime()
+		filter.EndTime = &t
+	}
+
+	format := protoFormatToModel(req.GetFormat())
+
+	return h.svc.ExportActions(stream.Context(), tenantID, filter, format, func(data []byte, count int, isLast bool) error {
+		return stream.Send(&pb.ExportActionsResponse{
+			Data:        data,
+			RecordCount: int32(count),
+			IsLast:      isLast,
+		})
+	})
+}
+
+func protoFormatToModel(f pb.ExportFormat) ExportFormat {
+	switch f {
+	case pb.ExportFormat_EXPORT_FORMAT_JSON:
+		return ExportFormatJSON
+	case pb.ExportFormat_EXPORT_FORMAT_CSV:
+		return ExportFormatCSV
+	default:
+		return ""
+	}
+}
+
 // --- converters ---
 
 func recordToProto(r *models.ActionRecord) (*pb.ActionRecord, error) {

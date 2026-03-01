@@ -116,6 +116,55 @@ func ParseQueryFilter(workspaceID, agentID, taskID, toolName string, outcome mod
 	}
 }
 
+var ErrUnsupportedFormat = errors.New("unsupported export format")
+
+const exportBatchSize = 500
+
+// ExportActions streams all matching records in batches, formatting each batch
+// and passing the result to sendFn. The sendFn receives the formatted bytes,
+// the number of records in the batch, and whether this is the final chunk.
+func (s *Service) ExportActions(ctx context.Context, tenantID string, filter QueryFilter, format ExportFormat, sendFn func(data []byte, count int, isLast bool) error) error {
+	var formatter func([]models.ActionRecord) ([]byte, error)
+	switch format {
+	case ExportFormatJSON:
+		formatter = FormatJSON
+	case ExportFormatCSV:
+		formatter = FormatCSV
+	default:
+		return ErrUnsupportedFormat
+	}
+
+	sent := false
+	includeHeader := format == ExportFormatCSV
+
+	err := s.repo.QueryActionsAll(ctx, tenantID, filter, exportBatchSize, func(records []models.ActionRecord) error {
+		data, err := formatter(records)
+		if err != nil {
+			return err
+		}
+		if includeHeader && !sent {
+			data = append(CSVHeader(), data...)
+		}
+		sent = true
+		return sendFn(data, len(records), false)
+	})
+	if err != nil {
+		return err
+	}
+
+	if !sent {
+		// No records found — send a final empty chunk (with CSV header if applicable).
+		var data []byte
+		if includeHeader {
+			data = CSVHeader()
+		}
+		return sendFn(data, 0, true)
+	}
+
+	// Signal completion.
+	return sendFn(nil, 0, true)
+}
+
 var (
 	ErrAlertNotFound       = errors.New("alert not found")
 	ErrAlertConfigNotFound = errors.New("alert config not found")

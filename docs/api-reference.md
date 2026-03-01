@@ -404,6 +404,7 @@ Append-only action records with query and streaming support.
 | `ListAlerts` | List triggered alerts with optional agent filter and active-only toggle. Cursor-based pagination. |
 | `GetAlert` | Retrieve a specific alert by ID. |
 | `ResolveAlert` | Mark an alert as resolved. |
+| `ExportActions` | Server-streaming RPC. Export action records in JSON (NDJSON) or CSV format. Accepts the same filters as QueryActions. |
 
 ### Key Messages
 
@@ -452,6 +453,37 @@ message Alert {
   bool resolved = 7;
 }
 ```
+
+**ExportActionsRequest:**
+```protobuf
+enum ExportFormat {
+  EXPORT_FORMAT_UNSPECIFIED = 0;
+  EXPORT_FORMAT_JSON = 1;  // Newline-delimited JSON (NDJSON)
+  EXPORT_FORMAT_CSV = 2;   // CSV with header row
+}
+
+message ExportActionsRequest {
+  string workspace_id = 1;
+  string agent_id = 2;
+  string task_id = 3;
+  string tool_name = 4;
+  ActionOutcome outcome = 5;
+  google.protobuf.Timestamp start_time = 6;
+  google.protobuf.Timestamp end_time = 7;
+  ExportFormat format = 8;
+}
+```
+
+**ExportActionsResponse** (streamed):
+```protobuf
+message ExportActionsResponse {
+  bytes data = 1;         // Chunk of formatted data (NDJSON lines or CSV rows)
+  int32 record_count = 2; // Number of records in this chunk
+  bool is_last = 3;       // True when this is the final chunk
+}
+```
+
+Records are streamed in batches of 500. For CSV, the first chunk includes the header row. For JSON, each line is a self-contained JSON object (NDJSON format). The final chunk has `is_last = true` with empty data.
 
 ---
 

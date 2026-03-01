@@ -15,6 +15,7 @@ type Repository interface {
 	InsertAction(ctx context.Context, record *models.ActionRecord) error
 	GetAction(ctx context.Context, tenantID, id string) (*models.ActionRecord, error)
 	QueryActions(ctx context.Context, tenantID string, filter QueryFilter) ([]models.ActionRecord, error)
+	QueryActionsAll(ctx context.Context, tenantID string, filter QueryFilter, batchSize int, fn func([]models.ActionRecord) error) error
 }
 
 // QueryFilter holds the optional filter fields for querying action records.
@@ -166,6 +167,27 @@ func nullIfEmpty(s string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: s, Valid: true}
+}
+
+// QueryActionsAll iterates over all matching records in batches, calling fn for each batch.
+func (r *PostgresRepository) QueryActionsAll(ctx context.Context, tenantID string, filter QueryFilter, batchSize int, fn func([]models.ActionRecord) error) error {
+	filter.Limit = batchSize
+	for {
+		records, err := r.QueryActions(ctx, tenantID, filter)
+		if err != nil {
+			return err
+		}
+		if len(records) == 0 {
+			return nil
+		}
+		if err := fn(records); err != nil {
+			return err
+		}
+		if len(records) < batchSize {
+			return nil
+		}
+		filter.AfterID = records[len(records)-1].ID
+	}
 }
 
 // nullableJSON returns nil if the raw message is nil or empty, otherwise the raw bytes.
