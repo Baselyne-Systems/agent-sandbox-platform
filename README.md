@@ -1,5 +1,7 @@
 # Bulkhead
 
+[![CI](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml/badge.svg)](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml)
+
 Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It provides sandboxed execution environments with real-time guardrails evaluation, human-in-the-loop escalation, budget enforcement, and a complete audit trail — giving organizations the control they need to run AI agents in production.
 
 ## Architecture
