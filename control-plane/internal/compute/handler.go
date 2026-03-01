@@ -69,6 +69,50 @@ func (h *Handler) PlaceWorkspace(ctx context.Context, req *pb.PlaceWorkspaceRequ
 	}, nil
 }
 
+func (h *Handler) ConfigureWarmPool(ctx context.Context, req *pb.ConfigureWarmPoolRequest) (*pb.ConfigureWarmPoolResponse, error) {
+	cfg := req.GetConfig()
+	if cfg == nil {
+		return nil, status.Error(codes.InvalidArgument, "config is required")
+	}
+	result, err := h.svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: cfg.GetIsolationTier(),
+		TargetCount:   cfg.GetTargetCount(),
+		MemoryMb:      cfg.GetMemoryMb(),
+		CpuMillicores: cfg.GetCpuMillicores(),
+		DiskMb:        cfg.GetDiskMb(),
+	})
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	return &pb.ConfigureWarmPoolResponse{
+		Config: warmPoolConfigToProto(result),
+	}, nil
+}
+
+func (h *Handler) GetCapacity(ctx context.Context, _ *pb.GetCapacityRequest) (*pb.GetCapacityResponse, error) {
+	tiers, totalHosts, readyHosts, err := h.svc.GetCapacity(ctx)
+	if err != nil {
+		return nil, toGRPCError(err)
+	}
+	pbTiers := make([]*pb.TierCapacity, len(tiers))
+	for i := range tiers {
+		pbTiers[i] = &pb.TierCapacity{
+			IsolationTier:          tiers[i].IsolationTier,
+			HostsSupporting:        tiers[i].HostsSupporting,
+			AvailableMemoryMb:      tiers[i].AvailableMemoryMb,
+			AvailableCpuMillicores: tiers[i].AvailableCpuMilli,
+			AvailableDiskMb:        tiers[i].AvailableDiskMb,
+			WarmSlotsTarget:        tiers[i].WarmSlotsTarget,
+			WarmSlotsReady:         tiers[i].WarmSlotsReady,
+		}
+	}
+	return &pb.GetCapacityResponse{
+		Tiers:      pbTiers,
+		TotalHosts: totalHosts,
+		ReadyHosts: readyHosts,
+	}, nil
+}
+
 func (h *Handler) Heartbeat(ctx context.Context, req *pb.HeartbeatRequest) (*pb.HeartbeatResponse, error) {
 	host, err := h.svc.Heartbeat(ctx, req.GetHostId(), models.HostResources{
 		MemoryMb:      req.GetAvailableMemoryMb(),
@@ -129,6 +173,16 @@ func protoHostStatusToModel(s pb.HostStatus) models.HostStatus {
 		return models.HostStatusOffline
 	default:
 		return ""
+	}
+}
+
+func warmPoolConfigToProto(c *models.WarmPoolConfig) *pb.WarmPoolConfig {
+	return &pb.WarmPoolConfig{
+		IsolationTier: c.IsolationTier,
+		TargetCount:   c.TargetCount,
+		MemoryMb:      c.MemoryMb,
+		CpuMillicores: c.CpuMillicores,
+		DiskMb:        c.DiskMb,
 	}
 }
 

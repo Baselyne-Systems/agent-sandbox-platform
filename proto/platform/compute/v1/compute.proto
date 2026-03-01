@@ -13,6 +13,12 @@ service ComputePlaneService {
 
   // Heartbeat reports host liveness and current resource availability.
   rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // ConfigureWarmPool sets or updates the warm pool target for an isolation tier.
+  rpc ConfigureWarmPool(ConfigureWarmPoolRequest) returns (ConfigureWarmPoolResponse);
+
+  // GetCapacity returns fleet-wide capacity summary per isolation tier.
+  rpc GetCapacity(GetCapacityRequest) returns (GetCapacityResponse);
 }
 
 message Host {
@@ -86,4 +92,42 @@ message HeartbeatRequest {
 
 message HeartbeatResponse {
   HostStatus status = 1;
+}
+
+// --- Warm Pool ---
+
+message WarmPoolConfig {
+  string isolation_tier = 1;
+  int32 target_count = 2;       // desired number of pre-warmed slots
+  int64 memory_mb = 3;          // resources per warm slot
+  int32 cpu_millicores = 4;
+  int64 disk_mb = 5;
+}
+
+message ConfigureWarmPoolRequest {
+  WarmPoolConfig config = 1;
+}
+
+message ConfigureWarmPoolResponse {
+  WarmPoolConfig config = 1;
+}
+
+// --- Capacity ---
+
+message GetCapacityRequest {}
+
+message GetCapacityResponse {
+  repeated TierCapacity tiers = 1;
+  int32 total_hosts = 2;
+  int32 ready_hosts = 3;
+}
+
+message TierCapacity {
+  string isolation_tier = 1;
+  int32 hosts_supporting = 2;         // hosts that support this tier
+  int64 available_memory_mb = 3;      // total free memory across those hosts
+  int32 available_cpu_millicores = 4;
+  int64 available_disk_mb = 5;
+  int32 warm_slots_target = 6;        // configured target from WarmPoolConfig
+  int32 warm_slots_ready = 7;         // currently available warm slots
 }

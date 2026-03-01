@@ -13,13 +13,17 @@ import (
 
 // mockRepo is a hand-written in-memory Repository for testing.
 type mockRepo struct {
-	hosts  map[string]*models.Host
-	nextID int
+	hosts       map[string]*models.Host
+	warmConfigs map[string]*models.WarmPoolConfig
+	warmSlots   map[string]*models.WarmPoolSlot
+	nextID      int
 }
 
 func newMockRepo() *mockRepo {
 	return &mockRepo{
-		hosts: make(map[string]*models.Host),
+		hosts:       make(map[string]*models.Host),
+		warmConfigs: make(map[string]*models.WarmPoolConfig),
+		warmSlots:   make(map[string]*models.WarmPoolSlot),
 	}
 }
 
@@ -137,6 +141,114 @@ func (m *mockRepo) UpdateHeartbeat(_ context.Context, hostID string, resources m
 	}
 	cp := *h
 	return &cp, nil
+}
+
+func (m *mockRepo) UpsertWarmPoolConfig(_ context.Context, cfg *models.WarmPoolConfig) error {
+	cp := *cfg
+	m.warmConfigs[cfg.IsolationTier] = &cp
+	return nil
+}
+
+func (m *mockRepo) ListWarmPoolConfigs(_ context.Context) ([]models.WarmPoolConfig, error) {
+	var result []models.WarmPoolConfig
+	for _, c := range m.warmConfigs {
+		cp := *c
+		result = append(result, cp)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].IsolationTier < result[j].IsolationTier })
+	return result, nil
+}
+
+func (m *mockRepo) ClaimWarmSlot(_ context.Context, tier string) (*models.WarmPoolSlot, error) {
+	for id, s := range m.warmSlots {
+		if s.IsolationTier == tier && s.Status == "ready" {
+			s.Status = "claimed"
+			cp := *s
+			// Remove from available pool.
+			delete(m.warmSlots, id)
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
+func (m *mockRepo) CreateWarmSlot(_ context.Context, slot *models.WarmPoolSlot) error {
+	slot.ID = m.nextUUID()
+	slot.Status = "ready"
+	cp := *slot
+	m.warmSlots[slot.ID] = &cp
+	return nil
+}
+
+func (m *mockRepo) CountReadySlots(_ context.Context, tier string) (int32, error) {
+	var count int32
+	for _, s := range m.warmSlots {
+		if s.IsolationTier == tier && s.Status == "ready" {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *mockRepo) CleanExpiredSlots(_ context.Context) (int64, error) {
+	var count int64
+	for id, s := range m.warmSlots {
+		if s.Status == "ready" {
+			h, ok := m.hosts[s.HostID]
+			if !ok || h.Status == models.HostStatusOffline {
+				delete(m.warmSlots, id)
+				count++
+			}
+		}
+	}
+	return count, nil
+}
+
+func (m *mockRepo) GetCapacity(_ context.Context) ([]models.TierCapacity, int32, int32, error) {
+	var totalHosts, readyHosts int32
+	tierMap := make(map[string]*models.TierCapacity)
+
+	for _, h := range m.hosts {
+		totalHosts++
+		if h.Status == models.HostStatusReady {
+			readyHosts++
+			for _, tier := range h.SupportedTiers {
+				tc, ok := tierMap[tier]
+				if !ok {
+					tc = &models.TierCapacity{IsolationTier: tier}
+					tierMap[tier] = tc
+				}
+				tc.HostsSupporting++
+				tc.AvailableMemoryMb += h.AvailableResources.MemoryMb
+				tc.AvailableCpuMilli += h.AvailableResources.CpuMillicores
+				tc.AvailableDiskMb += h.AvailableResources.DiskMb
+			}
+		}
+	}
+
+	for _, c := range m.warmConfigs {
+		tc, ok := tierMap[c.IsolationTier]
+		if !ok {
+			tc = &models.TierCapacity{IsolationTier: c.IsolationTier}
+			tierMap[c.IsolationTier] = tc
+		}
+		tc.WarmSlotsTarget = c.TargetCount
+	}
+
+	for _, s := range m.warmSlots {
+		if s.Status == "ready" {
+			if tc, ok := tierMap[s.IsolationTier]; ok {
+				tc.WarmSlotsReady++
+			}
+		}
+	}
+
+	var result []models.TierCapacity
+	for _, tc := range tierMap {
+		result = append(result, *tc)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].IsolationTier < result[j].IsolationTier })
+	return result, totalHosts, readyHosts, nil
 }
 
 // --- RegisterHost tests ---
@@ -524,5 +636,190 @@ func TestPlaceWorkspace_TierAwareBestFit(t *testing.T) {
 	}
 	if address != "versatile:9090" {
 		t.Errorf("expected hardened to go to 'versatile:9090', got %q", address)
+	}
+}
+
+// --- ConfigureWarmPool tests ---
+
+func TestConfigureWarmPool_Success(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	cfg, err := svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: "standard",
+		TargetCount:   5,
+		MemoryMb:      512,
+		CpuMillicores: 1000,
+		DiskMb:        10240,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TargetCount != 5 {
+		t.Errorf("expected target 5, got %d", cfg.TargetCount)
+	}
+}
+
+func TestConfigureWarmPool_Update(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: "standard", TargetCount: 3,
+		MemoryMb: 512, CpuMillicores: 1000, DiskMb: 10240,
+	})
+
+	cfg, err := svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: "standard", TargetCount: 10,
+		MemoryMb: 1024, CpuMillicores: 2000, DiskMb: 20480,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.TargetCount != 10 {
+		t.Errorf("expected updated target 10, got %d", cfg.TargetCount)
+	}
+}
+
+func TestConfigureWarmPool_Validation(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Empty tier.
+	_, err := svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: "", TargetCount: 5,
+		MemoryMb: 512, CpuMillicores: 1000, DiskMb: 10240,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty tier, got: %v", err)
+	}
+
+	// Zero resources.
+	_, err = svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: "standard", TargetCount: 5,
+		MemoryMb: 0, CpuMillicores: 1000, DiskMb: 10240,
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for zero memory, got: %v", err)
+	}
+}
+
+// --- GetCapacity tests ---
+
+func TestGetCapacity_ReturnsAllTiers(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	svc.RegisterHost(ctx, "host1:9090", models.HostResources{MemoryMb: 4096, CpuMillicores: 4000, DiskMb: 10240}, []string{"standard"})
+	svc.RegisterHost(ctx, "host2:9090", models.HostResources{MemoryMb: 8192, CpuMillicores: 8000, DiskMb: 20480}, []string{"standard", "hardened"})
+
+	svc.ConfigureWarmPool(ctx, &models.WarmPoolConfig{
+		IsolationTier: "standard", TargetCount: 3,
+		MemoryMb: 512, CpuMillicores: 500, DiskMb: 1024,
+	})
+
+	tiers, totalHosts, readyHosts, err := svc.GetCapacity(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if totalHosts != 2 {
+		t.Errorf("expected 2 total hosts, got %d", totalHosts)
+	}
+	if readyHosts != 2 {
+		t.Errorf("expected 2 ready hosts, got %d", readyHosts)
+	}
+	if len(tiers) < 1 {
+		t.Fatal("expected at least 1 tier in capacity report")
+	}
+
+	// Find standard tier.
+	var stdTier *models.TierCapacity
+	for i := range tiers {
+		if tiers[i].IsolationTier == "standard" {
+			stdTier = &tiers[i]
+			break
+		}
+	}
+	if stdTier == nil {
+		t.Fatal("expected 'standard' tier in capacity report")
+	}
+	if stdTier.HostsSupporting != 2 {
+		t.Errorf("expected 2 hosts supporting standard, got %d", stdTier.HostsSupporting)
+	}
+	if stdTier.WarmSlotsTarget != 3 {
+		t.Errorf("expected warm target 3, got %d", stdTier.WarmSlotsTarget)
+	}
+}
+
+// --- Warm slot placement tests ---
+
+func TestPlaceWorkspace_PrefersWarmSlot(t *testing.T) {
+	repo := newMockRepo()
+	svc := NewService(repo)
+	ctx := context.Background()
+
+	// Register a host and pre-create a warm slot on it.
+	host, _ := svc.RegisterHost(ctx, "warm-host:9090", models.HostResources{MemoryMb: 8192, CpuMillicores: 8000, DiskMb: 40960}, []string{"standard"})
+
+	repo.warmSlots[repo.nextUUID()] = &models.WarmPoolSlot{
+		ID:            fmt.Sprintf("slot-%d", repo.nextID),
+		HostID:        host.ID,
+		IsolationTier: "standard",
+		MemoryMb:      512,
+		CpuMillicores: 500,
+		DiskMb:        1024,
+		Status:        "ready",
+	}
+
+	// PlaceWorkspace should claim the warm slot instead of cold placement.
+	hostID, address, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, "standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if address != "warm-host:9090" {
+		t.Errorf("expected warm-host:9090, got %q", address)
+	}
+	if hostID != host.ID {
+		t.Errorf("expected host ID %q, got %q", host.ID, hostID)
+	}
+
+	// Verify slot was consumed (no more warm slots).
+	count, _ := repo.CountReadySlots(ctx, "standard")
+	if count != 0 {
+		t.Errorf("expected 0 ready slots after claim, got %d", count)
+	}
+}
+
+func TestPlaceWorkspace_FallsBackToCold(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	// Register a host but no warm slots.
+	svc.RegisterHost(ctx, "cold-host:9090", models.HostResources{MemoryMb: 4096, CpuMillicores: 4000, DiskMb: 10240}, []string{"standard"})
+
+	// Should fall back to cold placement.
+	_, address, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, "standard")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if address != "cold-host:9090" {
+		t.Errorf("expected cold-host:9090, got %q", address)
+	}
+}
+
+func TestPlaceWorkspace_EmptyTierSkipsWarmPool(t *testing.T) {
+	svc := NewService(newMockRepo())
+	ctx := context.Background()
+
+	svc.RegisterHost(ctx, "host:9090", models.HostResources{MemoryMb: 4096, CpuMillicores: 4000, DiskMb: 10240}, []string{"standard"})
+
+	// Empty tier should skip warm pool and go straight to cold placement.
+	_, address, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if address != "host:9090" {
+		t.Errorf("expected host:9090, got %q", address)
 	}
 }

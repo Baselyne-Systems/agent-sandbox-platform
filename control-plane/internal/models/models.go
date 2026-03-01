@@ -282,6 +282,37 @@ type Host struct {
 	SupportedTiers     []string
 }
 
+// WarmPoolConfig defines how many pre-warmed slots to maintain for an isolation tier.
+type WarmPoolConfig struct {
+	IsolationTier string
+	TargetCount   int32
+	MemoryMb      int64
+	CpuMillicores int32
+	DiskMb        int64
+}
+
+// WarmPoolSlot is a pre-reserved resource allocation on a host, ready for instant claim.
+type WarmPoolSlot struct {
+	ID            string
+	HostID        string
+	IsolationTier string
+	MemoryMb      int64
+	CpuMillicores int32
+	DiskMb        int64
+	Status        string // "ready", "claimed", "expired"
+}
+
+// TierCapacity summarizes fleet capacity for a single isolation tier.
+type TierCapacity struct {
+	IsolationTier     string
+	HostsSupporting   int32
+	AvailableMemoryMb int64
+	AvailableCpuMilli int32
+	AvailableDiskMb   int64
+	WarmSlotsTarget   int32
+	WarmSlotsReady    int32
+}
+
 // HumanRequestStatus represents the lifecycle state of a human interaction request.
 type HumanRequestStatus string
 

@@ -67,12 +67,44 @@ func (s *Service) PlaceWorkspace(ctx context.Context, memoryMb int64, cpuMillico
 		return "", "", ErrInvalidInput
 	}
 
+	// Try claiming a pre-warmed slot first.
+	if isolationTier != "" {
+		slot, err := s.repo.ClaimWarmSlot(ctx, isolationTier)
+		if err == nil && slot != nil {
+			host, err := s.repo.GetHost(ctx, slot.HostID)
+			if err == nil && host != nil {
+				return host.ID, host.Address, nil
+			}
+		}
+	}
+
+	// Fall back to cold placement.
 	host, err := s.repo.PlaceAndDecrement(ctx, memoryMb, cpuMillicores, diskMb, isolationTier)
 	if err != nil {
 		return "", "", err
 	}
 
 	return host.ID, host.Address, nil
+}
+
+func (s *Service) ConfigureWarmPool(ctx context.Context, cfg *models.WarmPoolConfig) (*models.WarmPoolConfig, error) {
+	if cfg.IsolationTier == "" {
+		return nil, ErrInvalidInput
+	}
+	if cfg.TargetCount < 0 {
+		return nil, ErrInvalidInput
+	}
+	if cfg.MemoryMb <= 0 || cfg.CpuMillicores <= 0 || cfg.DiskMb <= 0 {
+		return nil, ErrInvalidInput
+	}
+	if err := s.repo.UpsertWarmPoolConfig(ctx, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func (s *Service) GetCapacity(ctx context.Context) ([]models.TierCapacity, int32, int32, error) {
+	return s.repo.GetCapacity(ctx)
 }
 
 func (s *Service) Heartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32, supportedTiers []string) (*models.Host, error) {

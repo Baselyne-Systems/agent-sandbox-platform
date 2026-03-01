@@ -73,6 +73,13 @@ func main() {
 	})
 	go livenessWorker.Run(workerCtx)
 
+	// Start warm pool replenishment worker.
+	warmPoolWorker := compute.NewWarmPoolWorker(repo, compute.WarmPoolWorkerConfig{
+		Interval: 30 * time.Second,
+		Logger:   logger,
+	})
+	go warmPoolWorker.Run(workerCtx)
+
 	authCfg := middleware.AuthConfig{
 		Credentials:   &middleware.PostgresCredentialLookup{DB: db},
 		TokenHashFunc: identity.HashToken,
