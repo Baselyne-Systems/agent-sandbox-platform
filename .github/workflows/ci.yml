@@ -71,7 +71,10 @@ jobs:
         run: go build ./...
         working-directory: control-plane
       - name: Test with coverage
-        run: go test -count=1 -short -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          # Exclude generated protobuf code (pkg/gen/) from coverage measurement
+          COVERPKGS=$(go list ./... | grep -v /pkg/gen/ | paste -sd, -)
+          go test -count=1 -short -coverprofile=coverage.out -covermode=atomic -coverpkg="$COVERPKGS" ./...
         working-directory: control-plane
       - name: Compute coverage percentage
         if: github.ref == 'refs/heads/main'
