@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "bulkhead.fullname" . }}-activity
+  name: {{ include "bulkhead.fullname" . }}-observability
   labels:
     {{- include "bulkhead.labels" . | nindent 4 }}
-    app.kubernetes.io/component: activity
+    app.kubernetes.io/component: observability
 spec:
   replicas: {{ .Values.controlPlane.replicaCount }}
   selector:
     matchLabels:
       {{- include "bulkhead.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: activity
+      app.kubernetes.io/component: observability
   template:
     metadata:
       labels:
         {{- include "bulkhead.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: activity
+        app.kubernetes.io/component: observability
     spec:
       containers:
-        - name: activity
-          image: "{{ .Values.controlPlane.image.repository }}-activity:{{ .Values.controlPlane.image.tag }}"
+        - name: observability
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
           command: ["/service"]
           ports:

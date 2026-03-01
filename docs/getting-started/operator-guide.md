@@ -10,7 +10,7 @@ This guide walks you through deploying and operating the Bulkhead platform. You'
 
 | Tool | Purpose |
 |------|---------|
-| Docker + Docker Compose v2 | Run the full stack (11 containers) |
+| Docker + Docker Compose v2 | Run the full stack (5 containers + Jaeger) |
 | `bkctl` | Operator CLI for managing agents, workspaces, guardrails, activity, and budgets |
 
 ### Install bkctl
@@ -32,7 +32,7 @@ By default, `bkctl` connects to `localhost` using well-known ports. Override wit
 ## 1. Start the Stack
 
 ```bash
-# Build and start all services (9 Go + 1 Rust + PostgreSQL)
+# Build and start all services (3 Go + 1 Rust + PostgreSQL)
 docker compose -f deploy/docker-compose.yml up --build
 
 # Verify all services are healthy
@@ -81,7 +81,7 @@ CONTROL_PLANE=10.0.0.5 ENABLE_DOCKER=true ./host-agent
 `CONTROL_PLANE` is the IP or DNS name of your control plane (e.g., an NLB address). The Host Agent derives all service endpoints from it using well-known ports, auto-detects memory/CPU/disk from the host system, and auto-detects its own advertise address from the network interface.
 
 On startup, the Host Agent will:
-1. Derive all service endpoints from `CONTROL_PLANE` (HIS :50063, Governance :50064, Activity :50065, Economics :50066, Compute :50067)
+1. Derive all service endpoints from `CONTROL_PLANE` (control-plane :50060, policy :50062, observability :50065)
 2. Auto-detect host resources (memory, CPU cores, disk)
 3. Auto-detect its local IP from the routing table
 4. Self-register with the Compute Plane and log its assigned `host_id`
@@ -117,11 +117,11 @@ For Kubernetes or ECS deployments where each service has its own DNS name, skip 
 ```bash
 # List all hosts in the fleet
 grpcurl -plaintext -d '{}' \
-  localhost:50067 platform.compute.v1.ComputePlaneService/ListHosts
+  localhost:50060 platform.compute.v1.ComputePlaneService/ListHosts
 
 # List only hosts that are ready for placement
 grpcurl -plaintext -d '{"status": "HOST_STATUS_READY"}' \
-  localhost:50067 platform.compute.v1.ComputePlaneService/ListHosts
+  localhost:50060 platform.compute.v1.ComputePlaneService/ListHosts
 ```
 
 Each host entry shows its `host_id`, `address`, `status`, `total_resources`, `available_resources`, `active_sandboxes`, `last_heartbeat`, and `supported_tiers`.
@@ -138,7 +138,7 @@ To drain a host for maintenance, use `DeregisterHost`:
 
 ```bash
 grpcurl -plaintext -d '{"host_id": "<host_id>"}' \
-  localhost:50067 platform.compute.v1.ComputePlaneService/DeregisterHost
+  localhost:50060 platform.compute.v1.ComputePlaneService/DeregisterHost
 ```
 
 When the host comes back and its Host Agent restarts, it will re-register and return to `READY` status.
@@ -161,7 +161,7 @@ grpcurl -plaintext -d '{
     "cpu_millicores": 1000,
     "disk_mb": 10240
   }
-}' localhost:50067 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
+}' localhost:50060 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
 
 # Pre-warm 3 standard slots
 grpcurl -plaintext -d '{
@@ -172,14 +172,14 @@ grpcurl -plaintext -d '{
     "cpu_millicores": 2000,
     "disk_mb": 20480
   }
-}' localhost:50067 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
+}' localhost:50060 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
 ```
 
 ### Check fleet capacity
 
 ```bash
 grpcurl -plaintext -d '{}' \
-  localhost:50067 platform.compute.v1.ComputePlaneService/GetCapacity
+  localhost:50060 platform.compute.v1.ComputePlaneService/GetCapacity
 # Returns: tiers[] (with warm_slots_target/warm_slots_ready), total_hosts, ready_hosts
 ```
 
@@ -273,7 +273,7 @@ grpcurl -plaintext -d '{
   "goal": "Process invoices",
   "guardrail_policy_id": "set:production-policy",
   ...
-}' localhost:50068 platform.task.v1.TaskService/CreateTask
+}' localhost:50060 platform.task.v1.TaskService/CreateTask
 ```
 
 The Guardrails Service resolves `"set:production-policy"` to the set's rule IDs at policy compilation time.
@@ -341,13 +341,13 @@ grpcurl -plaintext -d '{
     "currency": "USD",
     "on_exceeded": "BUDGET_ON_EXCEEDED_HALT"
   }
-}' localhost:50068 platform.task.v1.TaskService/CreateTask
+}' localhost:50060 platform.task.v1.TaskService/CreateTask
 
 # Transition task to running (triggers workspace provisioning)
 grpcurl -plaintext -d '{
   "task_id": "<task_id>",
   "status": "TASK_STATUS_RUNNING"
-}' localhost:50068 platform.task.v1.TaskService/UpdateTaskStatus
+}' localhost:50060 platform.task.v1.TaskService/UpdateTaskStatus
 ```
 
 ### What happens under the hood
@@ -427,7 +427,7 @@ grpcurl -plaintext -d '{
   "request_id": "<request_id>",
   "response": "approve",
   "responder_id": "user-jane"
-}' localhost:50063 platform.human.v1.HumanInteractionService/RespondToRequest
+}' localhost:50065 platform.human.v1.HumanInteractionService/RespondToRequest
 ```
 
 ---
@@ -534,7 +534,7 @@ grpcurl -plaintext -d '{
   "channel_type": "webhook",
   "endpoint": "https://hooks.example.com/bulkhead-his",
   "enabled": true
-}' localhost:50063 platform.human.v1.HumanInteractionService/ConfigureDeliveryChannel
+}' localhost:50065 platform.human.v1.HumanInteractionService/ConfigureDeliveryChannel
 ```
 
 When an agent creates a human interaction request, enabled channels receive a webhook POST with a standard JSON payload:
@@ -564,7 +564,7 @@ bkctl workspace terminate <workspace_id> --reason "Task complete"
 # Cancel the task (terminates workspace + sandbox) — task service not yet in bkctl
 grpcurl -plaintext -d '{
   "task_id": "<task_id>"
-}' localhost:50068 platform.task.v1.TaskService/CancelTask
+}' localhost:50060 platform.task.v1.TaskService/CancelTask
 
 # Stop the stack
 docker compose -f deploy/docker-compose.yml down
@@ -578,7 +578,7 @@ docker compose -f deploy/docker-compose.yml down
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONTROL_PLANE` | (not set) | Control plane IP or hostname. Derives all service endpoints using well-known ports (HIS :50063, Governance :50064, Activity :50065, Economics :50066, Compute :50067). Individual endpoint vars override. |
+| `CONTROL_PLANE` | (not set) | Control plane IP or hostname. Derives all service endpoints using well-known ports (control-plane :50060, policy :50062, observability :50065). Individual endpoint vars override. |
 | `GRPC_PORT` | `50052` | gRPC listen port |
 | `ADVERTISE_ADDRESS` | auto-detected | Address other services use to reach this Host Agent. Auto-detected from routing table if not set. |
 | `TOTAL_MEMORY_MB` | auto-detected | Total memory (MB) advertised to Compute Plane. Auto-detected from host system if not set. |

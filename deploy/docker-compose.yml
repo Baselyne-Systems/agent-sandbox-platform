@@ -38,125 +38,43 @@ services:
     networks:
       - bulkhead
 
-  identity:
+  control-plane:
     <<: *go-service
     build:
       context: ..
       dockerfile: deploy/docker/Dockerfile.control-plane
       args:
-        SERVICE: identity
-    ports:
-      - "50060:50051"
-
-  workspace:
-    <<: *go-service
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile.control-plane
-      args:
-        SERVICE: workspace
+        SERVICE: control-plane
     environment:
       <<: *go-env
-      IDENTITY_ENDPOINT: identity:50051
-      COMPUTE_ENDPOINT: compute:50051
-      GUARDRAILS_ENDPOINT: guardrails:50051
+      GUARDRAILS_ENDPOINT: policy:50051
     ports:
-      - "50061:50051"
+      - "50060:50051"
     depends_on:
       postgres:
         condition: service_healthy
-      identity:
-        condition: service_healthy
-      compute:
-        condition: service_healthy
-      guardrails:
+      policy:
         condition: service_healthy
 
-  guardrails:
+  policy:
     <<: *go-service
     build:
       context: ..
       dockerfile: deploy/docker/Dockerfile.control-plane
       args:
-        SERVICE: guardrails
+        SERVICE: policy
     ports:
       - "50062:50051"
 
-  human:
+  observability:
     <<: *go-service
     build:
       context: ..
       dockerfile: deploy/docker/Dockerfile.control-plane
       args:
-        SERVICE: human
-    environment:
-      <<: *go-env
-      ACTIVITY_ENDPOINT: activity:50051
-    ports:
-      - "50063:50051"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      activity:
-        condition: service_healthy
-
-  governance:
-    <<: *go-service
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile.control-plane
-      args:
-        SERVICE: governance
-    ports:
-      - "50064:50051"
-
-  activity:
-    <<: *go-service
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile.control-plane
-      args:
-        SERVICE: activity
+        SERVICE: observability
     ports:
       - "50065:50051"
-
-  economics:
-    <<: *go-service
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile.control-plane
-      args:
-        SERVICE: economics
-    ports:
-      - "50066:50051"
-
-  compute:
-    <<: *go-service
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile.control-plane
-      args:
-        SERVICE: compute
-    ports:
-      - "50067:50051"
-
-  task:
-    <<: *go-service
-    build:
-      context: ..
-      dockerfile: deploy/docker/Dockerfile.control-plane
-      args:
-        SERVICE: task
-    environment:
-      <<: *go-env
-      WORKSPACE_ENDPOINT: workspace:50051
-    ports:
-      - "50068:50051"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      workspace:
-        condition: service_healthy
 
   host-agent:
     build:
@@ -165,11 +83,11 @@ services:
     environment:
       GRPC_PORT: "50052"
       ADVERTISE_ADDRESS: host-agent
-      HIS_ENDPOINT: http://human:50051
-      ACTIVITY_ENDPOINT: http://activity:50051
-      ECONOMICS_ENDPOINT: http://economics:50051
-      GOVERNANCE_ENDPOINT: http://governance:50051
-      COMPUTE_ENDPOINT: http://compute:50051
+      HIS_ENDPOINT: http://observability:50051
+      ACTIVITY_ENDPOINT: http://observability:50051
+      ECONOMICS_ENDPOINT: http://observability:50051
+      GOVERNANCE_ENDPOINT: http://policy:50051
+      COMPUTE_ENDPOINT: http://control-plane:50051
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       TOTAL_MEMORY_MB: "16384"
       TOTAL_CPU_MILLICORES: "8000"
@@ -181,15 +99,11 @@ services:
     ports:
       - "50052:50052"
     depends_on:
-      human:
+      control-plane:
         condition: service_healthy
-      activity:
+      policy:
         condition: service_healthy
-      economics:
-        condition: service_healthy
-      governance:
-        condition: service_healthy
-      compute:
+      observability:
         condition: service_healthy
     networks:
       - bulkhead

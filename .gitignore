@@ -1,9 +1,9 @@
 # Go
 control-plane/pkg/gen/
 /bkctl
-control-plane/human
-control-plane/task
-control-plane/workspace
+control-plane/control-plane
+control-plane/policy
+control-plane/observability
 
 # Rust
 runtime/target/

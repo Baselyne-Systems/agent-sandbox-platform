@@ -30,7 +30,7 @@ The token is hashed with SHA-256 for storage and lookup. The raw token is return
 ## Identity Service
 
 **Proto:** `proto/platform/identity/v1/identity.proto`
-**Docker Compose port:** 50060
+**Docker Compose port:** 50060 (control-plane binary)
 
 Manages agent registration, credentials, trust levels, and lifecycle.
 
@@ -83,7 +83,7 @@ message ScopedCredential {
 ## Workspace Service
 
 **Proto:** `proto/platform/workspace/v1/workspace.proto`
-**Docker Compose port:** 50061
+**Docker Compose port:** 50060 (control-plane binary)
 
 Orchestrates workspace lifecycle — creation, provisioning, termination, and snapshots.
 
@@ -155,7 +155,7 @@ When `ISOLATION_TIER_UNSPECIFIED`, the Workspace Service auto-selects based on a
 ## Task Service
 
 **Proto:** `proto/platform/task/v1/task.proto`
-**Docker Compose port:** 50068
+**Docker Compose port:** 50060 (control-plane binary)
 
 Manages task lifecycle. Creating and starting a task triggers workspace provisioning.
 
@@ -197,7 +197,7 @@ message Task {
 ## Compute Plane Service
 
 **Proto:** `proto/platform/compute/v1/compute.proto`
-**Docker Compose port:** 50067
+**Docker Compose port:** 50060 (control-plane binary)
 
 Manages runtime hosts and handles workspace placement.
 
@@ -258,7 +258,7 @@ message TierCapacity {
 ## Guardrails Service
 
 **Proto:** `proto/platform/guardrails/v1/guardrails.proto`
-**Docker Compose port:** 50062
+**Docker Compose port:** 50062 (policy binary)
 
 Rule management and policy compilation.
 
@@ -344,7 +344,7 @@ message GuardrailSet {
 ## Human Interaction Service
 
 **Proto:** `proto/platform/human/v1/human.proto`
-**Docker Compose port:** 50063
+**Docker Compose port:** 50065 (observability binary)
 
 Manages human-in-the-loop requests, delivery channels, and timeout policies.
 
@@ -390,7 +390,7 @@ message HumanRequest {
 ## Activity Store
 
 **Proto:** `proto/platform/activity/v1/activity.proto`
-**Docker Compose port:** 50065
+**Docker Compose port:** 50065 (observability binary)
 
 Append-only action records with query and streaming support.
 
@@ -492,7 +492,7 @@ Records are streamed in batches of 500. For CSV, the first chunk includes the he
 ## Economics Service
 
 **Proto:** `proto/platform/economics/v1/economics.proto`
-**Docker Compose port:** 50066
+**Docker Compose port:** 50065 (observability binary)
 
 Usage metering, budget management, and cost reporting.
 
@@ -538,7 +538,7 @@ message CheckBudgetResponse {
 ## Data Governance Service
 
 **Proto:** `proto/platform/governance/v1/governance.proto`
-**Docker Compose port:** 50064
+**Docker Compose port:** 50062 (policy binary)
 
 Stateless content classification and DLP. No database required.
 

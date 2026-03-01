@@ -35,14 +35,20 @@ make dev
 
 ### Running Individual Services
 
-For development, you can run services individually against a local PostgreSQL:
+For development, you can run binaries individually against a local PostgreSQL:
 
 ```bash
 # Start PostgreSQL only
 docker compose -f deploy/docker-compose.yml up -d postgres
 
-# Run the Identity Service
-cd control-plane && DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" go run ./cmd/identity
+# Run the control-plane binary (Identity + Task + Workspace + Compute)
+cd control-plane && DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" go run ./cmd/control-plane
+
+# Run the policy binary (Guardrails + Governance)
+cd control-plane && DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" go run ./cmd/policy
+
+# Run the observability binary (Activity + Economics + Human)
+cd control-plane && DATABASE_URL="postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable" go run ./cmd/observability
 
 # Run the Rust Host Agent
 cd runtime && RUST_LOG=debug cargo run
@@ -52,7 +58,7 @@ cd runtime && RUST_LOG=debug cargo run
 
 ## Docker Compose (Full Stack)
 
-The full stack runs 11 containers: 9 Go microservices, 1 Rust Host Agent, and PostgreSQL.
+The full stack runs 5 containers: 3 Go binaries (each hosting multiple gRPC services), 1 Rust Host Agent, and PostgreSQL (plus optional Jaeger for tracing).
 
 ### Starting the Stack
 
@@ -83,57 +89,41 @@ graph TB
     subgraph net["bulkhead network"]
         PG[("PostgreSQL :5432")]
 
-        identity["identity :50060"]
-        workspace["workspace :50061"]
-        guardrails["guardrails :50062"]
-        human["human :50063"]
-        governance["governance :50064"]
-        activity["activity :50065"]
-        economics["economics :50066"]
-        compute["compute :50067"]
-        task["task :50068"]
+        cp["control-plane :50060<br/>(Identity, Task, Workspace, Compute)"]
+        policy["policy :50062<br/>(Guardrails, Governance)"]
+        obs["observability :50065<br/>(Activity, Economics, Human)"]
         runtime["host-agent :50052"]
         jaeger["jaeger :16686 / :4317"]
 
-        PG --- identity & workspace & guardrails & human
-        PG --- governance & activity & economics & compute & task
+        PG --- cp & policy & obs
 
-        workspace --> compute
-        workspace --> guardrails
-        workspace --> task
-        runtime --> human
-        runtime --> activity
-        runtime --> economics
+        cp -->|guardrails| policy
+        runtime --> obs
+        runtime -->|compute| cp
+        runtime -->|governance| policy
     end
 ```
 
 ### Port Mappings
 
-| Service | Internal Port | External Port | Protocol |
-|---------|--------------|---------------|----------|
-| PostgreSQL | 5432 | 5432 | PostgreSQL |
-| Identity | 50051 | 50060 | gRPC |
-| Workspace | 50051 | 50061 | gRPC |
-| Guardrails | 50051 | 50062 | gRPC |
-| Human Interaction | 50051 | 50063 | gRPC |
-| Data Governance | 50051 | 50064 | gRPC |
-| Activity Store | 50051 | 50065 | gRPC |
-| Economics | 50051 | 50066 | gRPC |
-| Compute Plane | 50051 | 50067 | gRPC |
-| Task | 50051 | 50068 | gRPC |
-| Host Agent | 50052 | 50052 | gRPC |
-| Jaeger UI | 16686 | 16686 | HTTP |
-| Jaeger OTLP | 4317 | 4317 | gRPC |
+| Binary | Services | Internal Port | External Port | Protocol |
+|--------|----------|--------------|---------------|----------|
+| PostgreSQL | — | 5432 | 5432 | PostgreSQL |
+| control-plane | Identity, Task, Workspace, Compute | 50051 | 50060 | gRPC |
+| policy | Guardrails, Data Governance | 50051 | 50062 | gRPC |
+| observability | Activity, Economics, Human | 50051 | 50065 | gRPC |
+| host-agent | Host Agent | 50052 | 50052 | gRPC |
+| Jaeger UI | — | 16686 | 16686 | HTTP |
+| Jaeger OTLP | — | 4317 | 4317 | gRPC |
 
 ### Service Dependencies
 
 Services start in dependency order via Docker Compose `depends_on` with health checks:
 
 1. **PostgreSQL** starts first (healthcheck: `pg_isready`)
-2. **Independent services** start next: Identity, Guardrails, Human, Governance, Activity, Economics, Compute (depend only on PostgreSQL)
-3. **Workspace** starts after Identity, Compute, and Guardrails are healthy
-4. **Task** starts after Workspace is healthy
-5. **Host Agent** starts after Human, Activity, and Economics are healthy
+2. **policy** and **observability** start next (depend only on PostgreSQL)
+3. **control-plane** starts after policy is healthy (Workspace needs Guardrails cross-binary)
+4. **Host Agent** starts after control-plane, policy, and observability are healthy
 
 ### Health Checks
 
@@ -181,11 +171,11 @@ The Helm chart creates:
 
 | Resource Type | Count | Components |
 |--------------|-------|------------|
-| **Deployment** | 9 | One per Go control-plane service (identity, workspace, task, compute, guardrails, human, activity, economics, governance) |
+| **Deployment** | 3 | control-plane (Identity+Task+Workspace+Compute), policy (Guardrails+Governance), observability (Activity+Economics+Human) |
 | **DaemonSet** | 1 | Host Agent — runs on every node for local sandbox management |
 | **StatefulSet** | 1 | PostgreSQL with persistent volume |
 | **Job** | 1 | Database migration (runs before services start, backoffLimit: 3) |
-| **Service** | 11 | ClusterIP services for inter-service gRPC communication |
+| **Service** | 5 | ClusterIP services for inter-binary gRPC communication |
 | **NetworkPolicy** | 1 | Optional — restricts traffic to declared dependencies |
 | **Secret** | 1 | Database credentials |
 
@@ -214,7 +204,7 @@ The Host Agent runs as a DaemonSet so every node in the cluster can host sandbox
 - Mounts the Docker socket (`/var/run/docker.sock`) for container lifecycle management
 - Tolerates `NoSchedule` taints so it runs on all nodes including tainted ones
 - Advertise address is set from the pod IP (`status.podIP`) so the control plane can route sandbox creation to the correct node
-- Service endpoints are derived from Helm release name (e.g., `{{ .Release.Name }}-human:50051`)
+- Service endpoints are derived from Helm release name (e.g., `{{ .Release.Name }}-observability:50051`)
 
 ### Migration Job
 
@@ -237,26 +227,16 @@ kubectl logs job/bulkhead-migration
 | `LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `""` (disabled) | OTLP gRPC endpoint for distributed tracing (e.g., `jaeger:4317`). If empty, tracing is disabled. |
 
-### Service-Specific Configuration
+### Binary-Specific Configuration
 
-**Workspace Service:**
-
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `COMPUTE_ENDPOINT` | — | gRPC endpoint for Compute Plane (e.g., `compute:50051`). If unset, orchestration is disabled. |
-| `GUARDRAILS_ENDPOINT` | — | gRPC endpoint for Guardrails Service (e.g., `guardrails:50051`). If unset, empty policies are used. |
-
-**Compute Plane Service:**
+**control-plane binary** (Identity, Task, Workspace, Compute):
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
+| `GUARDRAILS_ENDPOINT` | — | gRPC endpoint for the policy binary (e.g., `policy:50051`). If unset, empty policies are used. |
 | `HEARTBEAT_TIMEOUT_SECS` | `180` | Seconds without a heartbeat before a host is marked offline. The liveness worker checks every 60 seconds. |
 
-**Task Service:**
-
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `WORKSPACE_ENDPOINT` | — | gRPC endpoint for Workspace Service (e.g., `workspace:50051`). Required for workspace provisioning on task start. |
+Task→Workspace and Workspace→Compute calls are in-process (same binary) and require no endpoint configuration.
 
 **Host Agent (Rust):**
 
@@ -265,11 +245,11 @@ kubectl logs job/bulkhead-migration
 | `CONTROL_PLANE` | — | Control plane IP or hostname. Derives all service endpoints using well-known ports (see table below). Individual endpoint vars override. |
 | `GRPC_PORT` | `50052` | Port for HostAgentService and HostAgentAPIService |
 | `ADVERTISE_ADDRESS` | auto-detected | Hostname/IP returned to agents as the API endpoint. Auto-detected from OS routing table if not set. |
-| `HIS_ENDPOINT` | from `CONTROL_PLANE` :50063 | gRPC endpoint for Human Interaction Service (e.g., `http://human:50051`). If neither this nor `CONTROL_PLANE` is set, `RequestHumanInput` returns `UNAVAILABLE`. |
-| `ACTIVITY_ENDPOINT` | from `CONTROL_PLANE` :50065 | gRPC endpoint for Activity Store (e.g., `http://activity:50051`). If unset, action records are not persisted. |
-| `ECONOMICS_ENDPOINT` | from `CONTROL_PLANE` :50066 | gRPC endpoint for Economics Service (e.g., `http://economics:50051`). If unset, budget enforcement is disabled. |
-| `GOVERNANCE_ENDPOINT` | from `CONTROL_PLANE` :50064 | gRPC endpoint for Data Governance Service (e.g., `http://governance:50051`). If unset, DLP egress inspection is disabled. |
-| `COMPUTE_ENDPOINT` | from `CONTROL_PLANE` :50067 | gRPC endpoint for Compute Plane (e.g., `http://compute:50051`). Enables host self-registration and periodic heartbeats. |
+| `HIS_ENDPOINT` | from `CONTROL_PLANE` :50065 | gRPC endpoint for Human Interaction (observability binary, e.g., `http://observability:50051`). If neither this nor `CONTROL_PLANE` is set, `RequestHumanInput` returns `UNAVAILABLE`. |
+| `ACTIVITY_ENDPOINT` | from `CONTROL_PLANE` :50065 | gRPC endpoint for Activity Store (observability binary, e.g., `http://observability:50051`). If unset, action records are not persisted. |
+| `ECONOMICS_ENDPOINT` | from `CONTROL_PLANE` :50065 | gRPC endpoint for Economics (observability binary, e.g., `http://observability:50051`). If unset, budget enforcement is disabled. |
+| `GOVERNANCE_ENDPOINT` | from `CONTROL_PLANE` :50062 | gRPC endpoint for Data Governance (policy binary, e.g., `http://policy:50051`). If unset, DLP egress inspection is disabled. |
+| `COMPUTE_ENDPOINT` | from `CONTROL_PLANE` :50060 | gRPC endpoint for Compute Plane (control-plane binary, e.g., `http://control-plane:50051`). Enables host self-registration and periodic heartbeats. |
 | `TOTAL_MEMORY_MB` | auto-detected | Total memory (MB) advertised to Compute Plane. Auto-detected from host system if not set. |
 | `TOTAL_CPU_MILLICORES` | auto-detected | Total CPU (millicores) advertised to Compute Plane. Auto-detected (cores × 1000) if not set. |
 | `TOTAL_DISK_MB` | auto-detected | Total disk (MB) advertised to Compute Plane. Auto-detected from root mount if not set. |
@@ -282,13 +262,11 @@ kubectl logs job/bulkhead-migration
 
 When `CONTROL_PLANE` is set, the Host Agent derives service endpoints by combining the address with these ports (matching the Docker Compose external port mappings):
 
-| Service | Port | Env Var Override |
-|---------|------|-----------------|
-| Human Interaction (HIS) | 50063 | `HIS_ENDPOINT` |
-| Data Governance | 50064 | `GOVERNANCE_ENDPOINT` |
-| Activity Store | 50065 | `ACTIVITY_ENDPOINT` |
-| Economics | 50066 | `ECONOMICS_ENDPOINT` |
-| Compute Plane | 50067 | `COMPUTE_ENDPOINT` |
+| Binary | Port | Services | Env Var Override |
+|--------|------|----------|-----------------|
+| control-plane | 50060 | Identity, Task, Workspace, Compute | `COMPUTE_ENDPOINT` |
+| policy | 50062 | Guardrails, Governance | `GOVERNANCE_ENDPOINT` |
+| observability | 50065 | Activity, Economics, Human | `HIS_ENDPOINT`, `ACTIVITY_ENDPOINT`, `ECONOMICS_ENDPOINT` |
 
 ### Docker Compose Environment
 
@@ -298,22 +276,18 @@ In Docker Compose, all Go services connect to PostgreSQL via the internal networ
 DATABASE_URL: postgres://postgres:postgres@postgres:5432/sandbox?sslmode=disable
 ```
 
-Cross-service endpoints use Docker Compose service names:
+Cross-binary endpoints use Docker Compose service names:
 
 ```yaml
-# Workspace service
-IDENTITY_ENDPOINT: identity:50051
-COMPUTE_ENDPOINT: compute:50051
-GUARDRAILS_ENDPOINT: guardrails:50051
-
-# Task service
-WORKSPACE_ENDPOINT: workspace:50051
+# control-plane binary
+GUARDRAILS_ENDPOINT: policy:50051
 
 # Host Agent
-HIS_ENDPOINT: http://human:50051
-ACTIVITY_ENDPOINT: http://activity:50051
-ECONOMICS_ENDPOINT: http://economics:50051
-COMPUTE_ENDPOINT: http://compute:50051
+HIS_ENDPOINT: http://observability:50051
+ACTIVITY_ENDPOINT: http://observability:50051
+ECONOMICS_ENDPOINT: http://observability:50051
+GOVERNANCE_ENDPOINT: http://policy:50051
+COMPUTE_ENDPOINT: http://control-plane:50051
 TOTAL_MEMORY_MB: "16384"
 TOTAL_CPU_MILLICORES: "8000"
 TOTAL_DISK_MB: "102400"
@@ -416,7 +390,7 @@ FROM alpine:3.20
 # Includes grpc_health_probe for health checks
 ```
 
-All 9 Go services share this Dockerfile with different `SERVICE` args.
+All 3 Go binaries share this Dockerfile with different `SERVICE` args (`control-plane`, `policy`, `observability`).
 
 ### Host Agent (`deploy/docker/Dockerfile.host-agent`)
 

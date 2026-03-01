@@ -32,15 +32,15 @@ spec:
                 fieldRef:
                   fieldPath: status.podIP
             - name: HIS_ENDPOINT
-              value: "http://{{ include "bulkhead.fullname" . }}-human:50051"
+              value: "http://{{ include "bulkhead.fullname" . }}-observability:50051"
             - name: ACTIVITY_ENDPOINT
-              value: "http://{{ include "bulkhead.fullname" . }}-activity:50051"
+              value: "http://{{ include "bulkhead.fullname" . }}-observability:50051"
             - name: ECONOMICS_ENDPOINT
-              value: "http://{{ include "bulkhead.fullname" . }}-economics:50051"
+              value: "http://{{ include "bulkhead.fullname" . }}-observability:50051"
             - name: GOVERNANCE_ENDPOINT
-              value: "http://{{ include "bulkhead.fullname" . }}-governance:50051"
+              value: "http://{{ include "bulkhead.fullname" . }}-policy:50051"
             - name: COMPUTE_ENDPOINT
-              value: "http://{{ include "bulkhead.fullname" . }}-compute:50051"
+              value: "http://{{ include "bulkhead.fullname" . }}-control-plane:50051"
             - name: ENABLE_DOCKER
               value: {{ .Values.hostAgent.enableDocker | quote }}
             - name: RUST_LOG

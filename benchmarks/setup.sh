@@ -7,7 +7,7 @@ CLUSTER_NAME="bulkhead-bench"
 IMAGE_TAG="bench"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-SERVICES=(identity workspace guardrails human governance activity economics compute task)
+SERVICES=(control-plane policy observability)
 
 # ── Pre-flight checks ────────────────────────────────────────────────────────
 for cmd in kind docker helm kubectl; do
@@ -31,12 +31,10 @@ echo "==> Building Docker images for all services ..."
 for svc in "${SERVICES[@]}"; do
   echo "    Building ${svc} ..."
   docker build \
-    -t "bulkhead-control-plane:${IMAGE_TAG}" \
+    -t "bulkhead-${svc}:${IMAGE_TAG}" \
     -f "${REPO_ROOT}/deploy/docker/Dockerfile.control-plane" \
     --build-arg SERVICE="${svc}" \
     "${REPO_ROOT}"
-  # Tag per-service so kind can load them individually
-  docker tag "bulkhead-control-plane:${IMAGE_TAG}" "bulkhead-${svc}:${IMAGE_TAG}"
 done
 echo "    All images built."
 
@@ -67,15 +65,9 @@ echo "  Bulkhead E2E benchmark cluster is ready"
 echo "============================================"
 echo ""
 echo "  Service port mappings (localhost):"
-echo "    identity   : localhost:50060"
-echo "    workspace  : localhost:50061"
-echo "    guardrails : localhost:50062"
-echo "    human      : localhost:50063"
-echo "    governance : localhost:50064"
-echo "    activity   : localhost:50065"
-echo "    economics  : localhost:50066"
-echo "    compute    : localhost:50067"
-echo "    task       : localhost:50068"
+echo "    control-plane  : localhost:50060  (Identity, Task, Workspace, Compute)"
+echo "    policy         : localhost:50062  (Guardrails, Governance)"
+echo "    observability  : localhost:50065  (Activity, Economics, Human)"
 echo ""
 echo "  Run benchmarks with:"
 echo "    cd benchmarks && go test -tags e2e -bench=. -benchtime=5s -count=3 ./..."

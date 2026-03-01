@@ -1,25 +1,25 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "bulkhead.fullname" . }}-identity
+  name: {{ include "bulkhead.fullname" . }}-policy
   labels:
     {{- include "bulkhead.labels" . | nindent 4 }}
-    app.kubernetes.io/component: identity
+    app.kubernetes.io/component: policy
 spec:
   replicas: {{ .Values.controlPlane.replicaCount }}
   selector:
     matchLabels:
       {{- include "bulkhead.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: identity
+      app.kubernetes.io/component: policy
   template:
     metadata:
       labels:
         {{- include "bulkhead.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: identity
+        app.kubernetes.io/component: policy
     spec:
       containers:
-        - name: identity
-          image: "{{ .Values.controlPlane.image.repository }}-identity:{{ .Values.controlPlane.image.tag }}"
+        - name: policy
+          image: "{{ .Values.controlPlane.image.repository }}:{{ .Values.controlPlane.image.tag }}"
           imagePullPolicy: {{ .Values.controlPlane.image.pullPolicy }}
           command: ["/service"]
           ports:

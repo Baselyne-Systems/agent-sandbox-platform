@@ -7,7 +7,7 @@ RUN go mod download
 
 COPY control-plane/ .
 
-ARG SERVICE=identity
+ARG SERVICE=control-plane
 RUN CGO_ENABLED=0 go build -o /service ./cmd/${SERVICE}
 
 # Install grpc_health_probe for container health checks.

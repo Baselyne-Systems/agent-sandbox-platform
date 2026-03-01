@@ -58,7 +58,7 @@ All services export distributed traces via OpenTelemetry, providing end-to-end v
 
 **Tracing architecture:**
 
-- All 9 Go services initialize an OTLP trace exporter on startup via `telemetry.InitTracer("bulkhead-{service}", endpoint)`
+- All 3 Go binaries initialize an OTLP trace exporter on startup via `telemetry.InitTracer("bulkhead-{binary}", endpoint)`
 - The Host Agent (Rust) also exports traces via the same OTLP endpoint
 - If `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, tracing is disabled (no-op provider) — zero overhead
 - gRPC calls are automatically instrumented via the `otelgrpc.NewServerHandler()` stats handler
@@ -77,18 +77,12 @@ All services are pre-configured to export to `jaeger:4317`. Access the Jaeger UI
 
 **Service names:**
 
-| Service | Trace Name |
-|---------|-----------|
-| Identity | `bulkhead-identity` |
-| Workspace | `bulkhead-workspace` |
-| Task | `bulkhead-task` |
-| Compute | `bulkhead-compute` |
-| Guardrails | `bulkhead-guardrails` |
-| Human Interaction | `bulkhead-human` |
-| Activity Store | `bulkhead-activity` |
-| Economics | `bulkhead-economics` |
-| Data Governance | `bulkhead-governance` |
-| Host Agent | `bulkhead-host-agent` |
+| Binary | Services | Trace Name |
+|--------|----------|-----------|
+| control-plane | Identity, Task, Workspace, Compute | `bulkhead-control-plane` |
+| policy | Guardrails, Data Governance | `bulkhead-policy` |
+| observability | Activity, Economics, Human | `bulkhead-observability` |
+| host-agent | Host Agent | `bulkhead-host-agent` |
 
 ---
 
@@ -605,7 +599,7 @@ erDiagram
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Control Plane | Go 1.24 | 9 microservices with gRPC APIs |
+| Control Plane | Go 1.24 | 3 binaries (9 services) with gRPC APIs |
 | Host Agent | Rust 1.83 | Per-host policy engine, <50ms evaluation, Docker container lifecycle, iptables egress |
 | Python SDK | Python 3.10+ | `@tool` decorator, evaluate → execute → report cycle |
 | Container Runtime | bollard (Rust) / Docker | Agent container lifecycle with isolation tiers (opt-in via `ENABLE_DOCKER`) |
@@ -613,7 +607,7 @@ erDiagram
 | RPC Framework | gRPC / Protocol Buffers | Inter-service communication |
 | Build (Go) | `go build`, buf (proto) | Standard Go toolchain |
 | Build (Rust) | Cargo, tonic-build | Async Rust with Tokio |
-| Deployment | Docker Compose | 11-container local stack |
+| Deployment | Docker Compose | 5-container local stack (+ Jaeger) |
 | Auth | SHA-256 token hashing | Scoped credentials via gRPC metadata |
 | Logging | zap (Go), tracing (Rust) | Structured logging |
 | Testing | `go test`, `cargo test`, TestContainers | Unit + integration |

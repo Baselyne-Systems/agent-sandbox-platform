@@ -30,16 +30,20 @@ import (
 // Service addresses (override via environment variables)
 // ---------------------------------------------------------------------------
 
+// Consolidated binary addresses (services that share a binary share a port).
+// control-plane binary (Identity, Task, Workspace, Compute): 50060
+// policy binary (Guardrails, Governance):                     50062
+// observability binary (Activity, Economics, Human):           50065
 var (
 	identityAddr   = envOrDefault("IDENTITY_ADDR", "localhost:50060")
-	workspaceAddr  = envOrDefault("WORKSPACE_ADDR", "localhost:50061")
+	workspaceAddr  = envOrDefault("WORKSPACE_ADDR", "localhost:50060")
 	guardrailsAddr = envOrDefault("GUARDRAILS_ADDR", "localhost:50062")
-	humanAddr      = envOrDefault("HUMAN_ADDR", "localhost:50063")
-	governanceAddr = envOrDefault("GOVERNANCE_ADDR", "localhost:50064")
+	humanAddr      = envOrDefault("HUMAN_ADDR", "localhost:50065")
+	governanceAddr = envOrDefault("GOVERNANCE_ADDR", "localhost:50062")
 	activityAddr   = envOrDefault("ACTIVITY_ADDR", "localhost:50065")
-	economicsAddr  = envOrDefault("ECONOMICS_ADDR", "localhost:50066")
-	computeAddr    = envOrDefault("COMPUTE_ADDR", "localhost:50067")
-	taskAddr       = envOrDefault("TASK_ADDR", "localhost:50068")
+	economicsAddr  = envOrDefault("ECONOMICS_ADDR", "localhost:50065")
+	computeAddr    = envOrDefault("COMPUTE_ADDR", "localhost:50060")
+	taskAddr       = envOrDefault("TASK_ADDR", "localhost:50060")
 )
 
 // ---------------------------------------------------------------------------

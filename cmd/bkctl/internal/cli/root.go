@@ -7,17 +7,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Default ports matching docker-compose.yml.
+// Default ports matching docker-compose.yml (consolidated binaries).
+// control-plane binary: Identity, Task, Workspace, Compute → 50060
+// policy binary:        Guardrails, Data Governance         → 50062
+// observability binary: Activity, Economics, Human           → 50065
 var defaultPorts = map[string]string{
 	"identity":   "50060",
-	"workspace":  "50061",
+	"workspace":  "50060",
 	"guardrails": "50062",
-	"human":      "50063",
-	"governance": "50064",
+	"human":      "50065",
+	"governance": "50062",
 	"activity":   "50065",
-	"economics":  "50066",
-	"compute":    "50067",
-	"task":       "50068",
+	"economics":  "50065",
+	"compute":    "50060",
+	"task":       "50060",
 }
 
 var rootCmd = &cobra.Command{

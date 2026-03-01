@@ -59,17 +59,24 @@ graph TB
     Operator["Operator / Client"]
 
     subgraph CP["Control Plane (Go)"]
-        Identity["Identity"]
+        subgraph CPBin["control-plane binary"]
+            Identity["Identity"]
+            Task["Task"]
+            Workspace["Workspace"]
+            Compute["Compute Plane"]
+        end
 
-        Task["Task"]
-        Workspace["Workspace"]
-        Compute["Compute Plane"]
-        Guardrails["Guardrails"]
+        subgraph PolicyBin["policy binary"]
+            Guardrails["Guardrails"]
+            Governance["Data Governance"]
+        end
 
-        Human["Human Interaction"]
-        Economics["Economics"]
-        Activity["Activity Store"]
-        Governance["Data Governance"]
+        subgraph ObsBin["observability binary"]
+            Human["Human Interaction"]
+            Economics["Economics"]
+            Activity["Activity Store"]
+        end
+
         PG[("PostgreSQL")]
 
         Task -->|provision| Workspace
@@ -100,7 +107,7 @@ graph TB
 
 | Component | Technology | Role |
 |-----------|-----------|------|
-| **Control Plane** | Go 1.24, gRPC, PostgreSQL 16 | 9 microservices: orchestration, policy management, fleet management, audit |
+| **Control Plane** | Go 1.24, gRPC, PostgreSQL 16 | 3 binaries (9 services): orchestration, policy management, fleet management, audit |
 | **Host Agent** | Rust 1.83, Tokio, Bollard | Per-host policy engine: guardrails evaluation, Docker lifecycle, iptables egress |
 | **Python SDK** | Python 3.10+, LangChain | `@tool` decorator: evaluate-execute-report cycle, LangChain wrapper |
 
@@ -136,7 +143,7 @@ make build-bkctl
 # Run all unit tests
 make test
 
-# Start the full stack (9 Go + 1 Rust + PostgreSQL)
+# Start the full stack (3 Go + 1 Rust + PostgreSQL)
 docker compose -f deploy/docker-compose.yml up --build
 
 # Verify services are healthy
@@ -176,8 +183,11 @@ bulkhead/
 ├── cmd/
 │   └── bkctl/                      # Operator CLI (bkctl)
 │
-├── control-plane/                  # Go microservices (9 services)
-│   ├── cmd/                        #   Service entry points
+├── control-plane/                  # Go control plane (3 binaries, 9 services)
+│   ├── cmd/
+│   │   ├── control-plane/          #   Identity + Task + Workspace + Compute
+│   │   ├── policy/                 #   Guardrails + Data Governance
+│   │   └── observability/          #   Activity + Economics + Human
 │   ├── internal/                   #   Business logic per service
 │   └── migrations/                 #   SQL schema migrations (13 files)
 │
@@ -199,7 +209,7 @@ bulkhead/
 │       └── examples/               #     Basic agent, LangChain integration
 │
 ├── deploy/
-│   ├── docker-compose.yml          # Full stack (11 containers)
+│   ├── docker-compose.yml          # Full stack (5 containers + Jaeger)
 │   ├── helm/                       # Kubernetes Helm chart
 │   └── docker/
 │       ├── Dockerfile.control-plane

@@ -42,16 +42,11 @@ import (
 // Full-stack test helpers
 // ---------------------------------------------------------------------------
 
-// fullStackPorts holds the dynamic ports allocated for each gRPC service.
+// fullStackPorts holds the dynamic ports allocated for each consolidated binary.
 type fullStackPorts struct {
-	identity   int
-	compute    int
-	guardrails int
-	economics  int
-	governance int
-	activity   int
-	human      int
-	workspace  int
+	controlPlane int // Identity, Compute, Workspace, Task
+	policy       int // Guardrails, Governance
+	observability int // Activity, Economics, Human
 }
 
 // tenantResolverInterceptor is a gRPC unary server interceptor that resolves
@@ -91,8 +86,8 @@ func tenantResolverInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
-// startGRPCServers launches all control-plane gRPC services on dynamic ports.
-// Returns servers and the ports they're listening on.
+// startGRPCServers launches the 3 consolidated control-plane gRPC services
+// on dynamic ports. Returns servers and the ports they're listening on.
 func startGRPCServers(t *testing.T) ([]*grpc.Server, fullStackPorts) {
 	t.Helper()
 
@@ -120,47 +115,25 @@ func startGRPCServers(t *testing.T) ([]*grpc.Server, fullStackPorts) {
 		return port
 	}
 
-	identityHandler := identity.NewHandler(identitySvc)
-	ports.identity = start("identity", func(s *grpc.Server) {
-		identitypb.RegisterIdentityServiceServer(s, identityHandler)
+	// Control-plane binary: Identity + Compute + Workspace
+	ports.controlPlane = start("control-plane", func(s *grpc.Server) {
+		identitypb.RegisterIdentityServiceServer(s, identity.NewHandler(identitySvc))
+		computepb.RegisterComputePlaneServiceServer(s, compute.NewHandler(computeSvc))
+		// Workspace handler registered for completeness; runtime doesn't call it directly.
+		_ = workspace.NewHandler(workspaceSvc)
 	})
 
-	computeHandler := compute.NewHandler(computeSvc)
-	ports.compute = start("compute", func(s *grpc.Server) {
-		computepb.RegisterComputePlaneServiceServer(s, computeHandler)
+	// Policy binary: Guardrails + Governance
+	ports.policy = start("policy", func(s *grpc.Server) {
+		guardrailspb.RegisterGuardrailsServiceServer(s, guardrails.NewHandler(guardrailsSvc))
+		governancepb.RegisterDataGovernanceServiceServer(s, governance.NewHandler(governanceSvc))
 	})
 
-	guardrailsHandler := guardrails.NewHandler(guardrailsSvc)
-	ports.guardrails = start("guardrails", func(s *grpc.Server) {
-		guardrailspb.RegisterGuardrailsServiceServer(s, guardrailsHandler)
-	})
-
-	economicsHandler := economics.NewHandler(economicsSvc)
-	ports.economics = start("economics", func(s *grpc.Server) {
-		economicspb.RegisterEconomicsServiceServer(s, economicsHandler)
-	})
-
-	governanceHandler := governance.NewHandler(governanceSvc)
-	ports.governance = start("governance", func(s *grpc.Server) {
-		governancepb.RegisterDataGovernanceServiceServer(s, governanceHandler)
-	})
-
-	activityHandler := activity.NewHandler(activitySvc)
-	ports.activity = start("activity", func(s *grpc.Server) {
-		activitypb.RegisterActivityServiceServer(s, activityHandler)
-	})
-
-	humanHandler := human.NewHandler(humanSvc)
-	ports.human = start("human", func(s *grpc.Server) {
-		humanpb.RegisterHumanInteractionServiceServer(s, humanHandler)
-	})
-
-	// Workspace handler needs the real workspace service (already wired in TestMain).
-	workspaceHandler := workspace.NewHandler(workspaceSvc)
-	ports.workspace = start("workspace", func(s *grpc.Server) {
-		// The runtime doesn't connect to workspace service directly,
-		// but we start it for completeness.
-		_ = workspaceHandler
+	// Observability binary: Activity + Economics + Human
+	ports.observability = start("observability", func(s *grpc.Server) {
+		activitypb.RegisterActivityServiceServer(s, activity.NewHandler(activitySvc))
+		economicspb.RegisterEconomicsServiceServer(s, economics.NewHandler(economicsSvc))
+		humanpb.RegisterHumanInteractionServiceServer(s, human.NewHandler(humanSvc))
 	})
 
 	return servers, ports
@@ -204,11 +177,11 @@ func startRuntime(t *testing.T, ports fullStackPorts) (*exec.Cmd, int) {
 		fmt.Sprintf("TOTAL_CPU_MILLICORES=%d", 4000),
 		fmt.Sprintf("TOTAL_DISK_MB=%d", 10240),
 		"SUPPORTED_TIERS=standard,hardened",
-		fmt.Sprintf("COMPUTE_ENDPOINT=http://127.0.0.1:%d", ports.compute),
-		fmt.Sprintf("HIS_ENDPOINT=http://127.0.0.1:%d", ports.human),
-		fmt.Sprintf("ACTIVITY_ENDPOINT=http://127.0.0.1:%d", ports.activity),
-		fmt.Sprintf("ECONOMICS_ENDPOINT=http://127.0.0.1:%d", ports.economics),
-		fmt.Sprintf("GOVERNANCE_ENDPOINT=http://127.0.0.1:%d", ports.governance),
+		fmt.Sprintf("COMPUTE_ENDPOINT=http://127.0.0.1:%d", ports.controlPlane),
+		fmt.Sprintf("HIS_ENDPOINT=http://127.0.0.1:%d", ports.observability),
+		fmt.Sprintf("ACTIVITY_ENDPOINT=http://127.0.0.1:%d", ports.observability),
+		fmt.Sprintf("ECONOMICS_ENDPOINT=http://127.0.0.1:%d", ports.observability),
+		fmt.Sprintf("GOVERNANCE_ENDPOINT=http://127.0.0.1:%d", ports.policy),
 		"RUST_LOG=info",
 	)
 	cmd.Stdout = os.Stdout
