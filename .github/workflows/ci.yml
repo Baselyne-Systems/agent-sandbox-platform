@@ -73,12 +73,28 @@ jobs:
       - name: Test with coverage
         run: go test -count=1 -short -coverprofile=coverage.out -covermode=atomic ./...
         working-directory: control-plane
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+      - name: Compute coverage percentage
+        if: github.ref == 'refs/heads/main'
+        id: coverage
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep ^total: | awk '{print $3}' | tr -d '%')
+          echo "pct=$COVERAGE" >> "$GITHUB_OUTPUT"
+          # Pick badge color based on coverage
+          if (( $(echo "$COVERAGE >= 80" | bc -l) )); then COLOR=brightgreen
+          elif (( $(echo "$COVERAGE >= 60" | bc -l) )); then COLOR=yellow
+          else COLOR=red; fi
+          echo "color=$COLOR" >> "$GITHUB_OUTPUT"
+        working-directory: control-plane
+      - name: Publish coverage badge
+        if: github.ref == 'refs/heads/main'
+        uses: schneegans/dynamic-badges-action@v1.7.0
         with:
-          files: control-plane/coverage.out
-          flags: go
-          token: ${{ secrets.CODECOV_TOKEN }}
+          auth: ${{ secrets.GIST_TOKEN }}
+          gistID: ${{ vars.COVERAGE_GIST_ID }}
+          filename: bulkhead-coverage.json
+          label: coverage
+          message: ${{ steps.coverage.outputs.pct }}%
+          color: ${{ steps.coverage.outputs.color }}
 
   rust-lint:
     name: Rust Lint & Format

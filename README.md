@@ -1,7 +1,7 @@
 # Bulkhead
 
 [![CI](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml/badge.svg)](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml)
-[![codecov](https://codecov.io/gh/Baselyne-Systems/bulkhead/branch/main/graph/badge.svg)](https://codecov.io/gh/Baselyne-Systems/bulkhead)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/achyuthsamudrala/COVERAGE_GIST_ID/raw/bulkhead-coverage.json)](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml)
 [![Benchmarks](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/benchmarks.yml/badge.svg)](https://Baselyne-Systems.github.io/bulkhead/dev/bench/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Baselyne-Systems/bulkhead)
 
