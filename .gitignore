@@ -19,6 +19,9 @@ runtime/crates/proto-gen/src/gen/
 .DS_Store
 Thumbs.db
 
+# Python
+__pycache__/
+
 # Environment
 .env
 .env.local

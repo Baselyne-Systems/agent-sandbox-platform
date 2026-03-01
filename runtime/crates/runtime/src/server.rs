@@ -253,12 +253,7 @@ impl HostAgentService for HostAgentServiceImpl {
                                 ),
                             }
                         }
-                        SandboxEvent::Progress { .. } => {
-                            // Progress events are not in the proto schema,
-                            // map as lifecycle with reason containing message
-                            return None;
-                        }
-                    };
+                        };
                     Some(Ok(proto_event))
                 }
                 Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(n)) => {

@@ -36,10 +36,6 @@ pub enum SandboxEvent {
         new_state: String,
         reason: String,
     },
-    Progress {
-        message: String,
-        percent_complete: f32,
-    },
 }
 
 /// Parameters for creating a new sandbox.
@@ -57,6 +53,10 @@ pub struct CreateSandboxParams {
 }
 
 /// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
+///
+/// Fields like `env_vars`, `container_image`, `egress_allowlist`, and `isolation_tier`
+/// are used during sandbox creation and retained for introspection / audit queries.
+#[allow(dead_code)]
 pub struct SandboxState {
     /// Unique identifier for this sandbox.
     pub id: String,
@@ -132,8 +132,33 @@ impl SandboxManager {
         let id = Uuid::new_v4().to_string();
         let (event_tx, _) = broadcast::channel(256);
 
+        // Build sandbox state in Starting status.
+        let state = Arc::new(SandboxState {
+            id: id.clone(),
+            workspace_id: params.workspace_id.clone(),
+            agent_id: params.agent_id.clone(),
+            status: Mutex::new(SandboxStatus::Starting),
+            evaluator: RwLock::new(evaluator),
+            allowed_tools: params.allowed_tools,
+            env_vars: params.env_vars.clone(),
+            container_image: params.container_image.clone(),
+            egress_allowlist: params.egress_allowlist.clone(),
+            isolation_tier: params.isolation_tier.clone(),
+            tool_definitions: params.tool_definitions,
+            container_id: Mutex::new(None),
+            actions_executed: AtomicU32::new(0),
+            event_tx: event_tx.clone(),
+            created_at: SystemTime::now(),
+        });
+
+        // Send lifecycle starting event (ignore error if no receivers)
+        let _ = event_tx.send(SandboxEvent::Lifecycle {
+            new_state: "starting".into(),
+            reason: "sandbox provisioning".into(),
+        });
+
         // Start container if an image is specified
-        let container_id = if !params.container_image.is_empty() {
+        if !params.container_image.is_empty() {
             let memory_bytes = 512 * 1024 * 1024; // default 512MB
             let cpu_quota = 100_000; // default 1 CPU
             let tier = if params.isolation_tier.is_empty() {
@@ -146,7 +171,7 @@ impl SandboxManager {
                 .start_container(
                     &id,
                     &params.container_image,
-                    params.env_vars.clone(),
+                    params.env_vars,
                     memory_bytes,
                     cpu_quota,
                     &params.egress_allowlist,
@@ -154,32 +179,30 @@ impl SandboxManager {
                 )
                 .await
             {
-                Ok(cid) => Some(cid),
+                Ok(cid) => {
+                    *state
+                        .container_id
+                        .lock()
+                        .map_err(|e| anyhow!("lock poisoned: {e}"))? = Some(cid);
+                }
                 Err(e) => {
+                    // Transition to Failed state before returning the error.
+                    if let Ok(mut status) = state.status.lock() {
+                        *status = SandboxStatus::Failed;
+                    }
+                    let _ = event_tx.send(SandboxEvent::Lifecycle {
+                        new_state: "failed".into(),
+                        reason: format!("container start failed: {e}"),
+                    });
                     return Err(anyhow!("failed to start container: {e}"));
                 }
             }
-        } else {
-            None
-        };
+        }
 
-        let state = Arc::new(SandboxState {
-            id: id.clone(),
-            workspace_id: params.workspace_id.clone(),
-            agent_id: params.agent_id.clone(),
-            status: Mutex::new(SandboxStatus::Running),
-            evaluator: RwLock::new(evaluator),
-            allowed_tools: params.allowed_tools,
-            env_vars: params.env_vars,
-            container_image: params.container_image,
-            egress_allowlist: params.egress_allowlist,
-            isolation_tier: params.isolation_tier,
-            tool_definitions: params.tool_definitions,
-            container_id: Mutex::new(container_id),
-            actions_executed: AtomicU32::new(0),
-            event_tx: event_tx.clone(),
-            created_at: SystemTime::now(),
-        });
+        // Transition to Running.
+        if let Ok(mut status) = state.status.lock() {
+            *status = SandboxStatus::Running;
+        }
 
         info!(
             sandbox_id = %id,
@@ -188,7 +211,6 @@ impl SandboxManager {
             "sandbox provisioned"
         );
 
-        // Send lifecycle started event (ignore error if no receivers)
         let _ = event_tx.send(SandboxEvent::Lifecycle {
             new_state: "running".into(),
             reason: "sandbox created".into(),
@@ -378,14 +400,14 @@ mod tests {
             .unwrap();
 
         let mut rx = state.event_tx.subscribe();
-        let _ = state.event_tx.send(SandboxEvent::Progress {
-            message: "test".into(),
-            percent_complete: 50.0,
+        let _ = state.event_tx.send(SandboxEvent::Lifecycle {
+            new_state: "running".into(),
+            reason: "test event".into(),
         });
 
         let event = rx.try_recv().unwrap();
         match event {
-            SandboxEvent::Progress { message, .. } => assert_eq!(message, "test"),
+            SandboxEvent::Lifecycle { reason, .. } => assert_eq!(reason, "test event"),
             _ => panic!("unexpected event type"),
         }
     }

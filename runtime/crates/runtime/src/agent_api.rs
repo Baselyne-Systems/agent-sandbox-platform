@@ -540,7 +540,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
         &self,
         request: Request<ReportProgressRequest>,
     ) -> Result<Response<ReportProgressResponse>, Status> {
-        let sandbox = self.sandbox_manager.lookup_by_metadata(&request).ok();
+        let _sandbox = self.sandbox_manager.lookup_by_metadata(&request).ok();
 
         let req = request.into_inner();
         info!(
@@ -548,13 +548,6 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             percent_complete = %req.percent_complete,
             "agent reported progress"
         );
-
-        if let Some(sandbox) = sandbox {
-            let _ = sandbox.event_tx.send(SandboxEvent::Progress {
-                message: req.message,
-                percent_complete: req.percent_complete,
-            });
-        }
 
         Ok(Response::new(ReportProgressResponse {}))
     }

@@ -91,7 +91,7 @@ jobs:
         run: cargo fmt --check
         working-directory: runtime
       - name: Clippy
-        run: cargo clippy -- -D warnings -A clippy::too_many_arguments -A dead_code
+        run: cargo clippy -- -D warnings -A clippy::too_many_arguments
         working-directory: runtime
 
   rust-build-test:
