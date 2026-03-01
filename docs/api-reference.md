@@ -93,8 +93,8 @@ Orchestrates workspace lifecycle — creation, provisioning, termination, and sn
 | `GetWorkspace` | Retrieve a workspace by ID. |
 | `ListWorkspaces` | List workspaces with optional filters (agent_id, status). Cursor-based pagination. |
 | `TerminateWorkspace` | Terminate a workspace. Destroys the sandbox on the runtime host if provisioned. |
-| `SnapshotWorkspace` | Capture a point-in-time snapshot of a running workspace. |
-| `RestoreWorkspace` | Restore a workspace from a snapshot ID. Creates a new workspace with the same configuration. |
+| `SnapshotWorkspace` | Capture a point-in-time snapshot of a running workspace. **Not yet implemented** — returns UNIMPLEMENTED. Requires ExportSandbox/ImportSandbox RPCs on the Host Agent to stream container filesystem tarballs via `docker export`/`docker import`. |
+| `RestoreWorkspace` | Restore a workspace from a snapshot ID. **Not yet implemented** — returns UNIMPLEMENTED. |
 
 ### Key Messages
 
@@ -271,7 +271,7 @@ Rule management and policy compilation.
 | `DeleteRule` | Delete a rule by ID. |
 | `CompilePolicy` | Compile a set of rules (by ID) into binary bytes for the Rust evaluator. Returns compiled bytes and rule count. |
 | `SimulatePolicy` | Dry-run a policy against a sample tool call. Returns the verdict and matched rule without executing anything. |
-| `GetBehaviorReport` | Get a behavior analysis report for an agent over a time window. Returns action count, denial rate, error rate, anomaly flags, and recommendation. |
+| `GetBehaviorReport` | Get a behavior analysis report for an agent over a time window. Returns action count, denial rate, error rate, anomaly flags, and recommendation. On-demand reports work; **background alert emission is not yet implemented** — `ConsideredEvaluator.Run()` returns UNIMPLEMENTED. |
 | `CreateGuardrailSet` | Create a named collection of rules. Returns the created set with a generated UUID. |
 | `GetGuardrailSet` | Retrieve a guardrail set by ID. |
 | `ListGuardrailSets` | List guardrail sets. Cursor-based pagination. |

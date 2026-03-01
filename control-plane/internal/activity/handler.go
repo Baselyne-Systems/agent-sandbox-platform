@@ -284,8 +284,9 @@ func jsonToStruct(data json.RawMessage) (*structpb.Struct, error) {
 // --- Alert handlers ---
 
 func (h *Handler) ConfigureAlert(ctx context.Context, req *pb.ConfigureAlertRequest) (*pb.ConfigureAlertResponse, error) {
+	tenantID, _ := middleware.TenantIDFromContext(ctx)
 	condType := protoConditionToModel(req.GetConditionType())
-	config, err := h.svc.ConfigureAlert(ctx, req.GetName(), condType, req.GetThreshold(), req.GetAgentId(), req.GetWebhookUrl())
+	config, err := h.svc.ConfigureAlert(ctx, tenantID, req.GetName(), condType, req.GetThreshold(), req.GetAgentId(), req.GetWebhookUrl())
 	if err != nil {
 		return nil, toGRPCError(err)
 	}

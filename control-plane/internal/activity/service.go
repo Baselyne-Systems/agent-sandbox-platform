@@ -179,7 +179,7 @@ var validConditionTypes = map[models.AlertConditionType]bool{
 	models.AlertConditionStuckAgent:     true,
 }
 
-func (s *Service) ConfigureAlert(ctx context.Context, name string, conditionType models.AlertConditionType, threshold float64, agentID, webhookURL string) (*models.AlertConfig, error) {
+func (s *Service) ConfigureAlert(ctx context.Context, tenantID, name string, conditionType models.AlertConditionType, threshold float64, agentID, webhookURL string) (*models.AlertConfig, error) {
 	if s.alertRepo == nil {
 		return nil, ErrAlertsNotEnabled
 	}
@@ -194,6 +194,7 @@ func (s *Service) ConfigureAlert(ctx context.Context, name string, conditionType
 	}
 
 	config := &models.AlertConfig{
+		TenantID:      tenantID,
 		Name:          name,
 		ConditionType: conditionType,
 		Threshold:     threshold,

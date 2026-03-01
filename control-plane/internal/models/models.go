@@ -376,6 +376,7 @@ const (
 // AlertConfig stores an alert rule definition.
 type AlertConfig struct {
 	ID            string
+	TenantID      string
 	Name          string
 	ConditionType AlertConditionType
 	Threshold     float64

@@ -50,6 +50,10 @@ pub struct CreateSandboxParams {
     pub isolation_tier: String,
     /// MCP-compatible tool schemas registered for this sandbox.
     pub tool_definitions: Vec<ToolDefinition>,
+    /// Agent trust level for guardrail rule scoping.
+    pub trust_level: String,
+    /// Workspace data classification for guardrail rule scoping.
+    pub data_classification: String,
 }
 
 /// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
@@ -81,6 +85,10 @@ pub struct SandboxState {
     pub isolation_tier: String,
     /// MCP-compatible tool schemas registered for this sandbox.
     pub tool_definitions: Vec<ToolDefinition>,
+    /// Agent trust level for guardrail rule scoping.
+    pub trust_level: String,
+    /// Workspace data classification for guardrail rule scoping.
+    pub data_classification: String,
     /// Container ID if a container was started for this sandbox.
     pub container_id: Mutex<Option<String>>,
     /// Counter of actions executed in this sandbox.
@@ -145,6 +153,8 @@ impl SandboxManager {
             egress_allowlist: params.egress_allowlist.clone(),
             isolation_tier: params.isolation_tier.clone(),
             tool_definitions: params.tool_definitions,
+            trust_level: params.trust_level,
+            data_classification: params.data_classification,
             container_id: Mutex::new(None),
             actions_executed: AtomicU32::new(0),
             event_tx: event_tx.clone(),
@@ -363,6 +373,8 @@ mod tests {
             egress_allowlist: vec![],
             isolation_tier: "standard".to_string(),
             tool_definitions: vec![],
+            trust_level: "standard".to_string(),
+            data_classification: "internal".to_string(),
         }
     }
 

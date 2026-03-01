@@ -177,8 +177,8 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             tool_name: req.tool_name.clone(),
             parameters: parameters.clone(),
             agent_id: sandbox.agent_id.clone(),
-            trust_level: String::new(), // TODO: populate from agent metadata
-            data_classification: String::new(), // TODO: populate from governance
+            trust_level: sandbox.trust_level.clone(),
+            data_classification: sandbox.data_classification.clone(),
         };
 
         // 5. Evaluate guardrails (read lock for hot-reload support)

@@ -67,6 +67,8 @@ message SandboxSpec {
   repeated string egress_allowlist = 7;  // approved destination hosts/CIDRs
   string isolation_tier = 8;        // security isolation tier (standard, hardened, isolated)
   repeated ToolDefinition tool_definitions = 9;  // MCP-compatible tool schemas
+  string trust_level = 10;          // agent trust level for rule scoping
+  string data_classification = 11;  // workspace data classification for rule scoping
 }
 
 message CreateSandboxResponse {

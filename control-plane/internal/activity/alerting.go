@@ -21,16 +21,18 @@ const (
 type AlertEngine struct {
 	activity   Repository
 	alerts     AlertRepository
+	tenantID   string
 	interval   time.Duration
 	window     time.Duration
 	httpClient *http.Client
 }
 
 // NewAlertEngine creates an alert engine that checks conditions at the given interval.
-func NewAlertEngine(activity Repository, alerts AlertRepository) *AlertEngine {
+func NewAlertEngine(activity Repository, alerts AlertRepository, tenantID string) *AlertEngine {
 	return &AlertEngine{
 		activity:   activity,
 		alerts:     alerts,
+		tenantID:   tenantID,
 		interval:   defaultAlertInterval,
 		window:     defaultAlertWindow,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
@@ -54,7 +56,7 @@ func (e *AlertEngine) Run(ctx context.Context) {
 
 // evaluate checks all enabled alert configs against recent activity.
 func (e *AlertEngine) evaluate(ctx context.Context) {
-	configs, err := e.alerts.ListAlertConfigs(ctx, true)
+	configs, err := e.alerts.ListAlertConfigs(ctx, e.tenantID, true)
 	if err != nil {
 		log.Printf("alerting: failed to list configs: %v", err)
 		return
@@ -110,8 +112,7 @@ func (e *AlertEngine) checkCondition(ctx context.Context, cfg models.AlertConfig
 		EndTime:   &end,
 		Limit:     10000, // large enough window
 	}
-	// TODO: AlertEngine should be scoped per-tenant once alert configs carry tenant_id.
-	records, err := e.activity.QueryActions(ctx, "", filter)
+	records, err := e.activity.QueryActions(ctx, e.tenantID, filter)
 	if err != nil || len(records) == 0 {
 		return false, ""
 	}

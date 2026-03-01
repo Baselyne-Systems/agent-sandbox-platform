@@ -55,11 +55,14 @@ func (m *mockAlertRepo) GetAlertConfig(_ context.Context, id string) (*models.Al
 	return &cp, nil
 }
 
-func (m *mockAlertRepo) ListAlertConfigs(_ context.Context, enabledOnly bool) ([]models.AlertConfig, error) {
+func (m *mockAlertRepo) ListAlertConfigs(_ context.Context, tenantID string, enabledOnly bool) ([]models.AlertConfig, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var result []models.AlertConfig
 	for _, c := range m.configs {
+		if tenantID != "" && c.TenantID != tenantID {
+			continue
+		}
 		if enabledOnly && !c.Enabled {
 			continue
 		}
@@ -140,7 +143,7 @@ func TestConfigureAlert_Success(t *testing.T) {
 	svc := NewService(newMockRepo())
 	svc.SetAlertRepository(newMockAlertRepo())
 
-	config, err := svc.ConfigureAlert(context.Background(), "high-denial", models.AlertConditionDenialRate, 0.5, "agent-1", "https://hooks.example.com/alert")
+	config, err := svc.ConfigureAlert(context.Background(), "tenant-1", "high-denial", models.AlertConditionDenialRate, 0.5, "agent-1", "https://hooks.example.com/alert")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -173,7 +176,7 @@ func TestConfigureAlert_Validation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := svc.ConfigureAlert(ctx, tt.alertName, tt.conditionType, tt.threshold, "", "")
+			_, err := svc.ConfigureAlert(ctx, "tenant-1", tt.alertName, tt.conditionType, tt.threshold, "", "")
 			if !errors.Is(err, ErrInvalidInput) {
 				t.Errorf("expected ErrInvalidInput, got: %v", err)
 			}
@@ -184,7 +187,7 @@ func TestConfigureAlert_Validation(t *testing.T) {
 func TestConfigureAlert_NotEnabled(t *testing.T) {
 	svc := NewService(newMockRepo())
 	// No alert repo set.
-	_, err := svc.ConfigureAlert(context.Background(), "test", models.AlertConditionDenialRate, 0.5, "", "")
+	_, err := svc.ConfigureAlert(context.Background(), "tenant-1", "test", models.AlertConditionDenialRate, 0.5, "", "")
 	if !errors.Is(err, ErrAlertsNotEnabled) {
 		t.Errorf("expected ErrAlertsNotEnabled, got: %v", err)
 	}
@@ -315,6 +318,7 @@ func TestAlertEngine_DenialRate(t *testing.T) {
 
 	// Configure alert: threshold 50%.
 	alertRepo.UpsertAlertConfig(ctx, &models.AlertConfig{
+		TenantID:      "tenant-1",
 		Name:          "high-denial",
 		ConditionType: models.AlertConditionDenialRate,
 		Threshold:     0.5,
@@ -322,7 +326,7 @@ func TestAlertEngine_DenialRate(t *testing.T) {
 		Enabled:       true,
 	})
 
-	engine := NewAlertEngine(activityRepo, alertRepo)
+	engine := NewAlertEngine(activityRepo, alertRepo, "tenant-1")
 	engine.window = 1 * time.Hour // cover all test records
 	engine.evaluate(ctx)
 
@@ -351,6 +355,7 @@ func TestAlertEngine_NoTrigger(t *testing.T) {
 	}
 
 	alertRepo.UpsertAlertConfig(ctx, &models.AlertConfig{
+		TenantID:      "tenant-1",
 		Name:          "high-denial",
 		ConditionType: models.AlertConditionDenialRate,
 		Threshold:     0.5,
@@ -358,7 +363,7 @@ func TestAlertEngine_NoTrigger(t *testing.T) {
 		Enabled:       true,
 	})
 
-	engine := NewAlertEngine(activityRepo, alertRepo)
+	engine := NewAlertEngine(activityRepo, alertRepo, "tenant-1")
 	engine.window = 1 * time.Hour
 	engine.evaluate(ctx)
 
@@ -384,6 +389,7 @@ func TestAlertEngine_AutoResolve(t *testing.T) {
 	}
 
 	cfg := &models.AlertConfig{
+		TenantID:      "tenant-1",
 		Name:          "high-denial",
 		ConditionType: models.AlertConditionDenialRate,
 		Threshold:     0.5,
@@ -392,7 +398,7 @@ func TestAlertEngine_AutoResolve(t *testing.T) {
 	}
 	alertRepo.UpsertAlertConfig(ctx, cfg)
 
-	engine := NewAlertEngine(activityRepo, alertRepo)
+	engine := NewAlertEngine(activityRepo, alertRepo, "tenant-1")
 	engine.window = 1 * time.Hour
 	engine.evaluate(ctx)
 
@@ -413,7 +419,7 @@ func TestAlertEngine_AutoResolve(t *testing.T) {
 		})
 	}
 
-	engine2 := NewAlertEngine(activityRepo2, alertRepo)
+	engine2 := NewAlertEngine(activityRepo2, alertRepo, "tenant-1")
 	engine2.window = 1 * time.Hour
 	engine2.evaluate(ctx)
 
@@ -439,6 +445,7 @@ func TestAlertEngine_StuckAgent(t *testing.T) {
 	}
 
 	alertRepo.UpsertAlertConfig(ctx, &models.AlertConfig{
+		TenantID:      "tenant-1",
 		Name:          "stuck-agent",
 		ConditionType: models.AlertConditionStuckAgent,
 		Threshold:     1, // threshold not used for stuck agent, but required > 0
@@ -446,7 +453,7 @@ func TestAlertEngine_StuckAgent(t *testing.T) {
 		Enabled:       true,
 	})
 
-	engine := NewAlertEngine(activityRepo, alertRepo)
+	engine := NewAlertEngine(activityRepo, alertRepo, "tenant-1")
 	engine.window = 1 * time.Hour
 	engine.evaluate(ctx)
 
@@ -476,6 +483,7 @@ func TestAlertEngine_ErrorRate(t *testing.T) {
 	}
 
 	alertRepo.UpsertAlertConfig(ctx, &models.AlertConfig{
+		TenantID:      "tenant-1",
 		Name:          "high-error",
 		ConditionType: models.AlertConditionErrorRate,
 		Threshold:     0.5,
@@ -483,7 +491,7 @@ func TestAlertEngine_ErrorRate(t *testing.T) {
 		Enabled:       true,
 	})
 
-	engine := NewAlertEngine(activityRepo, alertRepo)
+	engine := NewAlertEngine(activityRepo, alertRepo, "tenant-1")
 	engine.window = 1 * time.Hour
 	engine.evaluate(ctx)
 
@@ -508,6 +516,7 @@ func TestAlertEngine_DeduplicatesAlerts(t *testing.T) {
 	}
 
 	alertRepo.UpsertAlertConfig(ctx, &models.AlertConfig{
+		TenantID:      "tenant-1",
 		Name:          "high-denial",
 		ConditionType: models.AlertConditionDenialRate,
 		Threshold:     0.5,
@@ -515,7 +524,7 @@ func TestAlertEngine_DeduplicatesAlerts(t *testing.T) {
 		Enabled:       true,
 	})
 
-	engine := NewAlertEngine(activityRepo, alertRepo)
+	engine := NewAlertEngine(activityRepo, alertRepo, "tenant-1")
 	engine.window = 1 * time.Hour
 
 	// Evaluate multiple times — should still only have 1 alert.

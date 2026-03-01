@@ -21,6 +21,12 @@ type ActivityQueryFilter struct {
 	Limit     int
 }
 
+// ErrAlertEmissionNotImplemented is returned by Run() because the background
+// evaluation loop detects anomalies but has no way to emit alerts yet.
+// A real implementation would call Activity Store's ConfigureAlert/trigger
+// mechanism or escalate via HIS.
+var ErrAlertEmissionNotImplemented = fmt.Errorf("considered evaluator: background alert emission not yet implemented (use GetBehaviorReport RPC for on-demand reports)")
+
 // ConsideredEvaluator performs periodic behavior analysis on agent activity,
 // implementing the "considered" evaluation tier from the spec.
 type ConsideredEvaluator struct {
@@ -46,54 +52,13 @@ const (
 	thresholdStuckRepeat    = 5   // 5+ consecutive same-tool errors = stuck
 )
 
-// Run starts the background considered evaluation loop.
-// It blocks until the context is cancelled.
-func (e *ConsideredEvaluator) Run(ctx context.Context) error {
-	ticker := time.NewTicker(e.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			// Best-effort — log errors but don't stop the loop.
-			_ = e.evaluateAll(ctx)
-		}
-	}
-}
-
-// evaluateAll queries recent activity and produces reports for active agents.
-func (e *ConsideredEvaluator) evaluateAll(ctx context.Context) error {
-	now := time.Now()
-	windowStart := now.Add(-e.window)
-
-	// Query all recent actions (up to a reasonable limit).
-	records, err := e.activity.QueryActions(ctx, ActivityQueryFilter{
-		StartTime: &windowStart,
-		EndTime:   &now,
-		Limit:     10000,
-	})
-	if err != nil {
-		return err
-	}
-
-	// Group by agent.
-	agentRecords := map[string][]models.ActionRecord{}
-	for _, r := range records {
-		agentRecords[r.AgentID] = append(agentRecords[r.AgentID], r)
-	}
-
-	// Analyze each agent.
-	for agentID, actions := range agentRecords {
-		report := e.analyzeAgent(agentID, actions, windowStart, now)
-		if len(report.Flags) > 0 {
-			// TODO: emit alert via Activity Store or HIS escalation.
-			_ = report
-		}
-	}
-
-	return nil
+// Run would start the background considered evaluation loop, periodically
+// analyzing agent behavior and emitting alerts for anomalies. This is not
+// yet implemented — the analysis logic works (see GenerateReport) but there
+// is no alert emission path wired up. Use the GetBehaviorReport RPC for
+// on-demand reports instead.
+func (e *ConsideredEvaluator) Run(_ context.Context) error {
+	return ErrAlertEmissionNotImplemented
 }
 
 // GenerateReport produces a BehaviorReport for a specific agent over a time window.

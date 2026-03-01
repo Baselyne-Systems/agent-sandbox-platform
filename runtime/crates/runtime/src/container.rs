@@ -321,7 +321,7 @@ fn build_host_config(
             readonly_rootfs: Some(true),
             security_opt: Some(vec![
                 "no-new-privileges:true".to_string(),
-                "seccomp=unconfined".to_string(), // TODO: use a custom seccomp profile
+                "seccomp=default".to_string(),
             ]),
             cap_drop: Some(vec!["ALL".to_string()]),
             cap_add: Some(vec!["NET_BIND_SERVICE".to_string()]),
@@ -459,7 +459,9 @@ mod tests {
         assert_eq!(cfg.readonly_rootfs, Some(true));
         assert_eq!(cfg.cap_drop, Some(vec!["ALL".to_string()]));
         assert_eq!(cfg.cap_add, Some(vec!["NET_BIND_SERVICE".to_string()]));
-        assert!(cfg.security_opt.is_some());
+        let security_opts = cfg.security_opt.expect("hardened should set security_opt");
+        assert!(security_opts.contains(&"no-new-privileges:true".to_string()));
+        assert!(security_opts.contains(&"seccomp=default".to_string()));
         // Hardened does not set a custom runtime.
         assert!(cfg.runtime.is_none());
     }

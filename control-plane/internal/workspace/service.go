@@ -177,27 +177,29 @@ func (s *Service) provisionSandbox(ctx context.Context, tenantID string, ws *mod
 	}
 	ws.Status = models.WorkspaceStatusCreating
 
-	// 1b. Auto-select isolation tier if not explicitly set.
-	if ws.Spec.IsolationTier == "" {
-		if s.identity != nil {
-			agent, err := s.identity.GetAgent(ctx, ws.AgentID)
-			if err != nil {
-				s.logger.Warn("failed to query agent for tier selection, defaulting to standard",
-					zap.String("agent_id", ws.AgentID),
-					zap.Error(err),
-				)
-			} else if agent != nil {
+	// 1b. Query agent metadata (trust level) and auto-select isolation tier if needed.
+	var agentTrustLevel string
+	if s.identity != nil {
+		agent, err := s.identity.GetAgent(ctx, ws.AgentID)
+		if err != nil {
+			s.logger.Warn("failed to query agent metadata",
+				zap.String("agent_id", ws.AgentID),
+				zap.Error(err),
+			)
+		} else if agent != nil {
+			agentTrustLevel = string(agent.TrustLevel)
+			if ws.Spec.IsolationTier == "" {
 				ws.Spec.IsolationTier = s.tierSelector.SelectTier(agent.TrustLevel, ws.Spec.DataClassification)
 				s.logger.Info("auto-selected isolation tier",
 					zap.String("workspace_id", ws.ID),
-					zap.String("trust_level", string(agent.TrustLevel)),
+					zap.String("trust_level", agentTrustLevel),
 					zap.String("isolation_tier", string(ws.Spec.IsolationTier)),
 				)
 			}
 		}
-		if ws.Spec.IsolationTier == "" {
-			ws.Spec.IsolationTier = models.IsolationTierStandard
-		}
+	}
+	if ws.Spec.IsolationTier == "" {
+		ws.Spec.IsolationTier = models.IsolationTierStandard
 	}
 	ws.IsolationTier = ws.Spec.IsolationTier
 
@@ -258,14 +260,16 @@ func (s *Service) provisionSandbox(ctx context.Context, tenantID string, ws *mod
 		WorkspaceId: ws.ID,
 		AgentId:     ws.AgentID,
 		Spec: &hostagentpb.SandboxSpec{
-			MemoryMb:        ws.Spec.MemoryMb,
-			CpuMillicores:   ws.Spec.CpuMillicores,
-			DiskMb:          ws.Spec.DiskMb,
-			AllowedTools:    ws.Spec.AllowedTools,
-			EnvVars:         ws.Spec.EnvVars,
-			ContainerImage:  ws.Spec.ContainerImage,
-			EgressAllowlist: ws.Spec.EgressAllowlist,
-			IsolationTier:   string(ws.Spec.IsolationTier),
+			MemoryMb:           ws.Spec.MemoryMb,
+			CpuMillicores:      ws.Spec.CpuMillicores,
+			DiskMb:             ws.Spec.DiskMb,
+			AllowedTools:       ws.Spec.AllowedTools,
+			EnvVars:            ws.Spec.EnvVars,
+			ContainerImage:     ws.Spec.ContainerImage,
+			EgressAllowlist:    ws.Spec.EgressAllowlist,
+			IsolationTier:      string(ws.Spec.IsolationTier),
+			TrustLevel:         agentTrustLevel,
+			DataClassification: string(ws.Spec.DataClassification),
 		},
 		CompiledGuardrails: compiledGuardrails,
 	})

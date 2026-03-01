@@ -58,6 +58,8 @@ impl HostAgentService for HostAgentServiceImpl {
             egress_allowlist,
             isolation_tier,
             tool_definitions,
+            trust_level,
+            data_classification,
         ) = req
             .spec
             .as_ref()
@@ -69,6 +71,8 @@ impl HostAgentService for HostAgentServiceImpl {
                     s.egress_allowlist.clone(),
                     s.isolation_tier.clone(),
                     s.tool_definitions.clone(),
+                    s.trust_level.clone(),
+                    s.data_classification.clone(),
                 )
             })
             .unwrap_or_else(|| {
@@ -79,6 +83,8 @@ impl HostAgentService for HostAgentServiceImpl {
                     vec![],
                     String::new(),
                     vec![],
+                    String::new(),
+                    String::new(),
                 )
             });
 
@@ -92,6 +98,8 @@ impl HostAgentService for HostAgentServiceImpl {
             egress_allowlist,
             isolation_tier,
             tool_definitions,
+            trust_level,
+            data_classification,
         };
 
         let state = self
