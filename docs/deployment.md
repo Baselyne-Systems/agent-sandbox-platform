@@ -447,6 +447,9 @@ FROM alpine:3.20
 | `make test-rust` | Run Rust Host Agent unit tests only |
 | `make test-integration` | Run Go integration tests (requires Docker) |
 | `make test-integration-<svc>` | Run integration tests for a specific service (e.g., `make test-integration-identity`) |
+| `make test-e2e` | Run E2E tests — control-plane services with real PostgreSQL (requires Docker) |
+| `make test-e2e-full` | Run full-stack E2E tests with real Rust runtime binary (requires Docker + Rust) |
+| `make test-e2e-all` | Run all E2E tests (control-plane + full-stack) |
 | `make dev` | Start Docker Compose stack |
 | `make dev-down` | Stop Docker Compose stack |
 | `make fmt` | Format Go + Rust code |

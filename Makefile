@@ -1,4 +1,4 @@
-.PHONY: proto build build-go build-rust build-bkctl test test-go test-rust test-integration dev clean
+.PHONY: proto build build-go build-rust build-bkctl test test-go test-rust test-integration test-e2e test-e2e-full test-e2e-all dev clean
 
 # Generate protobuf code for Go (Rust is generated at build time via build.rs)
 proto:
@@ -31,6 +31,18 @@ test-integration:
 
 test-integration-%:
 	cd control-plane && go test -tags integration -count=1 -v ./internal/$*/...
+
+# E2E tests — control-plane only (mock runtime, fast, requires Docker for PostgreSQL)
+test-e2e:
+	cd control-plane && go test -count=1 -v -run 'Test[^F]' ./e2e/...
+
+# E2E tests — full-stack (real runtime binary, requires Docker + Rust toolchain)
+test-e2e-full: build-rust
+	cd control-plane && RUNTIME_BINARY=../runtime/target/release/runtime go test -count=1 -v -run 'TestFullStack' ./e2e/...
+
+# E2E tests — all (control-plane + full-stack)
+test-e2e-all: build-rust
+	cd control-plane && RUNTIME_BINARY=../runtime/target/release/runtime go test -count=1 -v ./e2e/...
 
 # Start local dev dependencies
 dev:

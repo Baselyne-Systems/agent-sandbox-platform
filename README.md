@@ -224,6 +224,8 @@ bulkhead/
 | `make build-bkctl` | Build the `bkctl` operator CLI with version info |
 | `make test` | Run all unit tests (Go + Rust) |
 | `make test-integration` | Run integration tests (requires Docker) |
+| `make test-e2e` | Run E2E tests — control-plane only (requires Docker) |
+| `make test-e2e-full` | Run full-stack E2E tests (requires Docker + Rust toolchain) |
 | `make proto` | Regenerate protobuf code |
 | `make dev` / `make dev-down` | Start / stop Docker Compose |
 | `make fmt` | Format Go + Rust code |
