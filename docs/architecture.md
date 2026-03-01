@@ -20,6 +20,76 @@ Bulkhead follows a control-plane / host-agent architecture. The **control plane*
 
 7. **Graceful degradation** — Optional upstream services (HIS, Activity Store, Economics) degrade gracefully when not configured. The Host Agent warns and continues rather than failing.
 
+8. **Multi-tenancy at the data layer** — Every tenant-scoped table includes a `tenant_id` column, and all queries filter by it. Cross-tenant data access is structurally impossible, not just policy-enforced.
+
+---
+
+## Multi-Tenancy
+
+Bulkhead is multi-tenant by default. Every API request is scoped to a tenant, and all data access is isolated at the database layer.
+
+**How it works:**
+
+1. **Credential binding** — When a credential is minted (`MintCredential`), it is associated with a `tenant_id`. The auth middleware extracts this from the credential on every request and injects it into the request context.
+
+2. **Automatic scoping** — Handlers read `tenant_id` from the context and pass it through the service layer to the repository. Every database query filters by `(id, tenant_id)` — a tenant cannot read, modify, or even detect another tenant's resources.
+
+3. **Implicit creation** — There is no `CreateTenant` API. A tenant comes into existence when its first agent is registered via `RegisterAgent` with a `tenant_id` field. All subsequent resources (workspaces, tasks, credentials, guardrails) inherit the tenant scope from the authenticated credential.
+
+4. **Shared infrastructure** — The `hosts` table has no `tenant_id` — compute hosts are shared infrastructure. Placement, heartbeats, and capacity are global. Tenant isolation happens at the workspace and sandbox level, not the host level.
+
+**Tenant-scoped tables (13):** agents, scoped_credentials, tasks, workspaces, workspace_snapshots, guardrail_rules, guardrail_sets, human_requests, delivery_channels, timeout_policies, action_records, budgets, usage_records.
+
+**Request flow:**
+
+```
+gRPC Request
+  → Auth Middleware (extract tenant_id from credential)
+    → Handler (read tenant_id from context)
+      → Service (pass tenant_id as parameter)
+        → Repository (WHERE id = $1 AND tenant_id = $2)
+```
+
+---
+
+## Observability
+
+All services export distributed traces via OpenTelemetry, providing end-to-end visibility across the control plane and Host Agent.
+
+**Tracing architecture:**
+
+- All 9 Go services initialize an OTLP trace exporter on startup via `telemetry.InitTracer("bulkhead-{service}", endpoint)`
+- The Host Agent (Rust) also exports traces via the same OTLP endpoint
+- If `OTEL_EXPORTER_OTLP_ENDPOINT` is empty, tracing is disabled (no-op provider) — zero overhead
+- gRPC calls are automatically instrumented via the `otelgrpc.NewServerHandler()` stats handler
+- A span enrichment interceptor (`UnarySpanEnrichInterceptor`) adds `bulkhead.tenant_id` and `bulkhead.agent_id` attributes to every span, enabling filtering by tenant or agent in the trace UI
+
+**Docker Compose setup:**
+
+The default stack includes Jaeger all-in-one as the trace backend:
+
+| Component | Port | Purpose |
+|-----------|------|---------|
+| Jaeger UI | 16686 | Trace visualization and search |
+| Jaeger OTLP receiver | 4317 | Accepts OTLP gRPC spans from all services |
+
+All services are pre-configured to export to `jaeger:4317`. Access the Jaeger UI at `http://localhost:16686` to search traces by service, operation, tenant, or agent.
+
+**Service names:**
+
+| Service | Trace Name |
+|---------|-----------|
+| Identity | `bulkhead-identity` |
+| Workspace | `bulkhead-workspace` |
+| Task | `bulkhead-task` |
+| Compute | `bulkhead-compute` |
+| Guardrails | `bulkhead-guardrails` |
+| Human Interaction | `bulkhead-human` |
+| Activity Store | `bulkhead-activity` |
+| Economics | `bulkhead-economics` |
+| Data Governance | `bulkhead-governance` |
+| Host Agent | `bulkhead-host-agent` |
+
 ---
 
 ## Service Descriptions

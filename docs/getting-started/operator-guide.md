@@ -31,6 +31,29 @@ All services should show `healthy` status. PostgreSQL starts first, then control
 
 ---
 
+## 1a. Multi-Tenancy
+
+Bulkhead is multi-tenant by default. Every credential is tied to a `tenant_id`, and all API operations are automatically scoped — resources created by one tenant are invisible to others.
+
+There is no `CreateTenant` API. A tenant comes into existence when its first agent is registered:
+
+```bash
+# Register an agent for tenant "acme-corp"
+grpcurl -plaintext -d '{
+  "name": "invoice-processor",
+  "owner_id": "org-acme",
+  "tenant_id": "acme-corp",
+  "purpose": "Automate invoice processing",
+  "trust_level": "AGENT_TRUST_LEVEL_NEW"
+}' localhost:50060 platform.identity.v1.IdentityService/RegisterAgent
+```
+
+After this, all credentials minted for this agent carry the `acme-corp` tenant scope. Any workspaces, tasks, guardrails, or budget operations performed with those credentials are isolated to that tenant.
+
+> **Compute hosts are shared infrastructure** — the `hosts` table has no `tenant_id`. Placement, heartbeats, and capacity are global. Tenant isolation is enforced at the workspace and sandbox level.
+
+---
+
 ## 1b. Add Hosts to the Fleet
 
 In a production deployment, you run the control plane services centrally and deploy Host Agents on separate machines. Each Host Agent **self-registers** with the Compute Plane on startup and sends **heartbeats every 30 seconds** with its current resource availability. If a host stops heartbeating for 3 minutes, the Compute Plane automatically marks it offline and stops routing workspaces to it.
@@ -231,6 +254,36 @@ grpcurl -plaintext -d '{
 }' localhost:50062 platform.guardrails.v1.GuardrailsService/SimulatePolicy
 # Returns verdict: DENY, matched_rule: "deny-shell"
 ```
+
+### 3b. Organize Rules into Sets
+
+Guardrail sets are named, reusable collections of rules. Instead of listing rule IDs every time you create a task, create a set once and reference it by name.
+
+```bash
+# Create a guardrail set from existing rules
+grpcurl -plaintext -d '{
+  "name": "production-policy",
+  "description": "Standard production guardrails",
+  "rule_ids": ["<deny_shell_rule_id>", "<restrict_new_agents_rule_id>", "<escalate_delete_rule_id>"]
+}' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateGuardrailSet
+
+# List all sets
+grpcurl -plaintext -d '{}' \
+  localhost:50062 platform.guardrails.v1.GuardrailsService/ListGuardrailSets
+```
+
+When creating a task, reference the set by name with the `set:` prefix instead of listing individual rule IDs:
+
+```bash
+grpcurl -plaintext -d '{
+  "agent_id": "<agent_id>",
+  "goal": "Process invoices",
+  "guardrail_policy_id": "set:production-policy",
+  ...
+}' localhost:50068 platform.task.v1.TaskService/CreateTask
+```
+
+The Guardrails Service resolves `"set:production-policy"` to the set's rule IDs at policy compilation time.
 
 ---
 

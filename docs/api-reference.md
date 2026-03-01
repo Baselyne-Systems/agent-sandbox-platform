@@ -19,6 +19,8 @@ Tokens are issued by the Identity Service via `MintCredential`. Each credential 
 
 The token is hashed with SHA-256 for storage and lookup. The raw token is returned exactly once at minting time.
 
+**Multi-tenancy:** All requests are scoped to the tenant associated with the credential. Resources created by one tenant are invisible to others. The `tenant_id` field appears in entity messages (Agent, Workspace, Task, etc.) but is typically set automatically from the credential context. See [Architecture — Multi-Tenancy](architecture.md#multi-tenancy) for details.
+
 **Exempt endpoints:** gRPC health checks and reflection are not authenticated.
 
 ---
@@ -270,6 +272,11 @@ Rule management and policy compilation.
 | `CompilePolicy` | Compile a set of rules (by ID) into binary bytes for the Rust evaluator. Returns compiled bytes and rule count. |
 | `SimulatePolicy` | Dry-run a policy against a sample tool call. Returns the verdict and matched rule without executing anything. |
 | `GetBehaviorReport` | Get a behavior analysis report for an agent over a time window. Returns action count, denial rate, error rate, anomaly flags, and recommendation. |
+| `CreateGuardrailSet` | Create a named collection of rules. Returns the created set with a generated UUID. |
+| `GetGuardrailSet` | Retrieve a guardrail set by ID. |
+| `ListGuardrailSets` | List guardrail sets. Cursor-based pagination. |
+| `UpdateGuardrailSet` | Update an existing guardrail set (name, description, rule_ids, labels). |
+| `DeleteGuardrailSet` | Delete a guardrail set by ID. |
 
 ### Key Messages
 
@@ -312,6 +319,23 @@ message BehaviorReport {
   string recommendation = 8;     // Human-readable recommendation
 }
 ```
+
+**GuardrailSet:**
+```protobuf
+message GuardrailSet {
+  string set_id = 1;
+  string name = 2;
+  string description = 3;
+  repeated string rule_ids = 4;
+  map<string, string> labels = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+```
+
+> **Policy ID resolution:** The `guardrail_policy_id` field in workspace and task configs supports two formats:
+> - **Comma-separated rule IDs:** `"rule-id-1,rule-id-2"` — compiles the listed rules directly
+> - **Named set reference:** `"set:production-policy"` — resolves to the named set's `rule_ids` at compilation time
 
 ---
 

@@ -93,6 +93,7 @@ graph TB
         compute["compute :50067"]
         task["task :50068"]
         runtime["host-agent :50052"]
+        jaeger["jaeger :16686 / :4317"]
 
         PG --- identity & workspace & guardrails & human
         PG --- governance & activity & economics & compute & task
@@ -121,6 +122,8 @@ graph TB
 | Compute Plane | 50051 | 50067 | gRPC |
 | Task | 50051 | 50068 | gRPC |
 | Host Agent | 50052 | 50052 | gRPC |
+| Jaeger UI | 16686 | 16686 | HTTP |
+| Jaeger OTLP | 4317 | 4317 | gRPC |
 
 ### Service Dependencies
 
@@ -146,6 +149,83 @@ healthcheck:
 
 ---
 
+## Kubernetes (Helm)
+
+For production deployments, Bulkhead includes a Helm chart that deploys the full stack to any Kubernetes cluster.
+
+### Prerequisites
+
+- Kubernetes 1.28+
+- Helm 3+
+- Container registry with Bulkhead images (build with `make docker-build`)
+
+### Install
+
+```bash
+# Install with defaults
+helm install bulkhead deploy/helm/bulkhead
+
+# Install with custom values
+helm install bulkhead deploy/helm/bulkhead -f custom-values.yaml
+
+# Upgrade
+helm upgrade bulkhead deploy/helm/bulkhead
+
+# Uninstall
+helm uninstall bulkhead
+```
+
+### Architecture
+
+The Helm chart creates:
+
+| Resource Type | Count | Components |
+|--------------|-------|------------|
+| **Deployment** | 9 | One per Go control-plane service (identity, workspace, task, compute, guardrails, human, activity, economics, governance) |
+| **DaemonSet** | 1 | Host Agent — runs on every node for local sandbox management |
+| **StatefulSet** | 1 | PostgreSQL with persistent volume |
+| **Job** | 1 | Database migration (runs before services start, backoffLimit: 3) |
+| **Service** | 11 | ClusterIP services for inter-service gRPC communication |
+| **NetworkPolicy** | 1 | Optional — restricts traffic to declared dependencies |
+| **Secret** | 1 | Database credentials |
+
+### Key Configuration Values
+
+| Value | Default | Description |
+|-------|---------|-------------|
+| `postgres.storage` | `10Gi` | Persistent volume size for PostgreSQL |
+| `postgres.resources.limits.memory` | `1Gi` | PostgreSQL memory limit |
+| `controlPlane.replicaCount` | `1` | Replicas per Go service |
+| `controlPlane.image.repository` | `bulkhead/control-plane` | Control plane image base |
+| `controlPlane.resources.limits.memory` | `512Mi` | Memory limit per Go service |
+| `controlPlane.resources.limits.cpu` | `500m` | CPU limit per Go service |
+| `controlPlane.logLevel` | `info` | Log level for Go services |
+| `hostAgent.enabled` | `true` | Deploy Host Agent DaemonSet |
+| `hostAgent.enableDocker` | `true` | Enable Docker container lifecycle |
+| `hostAgent.resources.limits.memory` | `1Gi` | Host Agent memory limit |
+| `networkPolicy.enabled` | `true` | Create NetworkPolicy resources |
+| `observability.otelEndpoint` | `""` | OTLP endpoint (e.g., `jaeger-collector:4317`) |
+| `serviceType` | `ClusterIP` | Kubernetes Service type |
+
+### Host Agent DaemonSet
+
+The Host Agent runs as a DaemonSet so every node in the cluster can host sandboxes:
+
+- Mounts the Docker socket (`/var/run/docker.sock`) for container lifecycle management
+- Tolerates `NoSchedule` taints so it runs on all nodes including tainted ones
+- Advertise address is set from the pod IP (`status.podIP`) so the control plane can route sandbox creation to the correct node
+- Service endpoints are derived from Helm release name (e.g., `{{ .Release.Name }}-human:50051`)
+
+### Migration Job
+
+The migration Job runs all SQL files from `control-plane/migrations/` against PostgreSQL before any service starts. It has `backoffLimit: 3` — if migration fails after 3 attempts, the job fails and services will not start. Check migration logs with:
+
+```bash
+kubectl logs job/bulkhead-migration
+```
+
+---
+
 ## Configuration Reference
 
 ### Shared Configuration (All Go Services)
@@ -155,6 +235,7 @@ healthcheck:
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:5432/sandbox?sslmode=disable` | PostgreSQL connection string |
 | `GRPC_PORT` | `50051` | Port for the gRPC server |
 | `LOG_LEVEL` | `info` | Logging level (debug, info, warn, error) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `""` (disabled) | OTLP gRPC endpoint for distributed tracing (e.g., `jaeger:4317`). If empty, tracing is disabled. |
 
 ### Service-Specific Configuration
 

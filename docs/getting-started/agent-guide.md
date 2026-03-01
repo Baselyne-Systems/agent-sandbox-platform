@@ -249,6 +249,43 @@ Then reference the image in your workspace config when creating a task (see [Ope
 
 ---
 
+## MCP Server Mode
+
+The SDK includes `BulkheadMCPServer`, which exposes your tools via the [Model Context Protocol](https://modelcontextprotocol.io/) (MCP). This lets MCP-compatible clients — Claude Desktop, Cursor, and other MCP hosts — use Bulkhead-guarded tools directly over stdin/stdout.
+
+```python
+from bulkhead import BulkheadAgent, BulkheadMCPServer, tool
+
+@tool("read_file", description="Read a file from disk")
+def read_file(path: str) -> str:
+    with open(path) as f:
+        return f.read()
+
+@tool("list_files", description="List files in a directory")
+def list_files(directory: str) -> list:
+    import os
+    return os.listdir(directory)
+
+agent = BulkheadAgent(tools=[read_file, list_files])
+server = BulkheadMCPServer(agent)
+server.run()  # Reads JSON-RPC 2.0 from stdin, writes responses to stdout
+```
+
+The server implements three MCP methods:
+
+| Method | Description |
+|--------|-------------|
+| `initialize` | Returns server capabilities and protocol version (`2024-11-05`) |
+| `tools/list` | Lists all registered tools with names, descriptions, and input schemas |
+| `tools/call` | Evaluates guardrails, executes the tool if allowed, and returns the result |
+
+Guardrail verdicts are enforced transparently:
+- **ALLOW** — tool executes normally, result returned as `content`
+- **DENY** — returns `isError: true` with `"DENIED: {reason}"` message
+- **ESCALATE** — returns `isError: true` with `"ESCALATED: {escalation_id}"` message
+
+---
+
 ## Environment Variables
 
 These environment variables are automatically injected into your container during workspace provisioning:
