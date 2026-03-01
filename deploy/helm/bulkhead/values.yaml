@@ -62,3 +62,7 @@ networkPolicy:
   enabled: true
 
 serviceType: ClusterIP
+
+observability:
+  enabled: false
+  otlpEndpoint: ""

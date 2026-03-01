@@ -25,6 +25,15 @@ class ToolResult:
 
 
 @dataclass
+class ToolSchema:
+    """Schema for a tool, compatible with MCP tool definitions."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+@dataclass
 class HumanResponse:
     """Response from a human interaction request."""
 

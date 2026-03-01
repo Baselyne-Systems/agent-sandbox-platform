@@ -10,6 +10,8 @@ use uuid::Uuid;
 
 use guardrails_eval::Evaluator;
 
+use proto_gen::platform::host_agent::v1::ToolDefinition;
+
 use crate::container::ContainerRuntime;
 
 /// Status of a sandbox.
@@ -50,6 +52,8 @@ pub struct CreateSandboxParams {
     pub container_image: String,
     pub egress_allowlist: Vec<String>,
     pub isolation_tier: String,
+    /// MCP-compatible tool schemas registered for this sandbox.
+    pub tool_definitions: Vec<ToolDefinition>,
 }
 
 /// Full per-sandbox state. Stored behind `Arc` for lock-free reads from async tasks.
@@ -75,6 +79,8 @@ pub struct SandboxState {
     pub egress_allowlist: Vec<String>,
     /// Security isolation tier (standard, hardened, isolated).
     pub isolation_tier: String,
+    /// MCP-compatible tool schemas registered for this sandbox.
+    pub tool_definitions: Vec<ToolDefinition>,
     /// Container ID if a container was started for this sandbox.
     pub container_id: Mutex<Option<String>>,
     /// Counter of actions executed in this sandbox.
@@ -161,6 +167,7 @@ impl SandboxManager {
             container_image: params.container_image,
             egress_allowlist: params.egress_allowlist,
             isolation_tier: params.isolation_tier,
+            tool_definitions: params.tool_definitions,
             container_id: Mutex::new(container_id),
             actions_executed: AtomicU32::new(0),
             event_tx: event_tx.clone(),
@@ -322,6 +329,7 @@ mod tests {
             container_image: String::new(),
             egress_allowlist: vec![],
             isolation_tier: "standard".to_string(),
+            tool_definitions: vec![],
         }
     }
 

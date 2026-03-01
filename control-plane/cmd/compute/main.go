@@ -16,7 +16,9 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/database"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/identity"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/telemetry"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/compute/v1"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -32,6 +34,12 @@ func main() {
 		log.Fatalf("failed to create logger: %v", err)
 	}
 	defer logger.Sync()
+
+	tp, err := telemetry.InitTracer("bulkhead-compute", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("failed to init tracer: %v", err)
+	}
+	defer telemetry.Shutdown(context.Background(), tp)
 
 	db, err := database.NewConnection(cfg.DatabaseURL)
 	if err != nil {
@@ -70,9 +78,11 @@ func main() {
 		TokenHashFunc: identity.HashToken,
 	}
 	srv := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryLoggingInterceptor(logger),
 			middleware.UnaryAuthInterceptor(authCfg),
+			middleware.UnarySpanEnrichInterceptor(),
 		),
 	)
 	pb.RegisterComputePlaneServiceServer(srv, handler)

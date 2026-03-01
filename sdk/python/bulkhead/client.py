@@ -15,7 +15,7 @@ from typing import Any, Callable, Sequence
 import grpc
 
 from .decorators import ToolDefinition
-from .types import HumanResponse, ToolResult, Verdict
+from .types import HumanResponse, ToolResult, ToolSchema, Verdict
 
 
 class BulkheadAgent:
@@ -81,6 +81,39 @@ class BulkheadAgent:
         if self._channel is not None:
             self._channel.close()
             self._channel = None
+
+    def list_tools(self) -> list[ToolSchema]:
+        """List available tools with their schemas.
+
+        Calls the Host Agent's ListTools RPC if connected,
+        otherwise returns schemas from locally registered tools.
+        """
+        if self._stub is not None:
+            try:
+                resp = self._stub.ListTools(
+                    self._pb2.ListToolsRequest(),
+                    metadata=self._metadata,
+                )
+                return [
+                    ToolSchema(
+                        name=t.name,
+                        description=t.description,
+                        input_schema=dict(t.input_schema) if t.input_schema else {},
+                    )
+                    for t in resp.tools
+                ]
+            except Exception:
+                pass  # Fall through to local tools
+
+        # Return schemas from locally registered tools
+        return [
+            ToolSchema(
+                name=defn.name,
+                description=defn.description,
+                input_schema=defn.input_schema or {},
+            )
+            for defn in self._tools.values()
+        ]
 
     def evaluate(self, name: str, params: dict[str, Any] | None = None) -> ToolResult:
         """Evaluate guardrails and budget for a tool call without executing it.

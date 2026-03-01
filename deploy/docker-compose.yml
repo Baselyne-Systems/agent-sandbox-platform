@@ -6,6 +6,7 @@ x-go-service: &go-service
     DATABASE_URL: postgres://postgres:postgres@postgres:5432/sandbox?sslmode=disable
     GRPC_PORT: "50051"
     LOG_LEVEL: info
+    OTEL_EXPORTER_OTLP_ENDPOINT: jaeger:4317
   depends_on:
     postgres:
       condition: service_healthy
@@ -169,6 +170,7 @@ services:
       ECONOMICS_ENDPOINT: http://economics:50051
       GOVERNANCE_ENDPOINT: http://governance:50051
       COMPUTE_ENDPOINT: http://compute:50051
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       TOTAL_MEMORY_MB: "16384"
       TOTAL_CPU_MILLICORES: "8000"
       TOTAL_DISK_MB: "102400"
@@ -189,6 +191,16 @@ services:
         condition: service_healthy
       compute:
         condition: service_healthy
+    networks:
+      - bulkhead
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317:4317"
     networks:
       - bulkhead
 

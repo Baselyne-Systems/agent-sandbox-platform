@@ -45,6 +45,10 @@ spec:
               value: {{ .Values.hostAgent.enableDocker | quote }}
             - name: RUST_LOG
               value: {{ .Values.hostAgent.rustLog | quote }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.otlpEndpoint | quote }}
+            {{- end }}
           volumeMounts:
             - name: docker-sock
               mountPath: /var/run/docker.sock

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -11,7 +12,9 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/config"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/governance"
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/telemetry"
 	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/governance/v1"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -28,6 +31,12 @@ func main() {
 	}
 	defer logger.Sync()
 
+	tp, err := telemetry.InitTracer("bulkhead-governance", cfg.OTelEndpoint)
+	if err != nil {
+		log.Fatalf("failed to init tracer: %v", err)
+	}
+	defer telemetry.Shutdown(context.Background(), tp)
+
 	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cfg.GRPCPort))
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)
@@ -38,9 +47,11 @@ func main() {
 
 	authCfg := middleware.AuthConfig{} // No DB — auth passthrough
 	srv := grpc.NewServer(
+		grpc.StatsHandler(otelgrpc.NewServerHandler()),
 		grpc.ChainUnaryInterceptor(
 			middleware.UnaryLoggingInterceptor(logger),
 			middleware.UnaryAuthInterceptor(authCfg),
+			middleware.UnarySpanEnrichInterceptor(),
 		),
 	)
 	pb.RegisterDataGovernanceServiceServer(srv, handler)

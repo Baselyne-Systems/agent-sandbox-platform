@@ -22,9 +22,9 @@ use proto_gen::platform::human::v1::{
 use proto_gen::platform::host_agent::v1::host_agent_api_service_server::HostAgentApiService;
 use proto_gen::platform::host_agent::v1::{
     ActionVerdict, CheckHumanRequestRequest, CheckHumanRequestResponse, ExecuteToolRequest,
-    ExecuteToolResponse, ReportActionResultRequest, ReportActionResultResponse,
-    ReportProgressRequest, ReportProgressResponse, RequestHumanInputRequest,
-    RequestHumanInputResponse,
+    ExecuteToolResponse, ListToolsRequest, ListToolsResponse, ReportActionResultRequest,
+    ReportActionResultResponse, ReportProgressRequest, ReportProgressResponse,
+    RequestHumanInputRequest, RequestHumanInputResponse,
 };
 
 use crate::sandbox::{SandboxEvent, SandboxManager};
@@ -308,6 +308,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
                 evaluation_latency_us: eval_latency_us,
                 execution_latency_us: 0,
                 recorded_at: None,
+                tenant_id: String::new(),
             };
             let activity_mutex = activity_mutex.clone();
             tokio::spawn(async move {
@@ -341,6 +342,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
                         unit: "invocations".to_string(),
                         cost: 0.0,
                         recorded_at: None,
+                        tenant_id: String::new(),
                     };
                     if let Err(e) = client
                         .record_usage(RecordUsageRequest {
@@ -402,6 +404,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
                 evaluation_latency_us: 0,
                 execution_latency_us: 0,
                 recorded_at: None,
+                tenant_id: String::new(),
             };
             let activity_mutex = activity_mutex.clone();
             tokio::spawn(async move {
@@ -545,6 +548,27 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
         }
 
         Ok(Response::new(ReportProgressResponse {}))
+    }
+
+    /// Returns the tool definitions registered for this sandbox.
+    async fn list_tools(
+        &self,
+        request: Request<ListToolsRequest>,
+    ) -> Result<Response<ListToolsResponse>, Status> {
+        let sandbox = self
+            .sandbox_manager
+            .lookup_by_metadata(&request)
+            .map_err(|e| Status::unauthenticated(e.to_string()))?;
+
+        info!(
+            sandbox_id = %sandbox.id,
+            tool_count = %sandbox.tool_definitions.len(),
+            "listing tools for sandbox"
+        );
+
+        Ok(Response::new(ListToolsResponse {
+            tools: sandbox.tool_definitions.clone(),
+        }))
     }
 }
 

@@ -3,14 +3,17 @@
 from .client import BulkheadAgent
 from .decorators import tool, ToolDefinition
 from .langchain import wrap_langchain_tool, wrap_langchain_tools
-from .types import HumanResponse, ToolResult, Verdict
+from .mcp import BulkheadMCPServer
+from .types import HumanResponse, ToolResult, ToolSchema, Verdict
 
 __all__ = [
     "BulkheadAgent",
+    "BulkheadMCPServer",
     "tool",
     "ToolDefinition",
     "HumanResponse",
     "ToolResult",
+    "ToolSchema",
     "Verdict",
     "wrap_langchain_tool",
     "wrap_langchain_tools",

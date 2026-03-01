@@ -44,6 +44,9 @@ service HostAgentAPIService {
 
   // CheckHumanRequest polls the status of a previously submitted human request.
   rpc CheckHumanRequest(CheckHumanRequestRequest) returns (CheckHumanRequestResponse);
+
+  // ListTools returns the tool definitions available in this sandbox.
+  rpc ListTools(ListToolsRequest) returns (ListToolsResponse);
 }
 
 message CreateSandboxRequest {
@@ -63,6 +66,7 @@ message SandboxSpec {
   string container_image = 6;       // Docker image for sandbox container
   repeated string egress_allowlist = 7;  // approved destination hosts/CIDRs
   string isolation_tier = 8;        // security isolation tier (standard, hardened, isolated)
+  repeated ToolDefinition tool_definitions = 9;  // MCP-compatible tool schemas
 }
 
 message CreateSandboxResponse {
@@ -194,3 +198,17 @@ message UpdateSandboxGuardrailsRequest {
 }
 
 message UpdateSandboxGuardrailsResponse {}
+
+// --- MCP-compatible tool protocol ---
+
+message ToolDefinition {
+  string name = 1;
+  string description = 2;
+  google.protobuf.Struct input_schema = 3;  // JSON Schema for tool parameters
+}
+
+message ListToolsRequest {}
+
+message ListToolsResponse {
+  repeated ToolDefinition tools = 1;
+}

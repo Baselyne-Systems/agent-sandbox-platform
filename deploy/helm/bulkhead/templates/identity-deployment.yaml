@@ -35,6 +35,10 @@ spec:
               value: "50051"
             - name: LOG_LEVEL
               value: {{ .Values.controlPlane.logLevel | quote }}
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.otlpEndpoint | quote }}
+            {{- end }}
           readinessProbe:
             exec:
               command: ["grpc_health_probe", "-addr=:50051"]

@@ -9,6 +9,10 @@ use std::sync::Arc;
 use anyhow::Result;
 use tonic::transport::Server;
 use tracing::info;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
 
 use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
 use proto_gen::platform::compute::v1::compute_plane_service_client::ComputePlaneServiceClient;
@@ -99,12 +103,38 @@ fn detect_advertise_address(control_plane: &Option<String>) -> String {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing with env-filter support (e.g. RUST_LOG=debug).
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    // Conditionally adds OTLP tracing export if OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    let fmt_layer = tracing_subscriber::fmt::layer();
+
+    let registry = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer);
+
+    if let Ok(otlp_endpoint) = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT") {
+        let exporter = opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .with_endpoint(otlp_endpoint)
+            .build()
+            .expect("failed to create OTLP exporter");
+
+        let tracer_provider = opentelemetry_sdk::trace::TracerProvider::builder()
+            .with_batch_exporter(exporter, opentelemetry_sdk::runtime::Tokio)
+            .with_resource(opentelemetry_sdk::Resource::new(vec![
+                opentelemetry::KeyValue::new("service.name", "bulkhead-host-agent"),
+            ]))
+            .build();
+
+        let tracer = tracer_provider.tracer("host-agent");
+        let telemetry_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+
+        registry.with(telemetry_layer).init();
+        info!("OpenTelemetry tracing enabled");
+    } else {
+        registry.init();
+    }
 
     let port: u16 = std::env::var("GRPC_PORT")
         .ok()

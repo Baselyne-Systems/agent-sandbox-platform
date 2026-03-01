@@ -37,6 +37,10 @@ spec:
               value: {{ .Values.controlPlane.logLevel | quote }}
             - name: ACTIVITY_ENDPOINT
               value: "{{ include "bulkhead.fullname" . }}-activity:50051"
+            {{- if .Values.observability.enabled }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.observability.otlpEndpoint | quote }}
+            {{- end }}
           readinessProbe:
             exec:
               command: ["grpc_health_probe", "-addr=:50051"]
