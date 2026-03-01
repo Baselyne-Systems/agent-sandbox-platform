@@ -6,12 +6,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) InsertAction(ctx context.Context, record *models.ActionRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.InsertAction(ctx, record)
+}
+
+func (s *syncMockRepo) GetAction(ctx context.Context, tenantID, id string) (*models.ActionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetAction(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) QueryActions(ctx context.Context, tenantID string, filter QueryFilter) ([]models.ActionRecord, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.QueryActions(ctx, tenantID, filter)
+}
+
+func (s *syncMockRepo) QueryActionsAll(ctx context.Context, tenantID string, filter QueryFilter, batchSize int, fn func([]models.ActionRecord) error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.QueryActionsAll(ctx, tenantID, filter, batchSize, fn)
+}
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -73,7 +108,7 @@ func seedActionsForTenant(svc *Service, tenantID string, n int) {
 
 func BenchmarkRecordAction_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -469,7 +504,7 @@ func BenchmarkMultiTenantActionIsolation(b *testing.B) {
 
 func BenchmarkRecordAction_HighThroughput(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	var ops atomic.Int64

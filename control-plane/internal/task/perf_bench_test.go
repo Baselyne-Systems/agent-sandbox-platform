@@ -4,11 +4,52 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) CreateTask(ctx context.Context, task *models.Task) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateTask(ctx, task)
+}
+
+func (s *syncMockRepo) GetTask(ctx context.Context, tenantID, id string) (*models.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetTask(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) ListTasks(ctx context.Context, tenantID string, agentID string, status models.TaskStatus, afterID string, limit int) ([]models.Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListTasks(ctx, tenantID, agentID, status, afterID, limit)
+}
+
+func (s *syncMockRepo) UpdateTaskStatus(ctx context.Context, tenantID, id string, status models.TaskStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpdateTaskStatus(ctx, tenantID, id, status)
+}
+
+func (s *syncMockRepo) SetWorkspaceID(ctx context.Context, tenantID, taskID, workspaceID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.SetWorkspaceID(ctx, tenantID, taskID, workspaceID)
+}
 
 // ---------------------------------------------------------------------------
 // 1. BenchmarkCreateTask_Parallel
@@ -16,7 +57,7 @@ import (
 
 func BenchmarkCreateTask_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(ServiceConfig{Repo: newMockRepo()})
+	svc := NewService(ServiceConfig{Repo: newSyncMockRepo()})
 	ctx := context.Background()
 	var counter atomic.Int64
 
@@ -336,7 +377,7 @@ func BenchmarkCancelTask_Parallel(b *testing.B) {
 	// Pre-create tasks. Each iteration consumes one task, so create enough.
 	// We use a shared atomic index to hand out tasks to goroutines.
 	const poolSize = 1_000_000
-	svc := NewService(ServiceConfig{Repo: newMockRepo()})
+	svc := NewService(ServiceConfig{Repo: newSyncMockRepo()})
 	taskIDs := make([]string, poolSize)
 	for i := 0; i < poolSize; i++ {
 		t, err := svc.CreateTask(ctx, "tenant-1", "agent-1", fmt.Sprintf("cancel-%d", i), nil, "", nil, nil, 0, nil, nil)
@@ -410,7 +451,7 @@ func BenchmarkMultiTenantTaskIsolation(b *testing.B) {
 
 func BenchmarkMixedTaskWorkload(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(ServiceConfig{Repo: newMockRepo()})
+	svc := NewService(ServiceConfig{Repo: newSyncMockRepo()})
 	ctx := context.Background()
 
 	// Pre-populate tasks for reads and status updates.

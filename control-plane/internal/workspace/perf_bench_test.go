@@ -4,11 +4,70 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) CreateWorkspace(ctx context.Context, ws *models.Workspace) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateWorkspace(ctx, ws)
+}
+
+func (s *syncMockRepo) GetWorkspace(ctx context.Context, tenantID, id string) (*models.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetWorkspace(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) ListWorkspaces(ctx context.Context, tenantID string, agentID string, status models.WorkspaceStatus, afterID string, limit int) ([]models.Workspace, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListWorkspaces(ctx, tenantID, agentID, status, afterID, limit)
+}
+
+func (s *syncMockRepo) UpdateWorkspaceStatus(ctx context.Context, tenantID, id string, status models.WorkspaceStatus, hostID, hostAddress, sandboxID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpdateWorkspaceStatus(ctx, tenantID, id, status, hostID, hostAddress, sandboxID)
+}
+
+func (s *syncMockRepo) TerminateWorkspace(ctx context.Context, tenantID, id string, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.TerminateWorkspace(ctx, tenantID, id, reason)
+}
+
+func (s *syncMockRepo) SetSnapshotID(ctx context.Context, tenantID, workspaceID, snapshotID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.SetSnapshotID(ctx, tenantID, workspaceID, snapshotID)
+}
+
+func (s *syncMockRepo) CreateSnapshot(ctx context.Context, snapshot *models.WorkspaceSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateSnapshot(ctx, snapshot)
+}
+
+func (s *syncMockRepo) GetSnapshot(ctx context.Context, tenantID, snapshotID string) (*models.WorkspaceSnapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetSnapshot(ctx, tenantID, snapshotID)
+}
 
 // ---------------------------------------------------------------------------
 // 1. BenchmarkCreateWorkspace_Parallel
@@ -16,7 +75,7 @@ import (
 
 func BenchmarkCreateWorkspace_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := newTestService(newMockRepo())
+	svc := newTestService(newSyncMockRepo())
 	ctx := context.Background()
 	var counter atomic.Int64
 
@@ -283,7 +342,7 @@ func BenchmarkTerminateWorkspace_Parallel(b *testing.B) {
 
 	// Pre-create workspaces. Each iteration consumes one.
 	const poolSize = 1_000_000
-	svc := newTestService(newMockRepo())
+	svc := newTestService(newSyncMockRepo())
 	wsIDs := make([]string, poolSize)
 	for i := 0; i < poolSize; i++ {
 		ws, err := svc.CreateWorkspace(ctx, "tenant-1", "agent-1", fmt.Sprintf("task-%d", i), nil)
@@ -357,7 +416,7 @@ func BenchmarkMultiTenantWorkspaceIsolation(b *testing.B) {
 
 func BenchmarkMixedWorkspaceWorkload(b *testing.B) {
 	b.ReportAllocs()
-	svc := newTestService(newMockRepo())
+	svc := newTestService(newSyncMockRepo())
 	ctx := context.Background()
 
 	// Pre-populate workspaces for reads and terminates.

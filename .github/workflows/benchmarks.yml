@@ -118,7 +118,8 @@ jobs:
           subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
           subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
           subprocess.run(["git", "fetch", "origin", "gh-pages"], check=True)
-          subprocess.run(["git", "checkout", "gh-pages"], check=True)
+          # Reset local gh-pages to match the latest remote (including benchmark-action's push)
+          subprocess.run(["git", "checkout", "-B", "gh-pages", "origin/gh-pages"], check=True)
 
           with open("index.html", "w") as f:
               f.write(table_html)

@@ -5,11 +5,82 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) CreateRequest(ctx context.Context, req *models.HumanRequest) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateRequest(ctx, req)
+}
+
+func (s *syncMockRepo) GetRequest(ctx context.Context, tenantID, id string) (*models.HumanRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetRequest(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) RespondToRequest(ctx context.Context, tenantID, id, response, responderID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.RespondToRequest(ctx, tenantID, id, response, responderID)
+}
+
+func (s *syncMockRepo) ListRequests(ctx context.Context, tenantID, workspaceID string, status models.HumanRequestStatus, afterID string, limit int) ([]models.HumanRequest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListRequests(ctx, tenantID, workspaceID, status, afterID, limit)
+}
+
+func (s *syncMockRepo) UpsertDeliveryChannel(ctx context.Context, cfg *models.DeliveryChannelConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpsertDeliveryChannel(ctx, cfg)
+}
+
+func (s *syncMockRepo) GetDeliveryChannel(ctx context.Context, tenantID, userID, channelType string) (*models.DeliveryChannelConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetDeliveryChannel(ctx, tenantID, userID, channelType)
+}
+
+func (s *syncMockRepo) UpsertTimeoutPolicy(ctx context.Context, policy *models.TimeoutPolicy) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpsertTimeoutPolicy(ctx, policy)
+}
+
+func (s *syncMockRepo) GetTimeoutPolicy(ctx context.Context, tenantID, scope, scopeID string) (*models.TimeoutPolicy, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetTimeoutPolicy(ctx, tenantID, scope, scopeID)
+}
+
+func (s *syncMockRepo) ListEnabledChannels(ctx context.Context, tenantID string) ([]models.DeliveryChannelConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListEnabledChannels(ctx, tenantID)
+}
+
+func (s *syncMockRepo) ExpirePendingRequests(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ExpirePendingRequests(ctx)
+}
 
 // ---------------------------------------------------------------------------
 // 1. BenchmarkCreateRequest_Parallel
@@ -17,7 +88,7 @@ import (
 
 func BenchmarkCreateRequest_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 	var counter atomic.Int64
 
@@ -406,7 +477,7 @@ func BenchmarkMultiTenantRequestIsolation(b *testing.B) {
 
 func BenchmarkMixedRequestWorkload(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	// Seed requests for reads and responds.

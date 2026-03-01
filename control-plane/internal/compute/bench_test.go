@@ -3,6 +3,7 @@ package compute
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
@@ -23,13 +24,19 @@ func BenchmarkRegisterHost(b *testing.B) {
 }
 
 func BenchmarkPlaceWorkspace(b *testing.B) {
-	svc := NewService(newMockRepo())
+	repo := newMockRepo()
+	svc := NewService(repo)
 	ctx := context.Background()
-	svc.RegisterHost(ctx, "host1:9090", models.HostResources{
-		MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
+	host, _ := svc.RegisterHost(ctx, "host1:9090", models.HostResources{
+		MemoryMb: math.MaxInt64, CpuMillicores: math.MaxInt32, DiskMb: math.MaxInt64,
 	}, nil)
+	largeResources := models.HostResources{
+		MemoryMb: math.MaxInt64, CpuMillicores: math.MaxInt32, DiskMb: math.MaxInt64,
+	}
 
 	for b.Loop() {
+		// Reset host resources so capacity is never exhausted across iterations.
+		repo.hosts[host.ID].AvailableResources = largeResources
 		_, _, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, "")
 		if err != nil {
 			b.Fatal(err)
@@ -84,7 +91,7 @@ func BenchmarkPlaceWorkspace_LargeFleet(b *testing.B) {
 
 	for i := 0; i < 1000; i++ {
 		svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
-			MemoryMb: int64(1024 + i), CpuMillicores: int32(1000 + i), DiskMb: int64(10240 + i),
+			MemoryMb: math.MaxInt64, CpuMillicores: math.MaxInt32, DiskMb: math.MaxInt64,
 		}, nil)
 	}
 

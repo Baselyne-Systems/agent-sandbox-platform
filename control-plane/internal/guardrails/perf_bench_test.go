@@ -3,12 +3,88 @@ package guardrails
 import (
 	"context"
 	"fmt"
-	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) CreateRule(ctx context.Context, rule *models.GuardrailRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateRule(ctx, rule)
+}
+
+func (s *syncMockRepo) GetRule(ctx context.Context, tenantID, id string) (*models.GuardrailRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetRule(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) UpdateRule(ctx context.Context, tenantID string, rule *models.GuardrailRule) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpdateRule(ctx, tenantID, rule)
+}
+
+func (s *syncMockRepo) DeleteRule(ctx context.Context, tenantID, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.DeleteRule(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) ListRules(ctx context.Context, tenantID string, ruleType models.RuleType, enabledOnly bool, afterID string, limit int) ([]models.GuardrailRule, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListRules(ctx, tenantID, ruleType, enabledOnly, afterID, limit)
+}
+
+func (s *syncMockRepo) CreateSet(ctx context.Context, set *models.GuardrailSet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateSet(ctx, set)
+}
+
+func (s *syncMockRepo) GetSet(ctx context.Context, tenantID, id string) (*models.GuardrailSet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetSet(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) GetSetByName(ctx context.Context, tenantID, name string) (*models.GuardrailSet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetSetByName(ctx, tenantID, name)
+}
+
+func (s *syncMockRepo) UpdateSet(ctx context.Context, tenantID string, set *models.GuardrailSet) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpdateSet(ctx, tenantID, set)
+}
+
+func (s *syncMockRepo) DeleteSet(ctx context.Context, tenantID, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.DeleteSet(ctx, tenantID, id)
+}
+
+func (s *syncMockRepo) ListSets(ctx context.Context, tenantID string, afterID string, limit int) ([]models.GuardrailSet, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListSets(ctx, tenantID, afterID, limit)
+}
 
 // ---------------------------------------------------------------------------
 // 1. BenchmarkCreateRule_Parallel
@@ -16,7 +92,7 @@ import (
 
 func BenchmarkCreateRule_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 	var counter atomic.Int64
 
@@ -455,7 +531,7 @@ func BenchmarkMultiTenantRuleAccess(b *testing.B) {
 
 func BenchmarkUpdateRule_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	rules := make([]*models.GuardrailRule, 100)
@@ -520,6 +596,3 @@ func BenchmarkDeleteRule_Throughput(b *testing.B) {
 		}
 	}
 }
-
-// Ensure rand is used to prevent compiler optimizing away the import.
-var _ = rand.Int

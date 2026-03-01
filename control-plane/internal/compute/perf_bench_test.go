@@ -3,12 +3,109 @@ package compute
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) CreateHost(ctx context.Context, host *models.Host) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateHost(ctx, host)
+}
+
+func (s *syncMockRepo) GetHost(ctx context.Context, id string) (*models.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetHost(ctx, id)
+}
+
+func (s *syncMockRepo) ListHosts(ctx context.Context, status models.HostStatus) ([]models.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListHosts(ctx, status)
+}
+
+func (s *syncMockRepo) SetHostStatus(ctx context.Context, id string, status models.HostStatus) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.SetHostStatus(ctx, id, status)
+}
+
+func (s *syncMockRepo) PlaceAndDecrement(ctx context.Context, memoryMb int64, cpuMillicores int32, diskMb int64, isolationTier string) (*models.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.PlaceAndDecrement(ctx, memoryMb, cpuMillicores, diskMb, isolationTier)
+}
+
+func (s *syncMockRepo) UpdateHeartbeat(ctx context.Context, hostID string, resources models.HostResources, activeSandboxes int32, supportedTiers []string) (*models.Host, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpdateHeartbeat(ctx, hostID, resources, activeSandboxes, supportedTiers)
+}
+
+func (s *syncMockRepo) MarkStaleHostsOffline(ctx context.Context, timeout time.Duration) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.MarkStaleHostsOffline(ctx, timeout)
+}
+
+func (s *syncMockRepo) UpsertWarmPoolConfig(ctx context.Context, cfg *models.WarmPoolConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpsertWarmPoolConfig(ctx, cfg)
+}
+
+func (s *syncMockRepo) ListWarmPoolConfigs(ctx context.Context) ([]models.WarmPoolConfig, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ListWarmPoolConfigs(ctx)
+}
+
+func (s *syncMockRepo) ClaimWarmSlot(ctx context.Context, tier string) (*models.WarmPoolSlot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.ClaimWarmSlot(ctx, tier)
+}
+
+func (s *syncMockRepo) CreateWarmSlot(ctx context.Context, slot *models.WarmPoolSlot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CreateWarmSlot(ctx, slot)
+}
+
+func (s *syncMockRepo) CountReadySlots(ctx context.Context, tier string) (int32, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CountReadySlots(ctx, tier)
+}
+
+func (s *syncMockRepo) CleanExpiredSlots(ctx context.Context) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.CleanExpiredSlots(ctx)
+}
+
+func (s *syncMockRepo) GetCapacity(ctx context.Context) ([]models.TierCapacity, int32, int32, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetCapacity(ctx)
+}
 
 // ---------------------------------------------------------------------------
 // 1. BenchmarkPlaceWorkspace_Parallel
@@ -16,12 +113,12 @@ import (
 
 func BenchmarkPlaceWorkspace_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	for i := 0; i < 100; i++ {
 		_, err := svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
-			MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
+			MemoryMb: 1 << 40, CpuMillicores: 1 << 30, DiskMb: 1 << 40,
 		}, []string{"standard", "hardened"})
 		if err != nil {
 			b.Fatal(err)
@@ -45,7 +142,7 @@ func BenchmarkPlaceWorkspace_Parallel(b *testing.B) {
 
 func BenchmarkRegisterHost_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 	var counter atomic.Int64
 
@@ -68,7 +165,7 @@ func BenchmarkRegisterHost_Parallel(b *testing.B) {
 
 func BenchmarkHeartbeat_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	hostIDs := make([]string, 100)
@@ -104,18 +201,19 @@ func BenchmarkHeartbeat_Parallel(b *testing.B) {
 
 func BenchmarkPlaceWorkspace_MinResources(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	repo := newMockRepo()
+	svc := NewService(repo)
 	ctx := context.Background()
 
-	_, err := svc.RegisterHost(ctx, "host:9090", models.HostResources{
-		MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
-	}, nil)
+	largeRes := models.HostResources{MemoryMb: math.MaxInt64, CpuMillicores: math.MaxInt32, DiskMb: math.MaxInt64}
+	host, err := svc.RegisterHost(ctx, "host:9090", largeRes, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ResetTimer()
 	for b.Loop() {
+		repo.hosts[host.ID].AvailableResources = largeRes
 		_, _, err := svc.PlaceWorkspace(ctx, 1, 1, 1, "")
 		if err != nil {
 			b.Fatal(err)
@@ -129,18 +227,19 @@ func BenchmarkPlaceWorkspace_MinResources(b *testing.B) {
 
 func BenchmarkPlaceWorkspace_MaxResources(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	repo := newMockRepo()
+	svc := NewService(repo)
 	ctx := context.Background()
 
-	_, err := svc.RegisterHost(ctx, "host:9090", models.HostResources{
-		MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
-	}, nil)
+	largeRes := models.HostResources{MemoryMb: math.MaxInt64, CpuMillicores: math.MaxInt32, DiskMb: math.MaxInt64}
+	host, err := svc.RegisterHost(ctx, "host:9090", largeRes, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	b.ResetTimer()
 	for b.Loop() {
+		repo.hosts[host.ID].AvailableResources = largeRes
 		_, _, err := svc.PlaceWorkspace(ctx, 1<<20, 1<<15, 1<<20, "")
 		if err != nil {
 			b.Fatal(err)
@@ -165,10 +264,13 @@ func BenchmarkPlaceWorkspace_TierFiltered(b *testing.B) {
 	for _, tc := range tiers {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
-			svc := NewService(newMockRepo())
+			repo := newMockRepo()
+			svc := NewService(repo)
 			ctx := context.Background()
 
+			largeRes := models.HostResources{MemoryMb: math.MaxInt64, CpuMillicores: math.MaxInt32, DiskMb: math.MaxInt64}
 			// 50 hosts with mixed tier support.
+			var hostIDs []string
 			for i := 0; i < 50; i++ {
 				var supported []string
 				switch i % 3 {
@@ -179,16 +281,19 @@ func BenchmarkPlaceWorkspace_TierFiltered(b *testing.B) {
 				case 2:
 					supported = []string{"standard", "hardened", "isolated"}
 				}
-				_, err := svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
-					MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
-				}, supported)
+				host, err := svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), largeRes, supported)
 				if err != nil {
 					b.Fatal(err)
 				}
+				hostIDs = append(hostIDs, host.ID)
 			}
 
 			b.ResetTimer()
 			for b.Loop() {
+				// Reset all host resources to prevent capacity exhaustion.
+				for _, id := range hostIDs {
+					repo.hosts[id].AvailableResources = largeRes
+				}
 				_, _, err := svc.PlaceWorkspace(ctx, 512, 500, 1024, tc.tier)
 				if err != nil {
 					b.Fatal(err)
@@ -382,13 +487,13 @@ func BenchmarkGetCapacity_LargeFleet(b *testing.B) {
 
 func BenchmarkMixedHeartbeatAndPlacement(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	hostIDs := make([]string, 200)
 	for i := 0; i < 200; i++ {
 		host, err := svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
-			MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
+			MemoryMb: 1 << 40, CpuMillicores: 1 << 30, DiskMb: 1 << 40,
 		}, []string{"standard"})
 		if err != nil {
 			b.Fatal(err)
@@ -428,13 +533,13 @@ func BenchmarkMixedHeartbeatAndPlacement(b *testing.B) {
 
 func BenchmarkPlaceWorkspace_HighContention(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	// Only 10 hosts to create high contention.
 	for i := 0; i < 10; i++ {
 		_, err := svc.RegisterHost(ctx, fmt.Sprintf("host%d:9090", i), models.HostResources{
-			MemoryMb: 1 << 30, CpuMillicores: 1 << 20, DiskMb: 1 << 30,
+			MemoryMb: 1 << 40, CpuMillicores: 1 << 30, DiskMb: 1 << 40,
 		}, []string{"standard"})
 		if err != nil {
 			b.Fatal(err)

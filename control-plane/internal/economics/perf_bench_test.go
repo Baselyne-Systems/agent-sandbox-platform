@@ -3,10 +3,53 @@ package economics
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
 )
+
+// syncMockRepo wraps mockRepo with a mutex to support concurrent benchmark access.
+type syncMockRepo struct {
+	mu   sync.Mutex
+	mock *mockRepo
+}
+
+func newSyncMockRepo() *syncMockRepo {
+	return &syncMockRepo{mock: newMockRepo()}
+}
+
+func (s *syncMockRepo) InsertUsage(ctx context.Context, record *models.UsageRecord) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.InsertUsage(ctx, record)
+}
+
+func (s *syncMockRepo) GetBudget(ctx context.Context, tenantID, agentID string) (*models.Budget, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetBudget(ctx, tenantID, agentID)
+}
+
+func (s *syncMockRepo) UpsertBudget(ctx context.Context, budget *models.Budget) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.UpsertBudget(ctx, budget)
+}
+
+func (s *syncMockRepo) AddUsedAmount(ctx context.Context, tenantID, agentID string, amount float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.AddUsedAmount(ctx, tenantID, agentID, amount)
+}
+
+func (s *syncMockRepo) GetCostReport(ctx context.Context, tenantID, agentID string, start, end time.Time) ([]ResourceCost, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mock.GetCostReport(ctx, tenantID, agentID, start, end)
+}
 
 // ---------------------------------------------------------------------------
 // 1. BenchmarkRecordUsage_Parallel
@@ -14,7 +57,7 @@ import (
 
 func BenchmarkRecordUsage_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
+	svc := NewService(newSyncMockRepo())
 	ctx := context.Background()
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -174,7 +217,7 @@ func BenchmarkSetBudget_Upsert(b *testing.B) {
 
 func BenchmarkRecordUsage_WithBudgetUpdate_Parallel(b *testing.B) {
 	b.ReportAllocs()
-	repo := newMockRepo()
+	repo := newSyncMockRepo()
 	svc := NewService(repo)
 	ctx := context.Background()
 	svc.SetBudget(ctx, "tenant-1", "agent-1", 1e12, "USD", "halt", 0) // very high limit
@@ -258,10 +301,11 @@ func BenchmarkGetCostReport_LargeDataset(b *testing.B) {
 
 func BenchmarkBudgetLifecycle_SetCheckRecord(b *testing.B) {
 	b.ReportAllocs()
-	svc := NewService(newMockRepo())
 	ctx := context.Background()
 
 	for b.Loop() {
+		svc := NewService(newMockRepo())
+
 		// Set budget.
 		_, err := svc.SetBudget(ctx, "tenant-1", "agent-1", 10000, "USD", "halt", 0.8)
 		if err != nil {
@@ -324,7 +368,7 @@ func BenchmarkMultiTenantBudgetIsolation(b *testing.B) {
 
 func BenchmarkRecordUsage_HighFrequency(b *testing.B) {
 	b.ReportAllocs()
-	repo := newMockRepo()
+	repo := newSyncMockRepo()
 	svc := NewService(repo)
 	ctx := context.Background()
 	svc.SetBudget(ctx, "tenant-1", "agent-1", 1e15, "USD", "halt", 0) // very high limit
