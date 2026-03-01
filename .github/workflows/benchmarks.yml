@@ -1,0 +1,99 @@
+name: Benchmarks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  deployments: write
+
+jobs:
+  bench-unit:
+    name: Unit Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: control-plane/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Install protoc-gen-go
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: Generate proto stubs
+        run: buf generate
+        working-directory: proto
+      - name: Run benchmarks
+        run: go test -bench=. -benchmem -run='^$' -count=1 -timeout=10m ./internal/... | tee bench-output.txt
+        working-directory: control-plane
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Go Benchmarks
+          tool: go
+          output-file-path: control-plane/bench-output.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
+          alert-threshold: "120%"
+          comment-on-alert: true
+          fail-on-alert: false
+          benchmark-data-dir-path: dev/bench
+      - name: Upload benchmark output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-unit-output
+          path: control-plane/bench-output.txt
+
+  bench-integration:
+    name: Integration Benchmarks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: bulkhead
+          POSTGRES_PASSWORD: bulkhead
+          POSTGRES_DB: bulkhead_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bulkhead"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache-dependency-path: control-plane/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Install protoc-gen-go
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: Generate proto stubs
+        run: buf generate
+        working-directory: proto
+      - name: Run integration benchmarks
+        run: go test -tags integration -bench=. -benchmem -run='^$' -count=1 -timeout=10m ./internal/... | tee bench-integration-output.txt
+        working-directory: control-plane
+        env:
+          TEST_DATABASE_URL: postgres://bulkhead:bulkhead@localhost:5432/bulkhead_test?sslmode=disable
+      - name: Upload benchmark output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bench-integration-output
+          path: control-plane/bench-integration-output.txt

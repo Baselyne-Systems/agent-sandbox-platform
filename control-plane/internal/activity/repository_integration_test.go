@@ -22,6 +22,8 @@ func wsUUID(n int) string {
 	return fmt.Sprintf("a0000000-0000-0000-0000-%012d", n)
 }
 
+const testTenant = "test-tenant"
+
 var testDB *testutil.TestDB
 
 func TestMain(m *testing.M) {
@@ -48,6 +50,7 @@ func TestInteg_InsertAndGetAction_JSONRoundTrip(t *testing.T) {
 	execLatency := int64(5000)
 
 	rec := &models.ActionRecord{
+		TenantID:            testTenant,
 		WorkspaceID:         wsUUID(1),
 		AgentID:             agentID,
 		ToolName:            "http_fetch",
@@ -68,7 +71,7 @@ func TestInteg_InsertAndGetAction_JSONRoundTrip(t *testing.T) {
 		t.Fatal("expected server-generated recorded_at")
 	}
 
-	got, err := repo.GetAction(ctx, rec.ID)
+	got, err := repo.GetAction(ctx, testTenant, rec.ID)
 	if err != nil {
 		t.Fatalf("GetAction: %v", err)
 	}
@@ -110,6 +113,7 @@ func TestInteg_InsertAction_NullableFields(t *testing.T) {
 	agentID := testutil.SeedAgent(t, db, "nullable-agent")
 
 	rec := &models.ActionRecord{
+		TenantID:            testTenant,
 		WorkspaceID:         wsUUID(2),
 		AgentID:             agentID,
 		TaskID:              "", // empty → NULL
@@ -126,7 +130,7 @@ func TestInteg_InsertAction_NullableFields(t *testing.T) {
 		t.Fatalf("InsertAction: %v", err)
 	}
 
-	got, err := repo.GetAction(ctx, rec.ID)
+	got, err := repo.GetAction(ctx, testTenant, rec.ID)
 	if err != nil {
 		t.Fatalf("GetAction: %v", err)
 	}
@@ -145,7 +149,7 @@ func TestInteg_GetAction_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	got, err := repo.GetAction(ctx, "00000000-0000-0000-0000-000000000000")
+	got, err := repo.GetAction(ctx, testTenant, "00000000-0000-0000-0000-000000000000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -172,6 +176,7 @@ func TestInteg_QueryActions_WorkspaceAndAgentFilter(t *testing.T) {
 	}
 	for _, r := range records {
 		rec := &models.ActionRecord{
+			TenantID:    testTenant,
 			WorkspaceID: r.wsID,
 			AgentID:     r.agentID,
 			ToolName:    "test",
@@ -184,7 +189,7 @@ func TestInteg_QueryActions_WorkspaceAndAgentFilter(t *testing.T) {
 	}
 
 	// Filter by workspace
-	byWs, err := repo.QueryActions(ctx, QueryFilter{WorkspaceID: wsA, Limit: 10})
+	byWs, err := repo.QueryActions(ctx, testTenant, QueryFilter{WorkspaceID: wsA, Limit: 10})
 	if err != nil {
 		t.Fatalf("QueryActions workspace: %v", err)
 	}
@@ -193,7 +198,7 @@ func TestInteg_QueryActions_WorkspaceAndAgentFilter(t *testing.T) {
 	}
 
 	// Filter by agent
-	byAgent, err := repo.QueryActions(ctx, QueryFilter{AgentID: agent1, Limit: 10})
+	byAgent, err := repo.QueryActions(ctx, testTenant, QueryFilter{AgentID: agent1, Limit: 10})
 	if err != nil {
 		t.Fatalf("QueryActions agent: %v", err)
 	}
@@ -209,6 +214,7 @@ func TestInteg_QueryActions_TimeRange(t *testing.T) {
 
 	// Insert a record — its recorded_at is set by the DB to now()
 	rec := &models.ActionRecord{
+		TenantID:    testTenant,
 		WorkspaceID: wsUUID(20),
 		AgentID:     agentID,
 		ToolName:    "test",
@@ -224,7 +230,7 @@ func TestInteg_QueryActions_TimeRange(t *testing.T) {
 	future := now.Add(1 * time.Minute)
 
 	// Should find within range
-	inRange, err := repo.QueryActions(ctx, QueryFilter{StartTime: &past, EndTime: &future, Limit: 10})
+	inRange, err := repo.QueryActions(ctx, testTenant, QueryFilter{StartTime: &past, EndTime: &future, Limit: 10})
 	if err != nil {
 		t.Fatalf("QueryActions in range: %v", err)
 	}
@@ -235,7 +241,7 @@ func TestInteg_QueryActions_TimeRange(t *testing.T) {
 	// Should not find outside range
 	farPast := now.Add(-2 * time.Hour)
 	farPastEnd := now.Add(-1 * time.Hour)
-	outRange, err := repo.QueryActions(ctx, QueryFilter{StartTime: &farPast, EndTime: &farPastEnd, Limit: 10})
+	outRange, err := repo.QueryActions(ctx, testTenant, QueryFilter{StartTime: &farPast, EndTime: &farPastEnd, Limit: 10})
 	if err != nil {
 		t.Fatalf("QueryActions out range: %v", err)
 	}
@@ -265,7 +271,7 @@ func TestInteg_QueryActions_Pagination(t *testing.T) {
 	}
 	sort.Strings(ids)
 
-	page1, err := repo.QueryActions(ctx, QueryFilter{Limit: 2})
+	page1, err := repo.QueryActions(ctx, testTenant, QueryFilter{Limit: 2})
 	if err != nil {
 		t.Fatalf("QueryActions page1: %v", err)
 	}
@@ -273,7 +279,7 @@ func TestInteg_QueryActions_Pagination(t *testing.T) {
 		t.Fatalf("page1 len = %d, want 2", len(page1))
 	}
 
-	page2, err := repo.QueryActions(ctx, QueryFilter{AfterID: page1[1].ID, Limit: 2})
+	page2, err := repo.QueryActions(ctx, testTenant, QueryFilter{AfterID: page1[1].ID, Limit: 2})
 	if err != nil {
 		t.Fatalf("QueryActions page2: %v", err)
 	}
@@ -281,7 +287,7 @@ func TestInteg_QueryActions_Pagination(t *testing.T) {
 		t.Fatalf("page2 len = %d, want 2", len(page2))
 	}
 
-	page3, err := repo.QueryActions(ctx, QueryFilter{AfterID: page2[1].ID, Limit: 2})
+	page3, err := repo.QueryActions(ctx, testTenant, QueryFilter{AfterID: page2[1].ID, Limit: 2})
 	if err != nil {
 		t.Fatalf("QueryActions page3: %v", err)
 	}
@@ -365,7 +371,7 @@ func TestInteg_QueryActions_OutcomeFilter(t *testing.T) {
 		}
 	}
 
-	denied, err := repo.QueryActions(ctx, QueryFilter{Outcome: models.ActionOutcomeDenied, Limit: 10})
+	denied, err := repo.QueryActions(ctx, testTenant, QueryFilter{Outcome: models.ActionOutcomeDenied, Limit: 10})
 	if err != nil {
 		t.Fatalf("QueryActions denied: %v", err)
 	}

@@ -33,6 +33,7 @@ func TestInteg_InsertUsage(t *testing.T) {
 	ctx := context.Background()
 
 	rec := &models.UsageRecord{
+		TenantID:     "test-tenant",
 		AgentID:      "agent-001",
 		WorkspaceID:  "ws-001",
 		ResourceType: "llm_tokens",
@@ -56,7 +57,7 @@ func TestInteg_GetBudget_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	got, err := repo.GetBudget(ctx, "nonexistent-agent")
+	got, err := repo.GetBudget(ctx, "test-tenant", "nonexistent-agent")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,6 +72,7 @@ func TestInteg_UpsertBudget_Insert(t *testing.T) {
 
 	now := time.Now().Truncate(time.Microsecond)
 	budget := &models.Budget{
+		TenantID:    "test-tenant",
 		AgentID:     "agent-budget-1",
 		Currency:    "USD",
 		Limit:       100.0,
@@ -86,7 +88,7 @@ func TestInteg_UpsertBudget_Insert(t *testing.T) {
 		t.Fatal("expected server-generated ID")
 	}
 
-	got, err := repo.GetBudget(ctx, "agent-budget-1")
+	got, err := repo.GetBudget(ctx, "test-tenant", "agent-budget-1")
 	if err != nil {
 		t.Fatalf("GetBudget: %v", err)
 	}
@@ -107,6 +109,7 @@ func TestInteg_UpsertBudget_OnConflict(t *testing.T) {
 
 	now := time.Now().Truncate(time.Microsecond)
 	budget := &models.Budget{
+		TenantID:    "test-tenant",
 		AgentID:     "agent-upsert",
 		Currency:    "USD",
 		Limit:       50.0,
@@ -132,7 +135,7 @@ func TestInteg_UpsertBudget_OnConflict(t *testing.T) {
 		t.Errorf("ID changed: %s → %s", originalID, budget.ID)
 	}
 
-	got, err := repo.GetBudget(ctx, "agent-upsert")
+	got, err := repo.GetBudget(ctx, "test-tenant", "agent-upsert")
 	if err != nil {
 		t.Fatalf("GetBudget: %v", err)
 	}
@@ -153,6 +156,7 @@ func TestInteg_AddUsedAmount_Increment(t *testing.T) {
 
 	now := time.Now().Truncate(time.Microsecond)
 	budget := &models.Budget{
+		TenantID:    "test-tenant",
 		AgentID:     "agent-increment",
 		Currency:    "USD",
 		Limit:       100.0,
@@ -164,14 +168,14 @@ func TestInteg_AddUsedAmount_Increment(t *testing.T) {
 		t.Fatalf("UpsertBudget: %v", err)
 	}
 
-	if err := repo.AddUsedAmount(ctx, "agent-increment", 25.0); err != nil {
+	if err := repo.AddUsedAmount(ctx, "test-tenant", "agent-increment", 25.0); err != nil {
 		t.Fatalf("AddUsedAmount first: %v", err)
 	}
-	if err := repo.AddUsedAmount(ctx, "agent-increment", 10.0); err != nil {
+	if err := repo.AddUsedAmount(ctx, "test-tenant", "agent-increment", 10.0); err != nil {
 		t.Fatalf("AddUsedAmount second: %v", err)
 	}
 
-	got, err := repo.GetBudget(ctx, "agent-increment")
+	got, err := repo.GetBudget(ctx, "test-tenant", "agent-increment")
 	if err != nil {
 		t.Fatalf("GetBudget: %v", err)
 	}
@@ -184,7 +188,7 @@ func TestInteg_AddUsedAmount_NoBudget(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	err := repo.AddUsedAmount(ctx, "nonexistent-agent", 10.0)
+	err := repo.AddUsedAmount(ctx, "test-tenant", "nonexistent-agent", 10.0)
 	if err != ErrBudgetNotFound {
 		t.Errorf("error = %v, want ErrBudgetNotFound", err)
 	}

@@ -61,9 +61,12 @@ func BenchmarkCompilePolicy(b *testing.B) {
 	ctx := context.Background()
 	ids := make([]string, 50)
 	for i := range ids {
-		ids[i] = fmt.Sprintf("rule-%d", i)
+		r, _ := svc.CreateRule(ctx, "test-tenant", fmt.Sprintf("rule-%d", i), "",
+			models.RuleTypeToolFilter, "c", models.RuleActionDeny, i, nil, models.RuleScope{})
+		ids[i] = r.ID
 	}
 
+	b.ResetTimer()
 	for b.Loop() {
 		_, _, err := svc.CompilePolicy(ctx, "test-tenant", ids)
 		if err != nil {

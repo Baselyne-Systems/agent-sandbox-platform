@@ -13,6 +13,8 @@ import (
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/testutil"
 )
 
+const testTenant = "test-tenant"
+
 var testDB *testutil.TestDB
 
 func TestMain(m *testing.M) {
@@ -33,6 +35,7 @@ func TestInteg_CreateAndGetRule_JSONBLabels(t *testing.T) {
 	ctx := context.Background()
 
 	rule := &models.GuardrailRule{
+		TenantID:    testTenant,
 		Name:        "block-shell",
 		Description: "Block shell execution",
 		Type:        models.RuleTypeToolFilter,
@@ -53,7 +56,7 @@ func TestInteg_CreateAndGetRule_JSONBLabels(t *testing.T) {
 		t.Fatal("expected server-generated timestamps")
 	}
 
-	got, err := repo.GetRule(ctx, rule.ID)
+	got, err := repo.GetRule(ctx, testTenant, rule.ID)
 	if err != nil {
 		t.Fatalf("GetRule: %v", err)
 	}
@@ -73,6 +76,7 @@ func TestInteg_UpdateRule_AllFields(t *testing.T) {
 	ctx := context.Background()
 
 	rule := &models.GuardrailRule{
+		TenantID:  testTenant,
 		Name:      "original",
 		Type:      models.RuleTypeToolFilter,
 		Condition: "old",
@@ -95,7 +99,7 @@ func TestInteg_UpdateRule_AllFields(t *testing.T) {
 	rule.Enabled = false
 	rule.Labels = map[string]string{"v": "2"}
 
-	if err := repo.UpdateRule(ctx, rule); err != nil {
+	if err := repo.UpdateRule(ctx, testTenant, rule); err != nil {
 		t.Fatalf("UpdateRule: %v", err)
 	}
 
@@ -103,7 +107,7 @@ func TestInteg_UpdateRule_AllFields(t *testing.T) {
 		t.Error("updated_at should have changed")
 	}
 
-	got, err := repo.GetRule(ctx, rule.ID)
+	got, err := repo.GetRule(ctx, testTenant, rule.ID)
 	if err != nil {
 		t.Fatalf("GetRule: %v", err)
 	}
@@ -126,6 +130,7 @@ func TestInteg_DeleteRule_Success(t *testing.T) {
 	ctx := context.Background()
 
 	rule := &models.GuardrailRule{
+		TenantID:  testTenant,
 		Name:      "delete-me",
 		Type:      models.RuleTypeToolFilter,
 		Condition: "any",
@@ -136,11 +141,11 @@ func TestInteg_DeleteRule_Success(t *testing.T) {
 		t.Fatalf("CreateRule: %v", err)
 	}
 
-	if err := repo.DeleteRule(ctx, rule.ID); err != nil {
+	if err := repo.DeleteRule(ctx, testTenant, rule.ID); err != nil {
 		t.Fatalf("DeleteRule: %v", err)
 	}
 
-	got, err := repo.GetRule(ctx, rule.ID)
+	got, err := repo.GetRule(ctx, testTenant, rule.ID)
 	if err != nil {
 		t.Fatalf("GetRule: %v", err)
 	}
@@ -153,7 +158,7 @@ func TestInteg_DeleteRule_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	err := repo.DeleteRule(ctx, "00000000-0000-0000-0000-000000000000")
+	err := repo.DeleteRule(ctx, testTenant, "00000000-0000-0000-0000-000000000000")
 	if err != ErrRuleNotFound {
 		t.Errorf("error = %v, want ErrRuleNotFound", err)
 	}
@@ -164,9 +169,9 @@ func TestInteg_ListRules_TypeFilter(t *testing.T) {
 	ctx := context.Background()
 
 	rules := []*models.GuardrailRule{
-		{Name: "r1", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
-		{Name: "r2", Type: models.RuleTypeRateLimit, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
-		{Name: "r3", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
+		{TenantID: testTenant, Name: "r1", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
+		{TenantID: testTenant, Name: "r2", Type: models.RuleTypeRateLimit, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
+		{TenantID: testTenant, Name: "r3", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
 	}
 	for _, r := range rules {
 		if err := repo.CreateRule(ctx, r); err != nil {
@@ -174,7 +179,7 @@ func TestInteg_ListRules_TypeFilter(t *testing.T) {
 		}
 	}
 
-	filtered, err := repo.ListRules(ctx, models.RuleTypeToolFilter, false, "", 10)
+	filtered, err := repo.ListRules(ctx, testTenant, models.RuleTypeToolFilter, false, "", 10)
 	if err != nil {
 		t.Fatalf("ListRules: %v", err)
 	}
@@ -188,8 +193,8 @@ func TestInteg_ListRules_EnabledOnly(t *testing.T) {
 	ctx := context.Background()
 
 	rules := []*models.GuardrailRule{
-		{Name: "enabled", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
-		{Name: "disabled", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: false, Labels: map[string]string{}},
+		{TenantID: testTenant, Name: "enabled", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: true, Labels: map[string]string{}},
+		{TenantID: testTenant, Name: "disabled", Type: models.RuleTypeToolFilter, Condition: "c", Action: models.RuleActionDeny, Enabled: false, Labels: map[string]string{}},
 	}
 	for _, r := range rules {
 		if err := repo.CreateRule(ctx, r); err != nil {
@@ -197,7 +202,7 @@ func TestInteg_ListRules_EnabledOnly(t *testing.T) {
 		}
 	}
 
-	enabled, err := repo.ListRules(ctx, "", true, "", 10)
+	enabled, err := repo.ListRules(ctx, testTenant, "", true, "", 10)
 	if err != nil {
 		t.Fatalf("ListRules: %v", err)
 	}
@@ -216,6 +221,7 @@ func TestInteg_ListRules_Pagination(t *testing.T) {
 	var ids []string
 	for i := 0; i < 5; i++ {
 		r := &models.GuardrailRule{
+			TenantID:  testTenant,
 			Name:      "rule-" + string(rune('A'+i)),
 			Type:      models.RuleTypeToolFilter,
 			Condition: "c",
@@ -230,7 +236,7 @@ func TestInteg_ListRules_Pagination(t *testing.T) {
 	}
 	sort.Strings(ids)
 
-	page1, err := repo.ListRules(ctx, "", false, "", 2)
+	page1, err := repo.ListRules(ctx, testTenant, "", false, "", 2)
 	if err != nil {
 		t.Fatalf("ListRules page1: %v", err)
 	}
@@ -238,7 +244,7 @@ func TestInteg_ListRules_Pagination(t *testing.T) {
 		t.Fatalf("page1 len = %d, want 2", len(page1))
 	}
 
-	page2, err := repo.ListRules(ctx, "", false, page1[1].ID, 2)
+	page2, err := repo.ListRules(ctx, testTenant, "", false, page1[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListRules page2: %v", err)
 	}
@@ -246,7 +252,7 @@ func TestInteg_ListRules_Pagination(t *testing.T) {
 		t.Fatalf("page2 len = %d, want 2", len(page2))
 	}
 
-	page3, err := repo.ListRules(ctx, "", false, page2[1].ID, 2)
+	page3, err := repo.ListRules(ctx, testTenant, "", false, page2[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListRules page3: %v", err)
 	}

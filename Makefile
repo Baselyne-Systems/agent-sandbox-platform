@@ -1,4 +1,4 @@
-.PHONY: proto build build-go build-rust build-bkctl test test-go test-rust test-integration test-e2e test-e2e-full test-e2e-all dev clean
+.PHONY: proto build build-go build-rust build-bkctl test test-go test-rust test-integration test-e2e test-e2e-full test-e2e-all dev clean bench bench-integration bench-report
 
 # Generate protobuf code for Go (Rust is generated at build time via build.rs)
 proto:
@@ -65,6 +65,24 @@ lint:
 	cd proto && buf lint
 	cd control-plane && go vet ./...
 	cd runtime && cargo clippy
+
+# Benchmarks — unit (no external deps)
+bench:
+	cd control-plane && go test -bench=. -benchmem -run=^$$ -count=1 ./internal/...
+
+bench-%:
+	cd control-plane && go test -bench=. -benchmem -run=^$$ -count=1 ./internal/$*/...
+
+# Benchmarks — integration (requires Docker for PostgreSQL)
+bench-integration:
+	cd control-plane && go test -tags integration -bench=. -benchmem -run=^$$ -count=1 ./internal/...
+
+bench-integration-%:
+	cd control-plane && go test -tags integration -bench=. -benchmem -run=^$$ -count=1 ./internal/$*/...
+
+# Benchmarks — JSON output for CI (parseable by benchmark-action)
+bench-report:
+	cd control-plane && go test -bench=. -benchmem -run=^$$ -count=5 -json ./internal/... > bench-results.json
 
 # Clean build artifacts
 clean:

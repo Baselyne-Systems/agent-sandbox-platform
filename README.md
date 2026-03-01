@@ -1,6 +1,7 @@
 # Bulkhead
 
 [![CI](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml/badge.svg)](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml)
+[![Benchmarks](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/benchmarks.yml/badge.svg)](https://Baselyne-Systems.github.io/bulkhead/dev/bench/)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Baselyne-Systems/bulkhead)
 
 **Bulkhead is an enterprise platform for running autonomous AI agents in production with enforced policy controls.**

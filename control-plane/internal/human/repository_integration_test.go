@@ -20,6 +20,8 @@ func wsUUID(n int) string {
 	return fmt.Sprintf("b0000000-0000-0000-0000-%012d", n)
 }
 
+const testTenant = "test-tenant"
+
 var testDB *testutil.TestDB
 
 func TestMain(m *testing.M) {
@@ -41,6 +43,7 @@ func TestInteg_CreateAndGetRequest_JSONBOptions(t *testing.T) {
 	agentID := testutil.SeedAgent(t, db, "human-agent")
 
 	req := &models.HumanRequest{
+		TenantID:    testTenant,
 		WorkspaceID: wsUUID(1),
 		AgentID:     agentID,
 		Question:    "Approve this action?",
@@ -59,7 +62,7 @@ func TestInteg_CreateAndGetRequest_JSONBOptions(t *testing.T) {
 		t.Fatal("expected server-generated created_at")
 	}
 
-	got, err := repo.GetRequest(ctx, req.ID)
+	got, err := repo.GetRequest(ctx, testTenant, req.ID)
 	if err != nil {
 		t.Fatalf("GetRequest: %v", err)
 	}
@@ -84,6 +87,7 @@ func TestInteg_GetRequest_ExpiresAt(t *testing.T) {
 
 	expires := time.Now().Add(time.Hour).Truncate(time.Microsecond)
 	req := &models.HumanRequest{
+		TenantID:    testTenant,
 		WorkspaceID: wsUUID(2),
 		AgentID:     agentID,
 		Question:    "Timeout test",
@@ -95,7 +99,7 @@ func TestInteg_GetRequest_ExpiresAt(t *testing.T) {
 		t.Fatalf("CreateRequest: %v", err)
 	}
 
-	got, err := repo.GetRequest(ctx, req.ID)
+	got, err := repo.GetRequest(ctx, testTenant, req.ID)
 	if err != nil {
 		t.Fatalf("GetRequest: %v", err)
 	}
@@ -112,7 +116,7 @@ func TestInteg_GetRequest_NotFound(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	got, err := repo.GetRequest(ctx, "00000000-0000-0000-0000-000000000000")
+	got, err := repo.GetRequest(ctx, testTenant, "00000000-0000-0000-0000-000000000000")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,6 +131,7 @@ func TestInteg_RespondToRequest_Success(t *testing.T) {
 	agentID := testutil.SeedAgent(t, db, "respond-agent")
 
 	req := &models.HumanRequest{
+		TenantID:    testTenant,
 		WorkspaceID: wsUUID(3),
 		AgentID:     agentID,
 		Question:    "Approve?",
@@ -137,11 +142,11 @@ func TestInteg_RespondToRequest_Success(t *testing.T) {
 		t.Fatalf("CreateRequest: %v", err)
 	}
 
-	if err := repo.RespondToRequest(ctx, req.ID, "approved", "admin-001"); err != nil {
+	if err := repo.RespondToRequest(ctx, testTenant, req.ID, "approved", "admin-001"); err != nil {
 		t.Fatalf("RespondToRequest: %v", err)
 	}
 
-	got, err := repo.GetRequest(ctx, req.ID)
+	got, err := repo.GetRequest(ctx, testTenant, req.ID)
 	if err != nil {
 		t.Fatalf("GetRequest: %v", err)
 	}
@@ -165,6 +170,7 @@ func TestInteg_RespondToRequest_AlreadyResponded(t *testing.T) {
 	agentID := testutil.SeedAgent(t, db, "double-respond-agent")
 
 	req := &models.HumanRequest{
+		TenantID:    testTenant,
 		WorkspaceID: wsUUID(4),
 		AgentID:     agentID,
 		Question:    "Approve?",
@@ -175,11 +181,11 @@ func TestInteg_RespondToRequest_AlreadyResponded(t *testing.T) {
 		t.Fatalf("CreateRequest: %v", err)
 	}
 
-	if err := repo.RespondToRequest(ctx, req.ID, "yes", "admin-1"); err != nil {
+	if err := repo.RespondToRequest(ctx, testTenant, req.ID, "yes", "admin-1"); err != nil {
 		t.Fatalf("first RespondToRequest: %v", err)
 	}
 
-	err := repo.RespondToRequest(ctx, req.ID, "no", "admin-2")
+	err := repo.RespondToRequest(ctx, testTenant, req.ID, "no", "admin-2")
 	if err != ErrRequestNotPending {
 		t.Errorf("error = %v, want ErrRequestNotPending", err)
 	}
@@ -189,7 +195,7 @@ func TestInteg_RespondToRequest_NonExistent(t *testing.T) {
 	repo, _ := setup(t)
 	ctx := context.Background()
 
-	err := repo.RespondToRequest(ctx, "00000000-0000-0000-0000-000000000000", "yes", "admin")
+	err := repo.RespondToRequest(ctx, testTenant, "00000000-0000-0000-0000-000000000000", "yes", "admin")
 	if err != ErrRequestNotPending {
 		t.Errorf("error = %v, want ErrRequestNotPending", err)
 	}
@@ -212,6 +218,7 @@ func TestInteg_ListRequests_Filters(t *testing.T) {
 	}
 	for _, r := range requests {
 		req := &models.HumanRequest{
+			TenantID:    testTenant,
 			WorkspaceID: r.wsID,
 			AgentID:     agentID,
 			Question:    "q",
@@ -224,7 +231,7 @@ func TestInteg_ListRequests_Filters(t *testing.T) {
 	}
 
 	// Workspace filter
-	byWs, err := repo.ListRequests(ctx, wsA, "", "", 10)
+	byWs, err := repo.ListRequests(ctx, testTenant, wsA, "", "", 10)
 	if err != nil {
 		t.Fatalf("ListRequests workspace: %v", err)
 	}
@@ -233,7 +240,7 @@ func TestInteg_ListRequests_Filters(t *testing.T) {
 	}
 
 	// Status filter
-	byStatus, err := repo.ListRequests(ctx, "", models.HumanRequestStatusPending, "", 10)
+	byStatus, err := repo.ListRequests(ctx, testTenant, "", models.HumanRequestStatusPending, "", 10)
 	if err != nil {
 		t.Fatalf("ListRequests status: %v", err)
 	}
@@ -250,6 +257,7 @@ func TestInteg_ListRequests_Pagination(t *testing.T) {
 	var ids []string
 	for i := 0; i < 5; i++ {
 		req := &models.HumanRequest{
+			TenantID:    testTenant,
 			WorkspaceID: wsUUID(20),
 			AgentID:     agentID,
 			Question:    "q",
@@ -263,7 +271,7 @@ func TestInteg_ListRequests_Pagination(t *testing.T) {
 	}
 	sort.Strings(ids)
 
-	page1, err := repo.ListRequests(ctx, "", "", "", 2)
+	page1, err := repo.ListRequests(ctx, testTenant, "", "", "", 2)
 	if err != nil {
 		t.Fatalf("ListRequests page1: %v", err)
 	}
@@ -271,7 +279,7 @@ func TestInteg_ListRequests_Pagination(t *testing.T) {
 		t.Fatalf("page1 len = %d, want 2", len(page1))
 	}
 
-	page2, err := repo.ListRequests(ctx, "", "", page1[1].ID, 2)
+	page2, err := repo.ListRequests(ctx, testTenant, "", "", page1[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListRequests page2: %v", err)
 	}
@@ -279,7 +287,7 @@ func TestInteg_ListRequests_Pagination(t *testing.T) {
 		t.Fatalf("page2 len = %d, want 2", len(page2))
 	}
 
-	page3, err := repo.ListRequests(ctx, "", "", page2[1].ID, 2)
+	page3, err := repo.ListRequests(ctx, testTenant, "", "", page2[1].ID, 2)
 	if err != nil {
 		t.Fatalf("ListRequests page3: %v", err)
 	}

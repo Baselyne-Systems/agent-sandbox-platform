@@ -1,0 +1,56 @@
+# Kind cluster configuration for Bulkhead E2E benchmarks.
+# Creates a 3-node cluster with NodePort mappings for all 9 gRPC services.
+#
+# Service port mapping:
+#   identity   : host 50060 -> NodePort 30060
+#   workspace  : host 50061 -> NodePort 30061
+#   guardrails : host 50062 -> NodePort 30062
+#   human      : host 50063 -> NodePort 30063
+#   governance : host 50064 -> NodePort 30064
+#   activity   : host 50065 -> NodePort 30065
+#   economics  : host 50066 -> NodePort 30066
+#   compute    : host 50067 -> NodePort 30067
+#   task       : host 50068 -> NodePort 30068
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  extraPortMappings:
+  # identity
+  - containerPort: 30060
+    hostPort: 50060
+    protocol: TCP
+  # workspace
+  - containerPort: 30061
+    hostPort: 50061
+    protocol: TCP
+  # guardrails
+  - containerPort: 30062
+    hostPort: 50062
+    protocol: TCP
+  # human
+  - containerPort: 30063
+    hostPort: 50063
+    protocol: TCP
+  # governance
+  - containerPort: 30064
+    hostPort: 50064
+    protocol: TCP
+  # activity
+  - containerPort: 30065
+    hostPort: 50065
+    protocol: TCP
+  # economics
+  - containerPort: 30066
+    hostPort: 50066
+    protocol: TCP
+  # compute
+  - containerPort: 30067
+    hostPort: 50067
+    protocol: TCP
+  # task
+  - containerPort: 30068
+    hostPort: 50068
+    protocol: TCP
+- role: worker
+- role: worker
