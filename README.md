@@ -107,7 +107,7 @@ graph TB
 
 | Component | Technology | Role |
 |-----------|-----------|------|
-| **Control Plane** | Go 1.24, gRPC, PostgreSQL 16 | 3 binaries (9 services): orchestration, policy management, fleet management, audit |
+| **Control Plane** | Go 1.24, gRPC, PostgreSQL 16 | 3 binaries: orchestration, policy management, observability |
 | **Host Agent** | Rust 1.83, Tokio, Bollard | Per-host policy engine: guardrails evaluation, Docker lifecycle, iptables egress |
 | **Python SDK** | Python 3.10+, LangChain | `@tool` decorator: evaluate-execute-report cycle, LangChain wrapper |
 
@@ -183,7 +183,7 @@ bulkhead/
 ├── cmd/
 │   └── bkctl/                      # Operator CLI (bkctl)
 │
-├── control-plane/                  # Go control plane (3 binaries, 9 services)
+├── control-plane/                  # Go control plane (3 binaries)
 │   ├── cmd/
 │   │   ├── control-plane/          #   Identity + Task + Workspace + Compute
 │   │   ├── policy/                 #   Guardrails + Data Governance

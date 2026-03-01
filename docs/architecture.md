@@ -599,7 +599,7 @@ erDiagram
 
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
-| Control Plane | Go 1.24 | 3 binaries (9 services) with gRPC APIs |
+| Control Plane | Go 1.24 | 3 binaries with gRPC APIs |
 | Host Agent | Rust 1.83 | Per-host policy engine, <50ms evaluation, Docker container lifecycle, iptables egress |
 | Python SDK | Python 3.10+ | `@tool` decorator, evaluate → execute → report cycle |
 | Container Runtime | bollard (Rust) / Docker | Agent container lifecycle with isolation tiers (opt-in via `ENABLE_DOCKER`) |

@@ -32,7 +32,7 @@ go test -count=1 -v -run TestBudgetFullCycle ./e2e/...
 
 ## Test Architecture
 
-The E2E tests live in `control-plane/e2e/` and wire **all 9 real Go services** against a real PostgreSQL instance. Only two boundaries are mocked:
+The E2E tests live in `control-plane/e2e/` and wire **all 3 control-plane services** against a real PostgreSQL instance. Only two boundaries are mocked:
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -248,7 +248,7 @@ These tests start the **real Rust Host Agent binary** alongside real Go gRPC ser
 
 1. **PostgreSQL** — Started via TestContainers. Migrations run from `control-plane/migrations/`.
 2. **Repositories** — 8 real PostgresRepository instances (one per service with a data store).
-3. **Services** — All 9 services wired with real dependencies. Cross-service adapters bridge interface boundaries (e.g., `workspaceProvisionerAdapter` wraps the workspace service to implement `task.WorkspaceProvisioner`).
+3. **Services** — All 3 services wired with real dependencies. Cross-service adapters bridge interface boundaries (e.g., `workspaceProvisionerAdapter` wraps the workspace service to implement `task.WorkspaceProvisioner`).
 4. **Mocks** — Only 2: `fakeHostAgentClient` (simulates the Rust runtime for control-plane tests) and `fakeSnapshotStore` (in-memory snapshot storage).
 
 ### Full-stack test setup
