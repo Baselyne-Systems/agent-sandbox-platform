@@ -206,6 +206,8 @@ Manages runtime hosts and handles workspace placement.
 | `ListHosts` | List hosts with optional status filter (`ready`, `draining`, `offline`). |
 | `PlaceWorkspace` | Select a host for a workspace. Uses tier-aware best-fit algorithm with atomic resource reservation (`FOR UPDATE SKIP LOCKED`). Returns host_id and address. |
 | `Heartbeat` | Host reports current resource availability, active sandbox count, and supported tiers. Sent every 30s by the Host Agent. Returns the host's current status (so control plane can signal drain). Hosts that miss heartbeats for `HEARTBEAT_TIMEOUT_SECS` (default 180s) are automatically marked offline by the liveness worker. |
+| `ConfigureWarmPool` | Set or update a warm pool configuration for an isolation tier. Specifies target count of pre-warmed slots and default resource allocations. Uses upsert semantics (insert or update by tier). |
+| `GetCapacity` | Get fleet-wide capacity summary. Returns per-tier capacity (hosts supporting, available resources, warm pool target/ready counts), total hosts, and ready hosts. |
 
 ### Key Messages
 
@@ -220,6 +222,30 @@ message Host {
   int32 active_sandboxes = 6;
   google.protobuf.Timestamp last_heartbeat = 7;
   repeated string supported_tiers = 8;  // e.g., ["standard", "hardened", "isolated"]
+}
+```
+
+**WarmPoolConfig:**
+```protobuf
+message WarmPoolConfig {
+  string isolation_tier = 1;
+  int32 target_count = 2;
+  int64 memory_mb = 3;
+  int32 cpu_millicores = 4;
+  int64 disk_mb = 5;
+}
+```
+
+**TierCapacity:**
+```protobuf
+message TierCapacity {
+  string isolation_tier = 1;
+  int32 hosts_supporting = 2;
+  int64 available_memory_mb = 3;
+  int32 available_cpu_millicores = 4;
+  int64 available_disk_mb = 5;
+  int32 warm_slots_target = 6;
+  int32 warm_slots_ready = 7;
 }
 ```
 

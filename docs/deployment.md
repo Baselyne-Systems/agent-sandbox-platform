@@ -283,6 +283,10 @@ Migration files in `control-plane/migrations/` are automatically executed on fir
 | `007_container_image.sql` | Adds `container_image` column to workspaces table |
 | `008_egress_allowlist.sql` | Adds `egress_allowlist` JSONB column to workspaces table |
 | `009_isolation_tiers.sql` | Adds `supported_tiers` TEXT[] column to hosts table and `isolation_tier` TEXT column to workspaces table |
+| `010_multi_tenant.sql` | Multi-tenancy: adds `tenant_id` column across all tables with composite indexes |
+| `011_guardrail_sets.sql` | Guardrail sets: `guardrail_sets` table for reusable rule collections |
+| `012_alert_system.sql` | Alert system: `alert_configs` and `alerts` tables for Activity Store alerting |
+| `013_warm_pool.sql` | Warm pool: `warm_pool_configs` and `warm_pool_slots` tables for pre-reserved sandbox slots |
 
 ### Migration Idempotency
 
@@ -312,6 +316,8 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 | `action_records` | Activity | Append-only audit trail |
 | `usage_records` | Economics | Usage events |
 | `budgets` | Economics | Per-agent spending limits |
+| `warm_pool_configs` | Compute | Per-tier warm pool targets and default resources |
+| `warm_pool_slots` | Compute | Pre-reserved sandbox slots on hosts |
 
 ---
 

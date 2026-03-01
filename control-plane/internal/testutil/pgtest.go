@@ -113,6 +113,7 @@ func runMigrations(db *sql.DB) {
 func TruncateAll(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(`TRUNCATE
+		warm_pool_slots, warm_pool_configs,
 		workspace_snapshots, delivery_channels, timeout_policies,
 		action_records, human_requests, scoped_credentials, tasks,
 		agents, guardrail_rules, usage_records, budgets,

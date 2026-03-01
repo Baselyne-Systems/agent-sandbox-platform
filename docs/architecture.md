@@ -164,6 +164,55 @@ RETURNING ...
 
 4. **Resource correction via heartbeats** — Heartbeats continuously update the host's available resources from the host's perspective, correcting any drift between the control plane's bookkeeping and actual resource consumption.
 
+#### Warm Pool
+
+The warm pool pre-reserves sandbox slots on hosts so that `PlaceWorkspace` can claim a pre-warmed slot instantly, eliminating cold-start latency. Operators configure a target count of ready slots per isolation tier via `ConfigureWarmPool`.
+
+**How it works:**
+
+1. **Configuration** — `ConfigureWarmPool` upserts a `WarmPoolConfig` specifying the isolation tier, target slot count, and default resource allocation (memory, CPU, disk).
+
+2. **Replenishment** — A background `WarmPoolWorker` runs every 30 seconds. Each sweep:
+   - Cleans expired slots (slots on hosts that have gone offline)
+   - Counts ready slots per tier
+   - If ready < target, allocates new slots via `PlaceAndDecrement` (same atomic reservation as cold placement)
+
+3. **Claiming** — When `PlaceWorkspace` receives a request with an isolation tier, it first tries `ClaimWarmSlot` — an atomic `UPDATE ... FOR UPDATE SKIP LOCKED` that claims a ready slot. If no warm slot is available, it falls back to cold placement.
+
+4. **Capacity reporting** — `GetCapacity` aggregates per-tier capacity from hosts, warm pool configs, and warm pool slots into a fleet-wide summary.
+
+```mermaid
+sequenceDiagram
+    participant WS as Workspace Service
+    participant CP as Compute Plane
+    participant DB as PostgreSQL
+
+    Note over CP: WarmPoolWorker (every 30s)
+    CP->>DB: Clean expired slots (offline hosts)
+    CP->>DB: List configs, count ready per tier
+    CP->>DB: PlaceAndDecrement + CreateWarmSlot (fill deficit)
+
+    Note over WS: Workspace placement
+    WS->>CP: PlaceWorkspace (tier=hardened)
+    CP->>DB: ClaimWarmSlot (FOR UPDATE SKIP LOCKED)
+    alt Warm slot available
+        DB-->>CP: slot (host_id, resources)
+        CP-->>WS: host_id, address (instant)
+    else No warm slot
+        CP->>DB: PlaceAndDecrement (cold path)
+        DB-->>CP: host
+        CP-->>WS: host_id, address
+    end
+```
+
+**Key properties:**
+
+1. **Zero-overhead claiming** — `ClaimWarmSlot` uses `FOR UPDATE SKIP LOCKED`, the same concurrency pattern as cold placement. Concurrent claims never block each other.
+
+2. **Self-healing** — The replenisher automatically cleans slots on offline hosts and refills below-target tiers. No operator intervention needed after initial configuration.
+
+3. **Graceful fallback** — If the warm pool is empty, placement silently falls back to cold allocation. The warm pool is purely an optimization, not a requirement.
+
 ### Guardrails Service
 
 Manages guardrail rules and compiles them into binary policies consumed by the Rust evaluator. Rules define conditions (tool name patterns, parameter checks) and actions (allow, deny, escalate, log) with priority ordering. The `CompilePolicy` RPC produces a JSON-serialized `CompiledPolicy` that the runtime deserializes into its evaluator. `SimulatePolicy` provides dry-run testing.
@@ -429,6 +478,14 @@ erDiagram
     Workspace ||--o{ WorkspaceSnapshot : "has many"
 
     Host ||--o{ Workspace : "hosts"
+    Host ||--o{ WarmPoolSlot : "pre-reserves"
+
+    WarmPoolSlot {
+        string slot_id PK
+        string host_id FK
+        string isolation_tier
+        string status
+    }
 
     GuardrailRule }o--|| CompiledPolicy : "compiled into"
 

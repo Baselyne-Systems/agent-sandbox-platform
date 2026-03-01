@@ -110,6 +110,48 @@ When the host comes back and its Host Agent restarts, it will re-register and re
 
 ---
 
+## 1c. Configure Warm Pools
+
+Warm pools pre-reserve sandbox slots on hosts so workspace placement can claim a pre-warmed slot instantly, eliminating cold-start latency. A background worker automatically replenishes slots to maintain the target count.
+
+### Set a warm pool target
+
+```bash
+# Pre-warm 5 hardened slots (512 MB, 1000 mCPU, 10 GB each)
+grpcurl -plaintext -d '{
+  "config": {
+    "isolation_tier": "hardened",
+    "target_count": 5,
+    "memory_mb": 512,
+    "cpu_millicores": 1000,
+    "disk_mb": 10240
+  }
+}' localhost:50067 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
+
+# Pre-warm 3 standard slots
+grpcurl -plaintext -d '{
+  "config": {
+    "isolation_tier": "standard",
+    "target_count": 3,
+    "memory_mb": 1024,
+    "cpu_millicores": 2000,
+    "disk_mb": 20480
+  }
+}' localhost:50067 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
+```
+
+### Check fleet capacity
+
+```bash
+grpcurl -plaintext -d '{}' \
+  localhost:50067 platform.compute.v1.ComputePlaneService/GetCapacity
+# Returns: tiers[] (with warm_slots_target/warm_slots_ready), total_hosts, ready_hosts
+```
+
+The warm pool worker runs every 30 seconds. After configuring targets, slots begin filling automatically. Use `GetCapacity` to monitor progress.
+
+---
+
 ## 2. Register an Agent and Mint Credentials
 
 ```bash
