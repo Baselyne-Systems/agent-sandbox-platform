@@ -15,7 +15,7 @@
 | Docker Compose | v2+ | Service orchestration |
 | buf | latest | Proto generation (Go) |
 | protoc | 3.x | Protocol buffer compiler |
-| grpcurl | latest | Manual API testing |
+| grpcurl | latest | Manual API testing (optional — `bkctl` covers most workflows) |
 
 ### Quick Start
 
@@ -440,6 +440,7 @@ FROM alpine:3.20
 | `make proto` | Generate Go protobuf code via `buf generate` |
 | `make build` | Build Go + Rust |
 | `make build-go` | Build Go control plane only |
+| `make build-bkctl` | Build `bkctl` operator CLI with version/commit info |
 | `make build-rust` | Build Rust Host Agent only |
 | `make test` | Run Go + Rust unit tests |
 | `make test-go` | Run Go unit tests only |

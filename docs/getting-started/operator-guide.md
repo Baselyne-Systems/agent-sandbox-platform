@@ -11,7 +11,21 @@ This guide walks you through deploying and operating the Bulkhead platform. You'
 | Tool | Purpose |
 |------|---------|
 | Docker + Docker Compose v2 | Run the full stack (11 containers) |
-| [grpcurl](https://github.com/fullstorydev/grpcurl) | Interact with gRPC APIs from the command line |
+| `bkctl` | Operator CLI for managing agents, workspaces, guardrails, activity, and budgets |
+
+### Install bkctl
+
+```bash
+# Build from source
+make build-bkctl
+# Binary is at control-plane/bkctl — move it to your PATH
+mv control-plane/bkctl /usr/local/bin/
+
+# Or build directly with Go
+cd control-plane && go build -o bkctl ./cmd/bkctl
+```
+
+By default, `bkctl` connects to `localhost` using well-known ports. Override with `--control-plane` or per-service endpoint flags. Run `bkctl --help` for all options.
 
 ---
 
@@ -39,13 +53,11 @@ There is no `CreateTenant` API. A tenant comes into existence when its first age
 
 ```bash
 # Register an agent for tenant "acme-corp"
-grpcurl -plaintext -d '{
-  "name": "invoice-processor",
-  "owner_id": "org-acme",
-  "tenant_id": "acme-corp",
-  "purpose": "Automate invoice processing",
-  "trust_level": "AGENT_TRUST_LEVEL_NEW"
-}' localhost:50060 platform.identity.v1.IdentityService/RegisterAgent
+bkctl agent register \
+  --name invoice-processor \
+  --owner-id org-acme \
+  --purpose "Automate invoice processing" \
+  --trust-level new
 ```
 
 After this, all credentials minted for this agent carry the `acme-corp` tenant scope. Any workspaces, tasks, guardrails, or budget operations performed with those credentials are isolated to that tenant.
@@ -179,16 +191,21 @@ The warm pool worker runs every 30 seconds. After configuring targets, slots beg
 
 ```bash
 # Register a new agent
-grpcurl -plaintext -d '{
-  "name": "invoice-processor",
-  "description": "Processes incoming invoices and routes for approval",
-  "owner_id": "org-acme",
-  "purpose": "Automate accounts payable workflow",
-  "trust_level": "AGENT_TRUST_LEVEL_NEW",
-  "capabilities": ["read_file", "write_file", "http_request"]
-}' localhost:50060 platform.identity.v1.IdentityService/RegisterAgent
+bkctl agent register \
+  --name invoice-processor \
+  --description "Processes incoming invoices and routes for approval" \
+  --owner-id org-acme \
+  --purpose "Automate accounts payable workflow" \
+  --trust-level new \
+  --capabilities read_file,write_file,http_request
 
-# Mint a scoped credential (1 hour TTL)
+# List agents to see what's registered
+bkctl agent list
+
+# Get details for a specific agent
+bkctl agent get <agent_id>
+
+# Mint a scoped credential (1 hour TTL) — not yet in bkctl, use grpcurl
 grpcurl -plaintext -d '{
   "agent_id": "<agent_id from above>",
   "scopes": ["workspace:create", "tool:execute"],
@@ -205,53 +222,31 @@ Rules can be scoped to specific agents, tools, trust levels, or data classificat
 
 ```bash
 # Create a rule that denies shell execution (global scope)
-grpcurl -plaintext -d '{
-  "name": "deny-shell",
-  "description": "Block shell and exec tools",
-  "type": "RULE_TYPE_TOOL_FILTER",
-  "condition": "exec,shell,sudo",
-  "action": "RULE_ACTION_DENY",
-  "priority": 1,
-  "enabled": true
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateRule
-
-# Create a scoped rule — only applies to "new" trust-level agents
-grpcurl -plaintext -d '{
-  "name": "restrict-new-agents",
-  "description": "Block network tools for new agents",
-  "type": "RULE_TYPE_TOOL_FILTER",
-  "condition": "http_request,curl,wget",
-  "action": "RULE_ACTION_DENY",
-  "priority": 2,
-  "scope": {
-    "trust_levels": ["new"]
-  }
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateRule
+bkctl guardrail create-rule \
+  --name deny-shell \
+  --description "Block shell and exec tools" \
+  --type tool_filter \
+  --condition "exec,shell,sudo" \
+  --action deny \
+  --priority 1
 
 # Create a rule that escalates file deletions to humans
-grpcurl -plaintext -d '{
-  "name": "escalate-delete",
-  "description": "Require human approval for file deletion",
-  "type": "RULE_TYPE_TOOL_FILTER",
-  "condition": "delete_file,rm",
-  "action": "RULE_ACTION_ESCALATE",
-  "priority": 5,
-  "enabled": true
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateRule
+bkctl guardrail create-rule \
+  --name escalate-delete \
+  --description "Require human approval for file deletion" \
+  --type tool_filter \
+  --condition "delete_file,rm" \
+  --action escalate \
+  --priority 5
 
-# Compile both rules into a binary policy
-grpcurl -plaintext -d '{
-  "rule_ids": ["<rule_id_1>", "<rule_id_2>"]
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/CompilePolicy
-# Returns compiled_policy (bytes) and rules_count
+# List all rules
+bkctl guardrail list-rules
 
 # Dry-run the policy against a sample tool call
-grpcurl -plaintext -d '{
-  "rule_ids": ["<rule_id_1>", "<rule_id_2>"],
-  "tool_name": "exec",
-  "parameters": {},
-  "agent_id": "agent-001"
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/SimulatePolicy
+bkctl guardrail simulate \
+  --rule-ids <rule_id_1>,<rule_id_2> \
+  --tool-name exec \
+  --agent-id agent-001
 # Returns verdict: DENY, matched_rule: "deny-shell"
 ```
 
@@ -261,15 +256,13 @@ Guardrail sets are named, reusable collections of rules. Instead of listing rule
 
 ```bash
 # Create a guardrail set from existing rules
-grpcurl -plaintext -d '{
-  "name": "production-policy",
-  "description": "Standard production guardrails",
-  "rule_ids": ["<deny_shell_rule_id>", "<restrict_new_agents_rule_id>", "<escalate_delete_rule_id>"]
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/CreateGuardrailSet
+bkctl guardrail create-set \
+  --name production-policy \
+  --description "Standard production guardrails" \
+  --rule-ids <deny_shell_rule_id>,<escalate_delete_rule_id>
 
 # List all sets
-grpcurl -plaintext -d '{}' \
-  localhost:50062 platform.guardrails.v1.GuardrailsService/ListGuardrailSets
+bkctl guardrail list-sets
 ```
 
 When creating a task, reference the set by name with the `set:` prefix instead of listing individual rule IDs:
@@ -289,24 +282,26 @@ The Guardrails Service resolves `"set:production-policy"` to the set's rule IDs 
 
 ## 4. Set a Budget with Enforcement Policy
 
-Budgets now support `on_exceeded` actions and `warning_threshold`:
+Budgets support `on_exceeded` actions and `warning_threshold`:
 
 ```bash
 # Set a $100 budget with halt-on-exceeded and 80% warning
-grpcurl -plaintext -d '{
-  "agent_id": "<agent_id>",
-  "limit": 100.00,
-  "currency": "USD",
-  "on_exceeded": "ON_EXCEEDED_ACTION_HALT",
-  "warning_threshold": 0.8
-}' localhost:50066 platform.economics.v1.EconomicsService/SetBudget
+bkctl budget set \
+  --agent-id <agent_id> \
+  --max-cost 100.00 \
+  --currency USD \
+  --on-exceeded halt \
+  --warning-threshold 0.8
 
-# Check if the agent can proceed
-grpcurl -plaintext -d '{
-  "agent_id": "<agent_id>",
-  "estimated_cost": 0.50
-}' localhost:50066 platform.economics.v1.EconomicsService/CheckBudget
-# Returns: allowed: true, remaining: 100.00, warning: false, enforcement_action: ""
+# View the budget
+bkctl budget get <agent_id>
+
+# Check if the agent can proceed with an estimated cost
+bkctl budget check --agent-id <agent_id> --estimated-cost 0.50
+# Returns: allowed: true, remaining: 100.00, warning: false
+
+# Get a cost breakdown report
+bkctl budget cost-report --agent-id <agent_id>
 ```
 
 **`on_exceeded` actions:**
@@ -440,17 +435,29 @@ grpcurl -plaintext -d '{
 ## 8. Monitor: Query the Audit Trail
 
 ```bash
-# Query all actions for a workspace
-grpcurl -plaintext -d '{
-  "workspace_id": "<workspace_id>"
-}' localhost:50065 platform.activity.v1.ActivityStoreService/QueryActions
+# Query actions for an agent
+bkctl activity query --agent-id <agent_id> --limit 20
 
-# Stream real-time actions (server-streaming)
-grpcurl -plaintext -d '{
-  "workspace_id": "<workspace_id>"
-}' localhost:50065 platform.activity.v1.ActivityStoreService/StreamActions
+# Filter by outcome and time range
+bkctl activity query \
+  --agent-id <agent_id> \
+  --outcome denied \
+  --start 2026-02-28T00:00:00Z \
+  --end 2026-02-28T23:59:59Z
 
-# Get sandbox status
+# Get details of a specific action record
+bkctl activity get <record_id>
+
+# Stream real-time actions
+bkctl activity stream --agent-id <agent_id>
+
+# Export actions to a file
+bkctl activity export \
+  --agent-id <agent_id> \
+  --format json \
+  --output-file actions.json
+
+# Get sandbox status (not in bkctl — use grpcurl)
 grpcurl -plaintext -d '{
   "sandbox_id": "<sandbox_id>"
 }' localhost:50052 platform.host_agent.v1.HostAgentService/GetSandboxStatus
@@ -464,31 +471,25 @@ Set up automated alerts for anomalous agent behavior:
 
 ```bash
 # Alert when any agent's denial rate exceeds 50%
-grpcurl -plaintext -d '{
-  "name": "high-denial-rate",
-  "condition_type": "ALERT_CONDITION_TYPE_DENIAL_RATE",
-  "threshold": 0.5,
-  "webhook_url": "https://hooks.example.com/bulkhead-alerts"
-}' localhost:50065 platform.activity.v1.ActivityStoreService/ConfigureAlert
+bkctl activity configure-alert \
+  --name high-denial-rate \
+  --condition-type denial_rate \
+  --threshold 0.5 \
+  --webhook-url https://hooks.example.com/bulkhead-alerts
 
 # Alert when a specific agent gets stuck (repeated errors)
-grpcurl -plaintext -d '{
-  "name": "stuck-invoice-agent",
-  "condition_type": "ALERT_CONDITION_TYPE_STUCK_AGENT",
-  "threshold": 5,
-  "agent_id": "<agent_id>",
-  "webhook_url": "https://hooks.example.com/bulkhead-alerts"
-}' localhost:50065 platform.activity.v1.ActivityStoreService/ConfigureAlert
+bkctl activity configure-alert \
+  --name stuck-invoice-agent \
+  --condition-type stuck_agent \
+  --threshold 5 \
+  --agent-id <agent_id> \
+  --webhook-url https://hooks.example.com/bulkhead-alerts
 
 # List active alerts
-grpcurl -plaintext -d '{
-  "active_only": true
-}' localhost:50065 platform.activity.v1.ActivityStoreService/ListAlerts
+bkctl activity list-alerts --active-only
 
 # Resolve an alert
-grpcurl -plaintext -d '{
-  "alert_id": "<alert_id>"
-}' localhost:50065 platform.activity.v1.ActivityStoreService/ResolveAlert
+bkctl activity resolve-alert <alert_id>
 ```
 
 **Alert condition types:**
@@ -557,7 +558,10 @@ Community adapters can bridge this webhook to Slack, email, Teams, PagerDuty, et
 ## 12. Tear Down
 
 ```bash
-# Cancel the task (terminates workspace + sandbox)
+# Terminate a workspace directly
+bkctl workspace terminate <workspace_id> --reason "Task complete"
+
+# Cancel the task (terminates workspace + sandbox) — task service not yet in bkctl
 grpcurl -plaintext -d '{
   "task_id": "<task_id>"
 }' localhost:50068 platform.task.v1.TaskService/CancelTask

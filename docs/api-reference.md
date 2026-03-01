@@ -1,6 +1,8 @@
 # API Reference
 
 > **Getting started?** See the [Operator Guide](getting-started/operator-guide.md), [Agent Developer Guide](getting-started/agent-guide.md), or [LangChain Integration Guide](getting-started/langchain-guide.md).
+>
+> **For interactive use**, the `bkctl` CLI provides operator commands for Identity, Workspace, Guardrails, Activity, and Economics services. Run `bkctl --help` for details.
 
 All services communicate over gRPC using Protocol Buffers. Proto definitions are in `proto/platform/*/v1/*.proto`.
 

@@ -1,4 +1,4 @@
-.PHONY: proto build build-go build-rust test test-go test-rust test-integration dev clean
+.PHONY: proto build build-go build-rust build-bkctl test test-go test-rust test-integration dev clean
 
 # Generate protobuf code for Go (Rust is generated at build time via build.rs)
 proto:
@@ -9,6 +9,9 @@ build: build-go build-rust
 
 build-go:
 	cd control-plane && go build ./...
+
+build-bkctl:
+	cd control-plane && go build -ldflags "-X github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli.version=$$(git describe --tags --always 2>/dev/null || echo dev) -X github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli.date=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o bkctl ./cmd/bkctl
 
 build-rust:
 	cd runtime && cargo build

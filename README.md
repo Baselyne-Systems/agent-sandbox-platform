@@ -128,6 +128,9 @@ graph TB
 # Build everything
 make build
 
+# Build the operator CLI
+make build-bkctl
+
 # Run all unit tests
 make test
 
@@ -136,13 +139,18 @@ docker compose -f deploy/docker-compose.yml up --build
 
 # Verify services are healthy
 docker compose -f deploy/docker-compose.yml ps
+
+# Use bkctl to manage the platform
+bkctl agent list
+bkctl guardrail list-rules
+bkctl budget get <agent-id> -o json
 ```
 
 ## Choose Your Guide
 
 | I want to... | Guide |
 |--------------|-------|
-| Deploy the platform, configure guardrails, create tasks via gRPC | [Operator Guide](docs/getting-started/operator-guide.md) |
+| Deploy the platform, manage agents and policies via `bkctl` CLI | [Operator Guide](docs/getting-started/operator-guide.md) |
 | Build an agent with the Python SDK (`@tool` decorator) | [Agent Developer Guide](docs/getting-started/agent-guide.md) |
 | Integrate Bulkhead guardrails into a LangChain agent | [LangChain Integration Guide](docs/getting-started/langchain-guide.md) |
 
@@ -164,7 +172,9 @@ bulkhead/
 │       └── task/v1/                #   Task lifecycle
 │
 ├── control-plane/                  # Go microservices (9 services)
-│   ├── cmd/                        #   Service entry points
+│   ├── cmd/
+│   │   ├── bkctl/                  #   Operator CLI (bkctl)
+│   │   └── .../                    #   Service entry points
 │   ├── internal/                   #   Business logic per service
 │   └── migrations/                 #   SQL schema migrations (13 files)
 │
@@ -210,6 +220,7 @@ bulkhead/
 | Target | Description |
 |--------|-------------|
 | `make build` | Build Go control-plane and Rust Host Agent |
+| `make build-bkctl` | Build the `bkctl` operator CLI with version info |
 | `make test` | Run all unit tests (Go + Rust) |
 | `make test-integration` | Run integration tests (requires Docker) |
 | `make proto` | Regenerate protobuf code |
