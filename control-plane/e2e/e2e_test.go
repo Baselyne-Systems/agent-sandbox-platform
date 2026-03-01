@@ -135,8 +135,8 @@ func TestMain(m *testing.M) {
 	identityQueryAdapter := &identityQuerierAdapter{db: db}
 
 	workspaceSvc = workspace.NewService(workspace.ServiceConfig{
-		Repo:    workspaceRepo,
-		Compute: computeSvc,
+		Repo:       workspaceRepo,
+		Compute:    computeSvc,
 		Guardrails: guardrailsSvc,
 		DialHostAgent: func(_ context.Context, _ string) (hostagentpb.HostAgentServiceClient, error) {
 			return fakeHostAgent, nil
@@ -197,10 +197,10 @@ func runMigrations(db *sql.DB) {
 // ---------------------------------------------------------------------------
 
 type fakeHostAgentClient struct {
-	createCalls  atomic.Int64
-	destroyCalls atomic.Int64
-	failCreate   atomic.Bool
-	mu           sync.Mutex
+	createCalls   atomic.Int64
+	destroyCalls  atomic.Int64
+	failCreate    atomic.Bool
+	mu            sync.Mutex
 	lastCreateReq *hostagentpb.CreateSandboxRequest
 }
 

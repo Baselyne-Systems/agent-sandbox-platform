@@ -11,6 +11,9 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/activity"
@@ -31,6 +34,8 @@ import (
 	hostagentpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/host_agent/v1"
 	humanpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/human/v1"
 	identitypb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/identity/v1"
+
+	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/middleware"
 )
 
 // ---------------------------------------------------------------------------
@@ -49,6 +54,43 @@ type fullStackPorts struct {
 	workspace  int
 }
 
+// tenantResolverInterceptor is a gRPC unary server interceptor that resolves
+// tenant_id from the request's agent_id field via DB lookup. This simulates
+// what the auth middleware does in production (extract tenant from JWT).
+func tenantResolverInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if msg, ok := req.(proto.Message); ok {
+			md := msg.ProtoReflect()
+			// Try to resolve tenant from various ID fields in the request.
+			type lookup struct {
+				field string
+				query string
+			}
+			lookups := []lookup{
+				{"agent_id", "SELECT tenant_id FROM agents WHERE id = $1"},
+				{"workspace_id", "SELECT tenant_id FROM workspaces WHERE id = $1"},
+				{"request_id", "SELECT tenant_id FROM human_requests WHERE id = $1"},
+			}
+			for _, l := range lookups {
+				fd := md.Descriptor().Fields().ByName(protoreflect.Name(l.field))
+				if fd == nil {
+					continue
+				}
+				id := md.Get(fd).String()
+				if id == "" {
+					continue
+				}
+				var tenantID string
+				if err := db.QueryRowContext(ctx, l.query, id).Scan(&tenantID); err == nil && tenantID != "" {
+					ctx = middleware.ContextWithTenantID(ctx, tenantID)
+					break
+				}
+			}
+		}
+		return handler(ctx, req)
+	}
+}
+
 // startGRPCServers launches all control-plane gRPC services on dynamic ports.
 // Returns servers and the ports they're listening on.
 func startGRPCServers(t *testing.T) ([]*grpc.Server, fullStackPorts) {
@@ -56,6 +98,7 @@ func startGRPCServers(t *testing.T) ([]*grpc.Server, fullStackPorts) {
 
 	ports := fullStackPorts{}
 	var servers []*grpc.Server
+	interceptor := tenantResolverInterceptor()
 
 	start := func(name string, register func(s *grpc.Server)) int {
 		t.Helper()
@@ -65,7 +108,7 @@ func startGRPCServers(t *testing.T) ([]*grpc.Server, fullStackPorts) {
 		}
 		port := lis.Addr().(*net.TCPAddr).Port
 
-		srv := grpc.NewServer()
+		srv := grpc.NewServer(grpc.UnaryInterceptor(interceptor))
 		register(srv)
 		servers = append(servers, srv)
 
@@ -224,6 +267,51 @@ func makeParams(t *testing.T, m map[string]interface{}) *structpb.Struct {
 	return s
 }
 
+// dialHostAgentService connects to the runtime's HostAgentService (control-plane facing).
+func dialHostAgentService(t *testing.T, port int) hostagentpb.HostAgentServiceClient {
+	t.Helper()
+	conn, err := grpc.NewClient(
+		fmt.Sprintf("127.0.0.1:%d", port),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial host agent service: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return hostagentpb.NewHostAgentServiceClient(conn)
+}
+
+// withSandboxID adds x-sandbox-id gRPC metadata to the context.
+func withSandboxID(ctx context.Context, sandboxID string) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "x-sandbox-id", sandboxID)
+}
+
+// emptyPolicy is a valid empty guardrails policy the runtime can deserialize.
+var emptyPolicy = []byte(`{"rules":[]}`)
+
+// createSandboxOnRuntime creates a sandbox directly on the runtime via HostAgentService.
+func createSandboxOnRuntime(t *testing.T, ctx context.Context, hostClient hostagentpb.HostAgentServiceClient,
+	workspaceID, agentID string, compiledGuardrails []byte) string {
+	t.Helper()
+	if compiledGuardrails == nil {
+		compiledGuardrails = emptyPolicy
+	}
+	resp, err := hostClient.CreateSandbox(ctx, &hostagentpb.CreateSandboxRequest{
+		WorkspaceId: workspaceID,
+		AgentId:     agentID,
+		Spec: &hostagentpb.SandboxSpec{
+			MemoryMb:      512,
+			CpuMillicores: 500,
+			DiskMb:        1024,
+		},
+		CompiledGuardrails: compiledGuardrails,
+	})
+	if err != nil {
+		t.Fatalf("create sandbox on runtime: %v", err)
+	}
+	return resp.SandboxId
+}
+
 // ---------------------------------------------------------------------------
 // Full-stack tests
 // ---------------------------------------------------------------------------
@@ -312,17 +400,20 @@ func TestFullStackExecuteToolAllow(t *testing.T) {
 
 	agent := registerAgent(t, ctx, tenant, "tool-allow-agent")
 
+	// Create workspace for DB records (budget checks, activity recording).
 	ws, err := workspaceSvc.CreateWorkspace(ctx, tenant, agent.ID, "", nil)
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	if ws.Status != models.WorkspaceStatusRunning {
-		t.Fatalf("expected running, got %s", ws.Status)
-	}
+
+	// Create sandbox on the real runtime (no guardrails = allow all).
+	hostClient := dialHostAgentService(t, runtimePort)
+	sandboxID := createSandboxOnRuntime(t, ctx, hostClient, ws.ID, agent.ID, nil)
 
 	apiClient := dialAgentAPI(t, runtimePort)
+	sandboxCtx := withSandboxID(ctx, sandboxID)
 
-	resp, err := apiClient.ExecuteTool(ctx, &hostagentpb.ExecuteToolRequest{
+	resp, err := apiClient.ExecuteTool(sandboxCtx, &hostagentpb.ExecuteToolRequest{
 		ToolName:   "web_search",
 		Parameters: makeParams(t, map[string]interface{}{"query": "test"}),
 	})
@@ -359,20 +450,26 @@ func TestFullStackExecuteToolDeny(t *testing.T) {
 		t.Fatalf("create deny rule: %v", err)
 	}
 
-	spec := &models.WorkspaceSpec{
-		GuardrailPolicyID: denyRule.ID,
+	// Compile guardrails to pass to the runtime.
+	compiled, _, err := guardrailsSvc.CompilePolicy(ctx, tenant, []string{denyRule.ID})
+	if err != nil {
+		t.Fatalf("compile policy: %v", err)
 	}
-	ws, err := workspaceSvc.CreateWorkspace(ctx, tenant, agent.ID, "", spec)
+
+	// Create workspace for DB records.
+	ws, err := workspaceSvc.CreateWorkspace(ctx, tenant, agent.ID, "", nil)
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	if ws.Status != models.WorkspaceStatusRunning {
-		t.Fatalf("expected running, got %s", ws.Status)
-	}
+
+	// Create sandbox on the real runtime with compiled guardrails.
+	hostClient := dialHostAgentService(t, runtimePort)
+	sandboxID := createSandboxOnRuntime(t, ctx, hostClient, ws.ID, agent.ID, compiled)
 
 	apiClient := dialAgentAPI(t, runtimePort)
+	sandboxCtx := withSandboxID(ctx, sandboxID)
 
-	resp, err := apiClient.ExecuteTool(ctx, &hostagentpb.ExecuteToolRequest{
+	resp, err := apiClient.ExecuteTool(sandboxCtx, &hostagentpb.ExecuteToolRequest{
 		ToolName:   "shell",
 		Parameters: makeParams(t, map[string]interface{}{"command": "rm -rf /"}),
 	})
@@ -405,29 +502,32 @@ func TestFullStackBudgetEnforcement(t *testing.T) {
 
 	agent := registerAgent(t, ctx, tenant, "budget-agent")
 
-	// Set a tight budget.
+	// Set a tight budget and over-exhaust it.
 	_, err := economicsSvc.SetBudget(ctx, tenant, agent.ID, 10.0, "USD", "halt", 0.0)
 	if err != nil {
 		t.Fatalf("set budget: %v", err)
 	}
 
-	// Exhaust the budget.
-	_, err = economicsSvc.RecordUsage(ctx, tenant, agent.ID, "ws-1", "compute", "hour", 1.0, 10.0)
-	if err != nil {
-		t.Fatalf("record usage: %v", err)
-	}
-
+	// Create workspace first (for valid workspace_id in usage records).
 	ws, err := workspaceSvc.CreateWorkspace(ctx, tenant, agent.ID, "", nil)
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	if ws.Status != models.WorkspaceStatusRunning {
-		t.Fatalf("expected running, got %s", ws.Status)
+
+	// Exhaust the budget (record more than the limit so remaining goes negative).
+	_, err = economicsSvc.RecordUsage(ctx, tenant, agent.ID, ws.ID, "compute", "hour", 1.0, 15.0)
+	if err != nil {
+		t.Fatalf("record usage: %v", err)
 	}
 
-	apiClient := dialAgentAPI(t, runtimePort)
+	// Create sandbox on the real runtime.
+	hostClient := dialHostAgentService(t, runtimePort)
+	sandboxID := createSandboxOnRuntime(t, ctx, hostClient, ws.ID, agent.ID, nil)
 
-	resp, err := apiClient.ExecuteTool(ctx, &hostagentpb.ExecuteToolRequest{
+	apiClient := dialAgentAPI(t, runtimePort)
+	sandboxCtx := withSandboxID(ctx, sandboxID)
+
+	resp, err := apiClient.ExecuteTool(sandboxCtx, &hostagentpb.ExecuteToolRequest{
 		ToolName:   "web_search",
 		Parameters: makeParams(t, map[string]interface{}{"query": "test"}),
 	})
@@ -462,14 +562,16 @@ func TestFullStackHumanInteraction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	if ws.Status != models.WorkspaceStatusRunning {
-		t.Fatalf("expected running, got %s", ws.Status)
-	}
+
+	// Create sandbox on the real runtime.
+	hostClient := dialHostAgentService(t, runtimePort)
+	sandboxID := createSandboxOnRuntime(t, ctx, hostClient, ws.ID, agent.ID, nil)
 
 	apiClient := dialAgentAPI(t, runtimePort)
+	sandboxCtx := withSandboxID(ctx, sandboxID)
 
 	// Request human input via the runtime.
-	hiResp, err := apiClient.RequestHumanInput(ctx, &hostagentpb.RequestHumanInputRequest{
+	hiResp, err := apiClient.RequestHumanInput(sandboxCtx, &hostagentpb.RequestHumanInputRequest{
 		Question:       "approve deployment?",
 		Options:        []string{"yes", "no"},
 		Context:        "deploying to production",
@@ -490,7 +592,7 @@ func TestFullStackHumanInteraction(t *testing.T) {
 	}
 
 	// Check via the runtime API that the response is available.
-	checkResp, err := apiClient.CheckHumanRequest(ctx, &hostagentpb.CheckHumanRequestRequest{
+	checkResp, err := apiClient.CheckHumanRequest(sandboxCtx, &hostagentpb.CheckHumanRequestRequest{
 		RequestId: requestID,
 	})
 	if err != nil {

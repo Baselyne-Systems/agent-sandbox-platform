@@ -16,6 +16,9 @@ build-bkctl:
 build-rust:
 	cd runtime && cargo build
 
+build-rust-release:
+	cd runtime && cargo build --release
+
 # Run all tests
 test: test-go test-rust
 
@@ -37,12 +40,12 @@ test-e2e:
 	cd control-plane && go test -count=1 -v -run 'Test[^F]' ./e2e/...
 
 # E2E tests — full-stack (real runtime binary, requires Docker + Rust toolchain)
-test-e2e-full: build-rust
-	cd control-plane && RUNTIME_BINARY=../runtime/target/release/runtime go test -count=1 -v -run 'TestFullStack' ./e2e/...
+test-e2e-full: build-rust-release
+	cd control-plane && RUNTIME_BINARY=$(CURDIR)/runtime/target/release/host-agent go test -count=1 -v -run 'TestFullStack' ./e2e/...
 
 # E2E tests — all (control-plane + full-stack)
-test-e2e-all: build-rust
-	cd control-plane && RUNTIME_BINARY=../runtime/target/release/runtime go test -count=1 -v ./e2e/...
+test-e2e-all: build-rust-release
+	cd control-plane && RUNTIME_BINARY=$(CURDIR)/runtime/target/release/host-agent go test -count=1 -v ./e2e/...
 
 # Start local dev dependencies
 dev:
