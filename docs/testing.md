@@ -12,9 +12,9 @@ This guide covers the Bulkhead end-to-end test suite. The tests serve two purpos
 |---------|-------------|-------------|------|
 | `make test` | Unit tests (Go + Rust) | None | ~10s |
 | `make test-integration` | Per-service DB tests | Docker | ~30s |
-| `make test-e2e` | 41 control-plane E2E tests | Docker | ~8s |
-| `make test-e2e-full` | 6 full-stack E2E tests (real Rust runtime) | Docker + Rust toolchain | ~15s |
-| `make test-e2e-all` | All 47 E2E tests | Docker + Rust toolchain | ~21s |
+| `make test-e2e` | Control-plane E2E tests | Docker | ~8s |
+| `make test-e2e-full` | Full-stack E2E tests (real Rust runtime) | Docker + Rust toolchain | ~15s |
+| `make test-e2e-all` | All E2E tests (control-plane + full-stack) | Docker + Rust toolchain | ~21s |
 
 ### Prerequisites
 

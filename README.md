@@ -237,7 +237,7 @@ bulkhead/
 - [Architecture](docs/architecture.md) — Design principles, service details, core flow diagrams
 - [API Reference](docs/api-reference.md) — Complete RPC reference for all 10 services
 - [Deployment Guide](docs/deployment.md) — Docker Compose topology, configuration, database schema
-- [Testing Guide](docs/testing.md) — E2E test suite: 47 tests covering every platform workflow (also useful as an operator reference)
+- [Testing Guide](docs/testing.md) — E2E test suite covering every platform workflow (also useful as an operator reference)
 
 ## License
 
