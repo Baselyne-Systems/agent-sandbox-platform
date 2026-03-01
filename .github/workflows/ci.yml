@@ -70,9 +70,15 @@ jobs:
       - name: Build
         run: go build ./...
         working-directory: control-plane
-      - name: Test
-        run: go test -count=1 -short ./...
+      - name: Test with coverage
+        run: go test -count=1 -short -coverprofile=coverage.out -covermode=atomic ./...
         working-directory: control-plane
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: control-plane/coverage.out
+          flags: go
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   rust-lint:
     name: Rust Lint & Format
