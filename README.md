@@ -54,55 +54,42 @@ Auto-selection matrix:
 
 ## Architecture
 
-```mermaid
-graph TB
-    Operator["Operator / Client"]
-
-    subgraph CP["Control Plane (Go)"]
-        subgraph CPBin["control-plane binary"]
-            Identity["Identity"]
-            Task["Task"]
-            Workspace["Workspace"]
-            Compute["Compute Plane"]
-        end
-
-        subgraph PolicyBin["policy binary"]
-            Guardrails["Guardrails"]
-            Governance["Data Governance"]
-        end
-
-        subgraph ObsBin["observability binary"]
-            Human["Human Interaction"]
-            Economics["Economics"]
-            Activity["Activity Store"]
-        end
-
-        PG[("PostgreSQL")]
-
-        Task -->|provision| Workspace
-        Workspace -->|place| Compute
-        Workspace -->|compile policy| Guardrails
-    end
-
-    subgraph Host["Host (Rust)"]
-        HostAgent["Host Agent"]
-        Evaluator["Guardrails Evaluator"]
-        Egress["Egress Enforcer (iptables)"]
-        Sandbox["Sandbox (Docker)<br/>standard | hardened | isolated"]
-    end
-
-    Operator -->|"create task"| Task
-    Operator -->|"register agent"| Identity
-    Workspace -->|"create sandbox"| HostAgent
-    HostAgent -->|"register + heartbeat"| Compute
-    HostAgent -.->|"escalate"| Human
-    HostAgent -.->|"audit"| Activity
-    HostAgent -.->|"budget check"| Economics
-    HostAgent -.->|"DLP"| Governance
-    Sandbox -->|"evaluate tool"| HostAgent
-    HostAgent --- Evaluator
-    HostAgent --- Egress
-    Egress --- Sandbox
+```
+                          ┌──────────────┐
+                          │   Operator   │
+                          │   / bkctl    │
+                          └──────┬───────┘
+                                 │ gRPC
+                 ┌───────────────┼───────────────┐
+                 ▼               ▼               ▼
+          ┌────────────┐  ┌───────────┐  ┌──────────────┐
+          │  Control   │  │  Policy   │  │Observability │
+          │   Plane    │  │           │  │              │
+          │            │  │ Guardrails│  │  Activity    │
+          │ Identity   │  │ Data Gov  │  │  Economics   │
+          │ Task       │  │ (DLP)     │  │  Human-in-   │
+          │ Workspace  │  │           │  │  the-loop    │
+          │ Compute    │  │    :50062 │  │       :50065 │
+          │     :50060 │  └───────────┘  └──────────────┘
+          └─────┬──────┘        │
+                │          compile policy
+                │  create       │
+                │  sandbox ┌────┘
+                ▼          ▼
+          ┌─────────────────────────────────────┐
+          │           Host Agent (Rust)          │
+          │                                     │
+          │  ┌──────────┐ ┌──────┐ ┌─────────┐  │
+          │  │Guardrails│ │Egress│ │ Budget  │  │
+          │  │Evaluator │ │Filter│ │  + DLP  │  │
+          │  └────┬─────┘ └──┬───┘ └────┬────┘  │
+          │       └──────────┼──────────┘       │
+          │            ┌─────┴─────┐            │
+          │            │  Sandbox  │            │
+          │            │ (Docker)  │            │
+          │            └───────────┘            │
+          │                              :50052 │
+          └─────────────────────────────────────┘
 ```
 
 | Component | Technology | Role |

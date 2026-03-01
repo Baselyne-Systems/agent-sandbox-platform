@@ -44,8 +44,8 @@ import (
 
 // fullStackPorts holds the dynamic ports allocated for each consolidated binary.
 type fullStackPorts struct {
-	controlPlane int // Identity, Compute, Workspace, Task
-	policy       int // Guardrails, Governance
+	controlPlane  int // Identity, Compute, Workspace, Task
+	policy        int // Guardrails, Governance
 	observability int // Activity, Economics, Human
 }
 
