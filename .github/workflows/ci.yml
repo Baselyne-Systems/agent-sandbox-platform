@@ -72,9 +72,11 @@ jobs:
         working-directory: control-plane
       - name: Test with coverage
         run: |
-          # Exclude generated protobuf code (pkg/gen/) from coverage measurement
-          COVERPKGS=$(go list ./... | grep -v /pkg/gen/ | paste -sd, -)
-          go test -count=1 -short -coverprofile=coverage.out -covermode=atomic -coverpkg="$COVERPKGS" ./...
+          # Measure coverage for service packages only (exclude generated proto,
+          # cmd/ entrypoints, and infra bootstrapping with no unit tests).
+          # Include e2e tests in the run since they cover handlers and cross-service paths.
+          COVERPKGS=$(go list ./internal/... | grep -vE '/(config|database|telemetry|testutil|models)$' | paste -sd, -)
+          go test -count=1 -short -coverprofile=coverage.out -covermode=atomic -coverpkg="$COVERPKGS" ./internal/... ./e2e/...
         working-directory: control-plane
       - name: Compute coverage percentage
         if: github.ref == 'refs/heads/main'
