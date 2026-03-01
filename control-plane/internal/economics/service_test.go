@@ -325,7 +325,7 @@ func TestCheckBudget_WarningThreshold(t *testing.T) {
 	ctx := context.Background()
 
 	svc.SetBudget(ctx, "tenant-1", "agent-1", 100, "USD", "halt", 0.2) // warn at 20% remaining
-	repo.budgets["agent-1"].Used = 85                                   // 15% remaining
+	repo.budgets["agent-1"].Used = 85                                  // 15% remaining
 
 	result, err := svc.CheckBudget(ctx, "tenant-1", "agent-1", 5)
 	if err != nil {

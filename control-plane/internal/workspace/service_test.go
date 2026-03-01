@@ -250,9 +250,9 @@ func newOrchestratedService(repo Repository, compute ComputePlacer, guardrails P
 		return hostAgentClient, nil
 	}
 	return NewService(ServiceConfig{
-		Repo:        repo,
-		Compute:     compute,
-		Guardrails:  guardrails,
+		Repo:          repo,
+		Compute:       compute,
+		Guardrails:    guardrails,
 		DialHostAgent: dialer,
 	})
 }
@@ -645,10 +645,10 @@ func newSnapshotService(repo Repository, compute ComputePlacer, hostAgentClient 
 		return hostAgentClient, nil
 	}
 	return NewService(ServiceConfig{
-		Repo:        repo,
-		Compute:     compute,
+		Repo:          repo,
+		Compute:       compute,
 		DialHostAgent: dialer,
-		Snapshots:   snapshots,
+		Snapshots:     snapshots,
 	})
 }
 

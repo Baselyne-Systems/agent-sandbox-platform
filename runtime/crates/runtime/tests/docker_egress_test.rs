@@ -90,14 +90,24 @@ async fn egress_allowlist_blocks_unauthorized_traffic() {
     println!("Chain rules:\n{rules}");
 
     // Verify rules contain the allowed destination and DROP
-    assert!(rules.contains("1.1.1.1"), "chain should contain ACCEPT rule for 1.1.1.1");
+    assert!(
+        rules.contains("1.1.1.1"),
+        "chain should contain ACCEPT rule for 1.1.1.1"
+    );
     assert!(rules.contains("DROP"), "chain should end with DROP rule");
 
     // Test: allowed destination (1.1.1.1) should be reachable
     // Use wget with a short timeout — we only care about TCP connect, not HTTP response
     let (code_allowed, _) = docker_exec(
         &container_id,
-        &["wget", "-q", "-O", "/dev/null", "--timeout=3", "http://1.1.1.1/"],
+        &[
+            "wget",
+            "-q",
+            "-O",
+            "/dev/null",
+            "--timeout=3",
+            "http://1.1.1.1/",
+        ],
     )
     .await;
     println!("wget 1.1.1.1 exit code: {code_allowed}");
@@ -107,7 +117,14 @@ async fn egress_allowlist_blocks_unauthorized_traffic() {
     // Test: blocked destination (8.8.8.8) should be unreachable
     let (code_blocked, _) = docker_exec(
         &container_id,
-        &["wget", "-q", "-O", "/dev/null", "--timeout=3", "http://8.8.8.8/"],
+        &[
+            "wget",
+            "-q",
+            "-O",
+            "/dev/null",
+            "--timeout=3",
+            "http://8.8.8.8/",
+        ],
     )
     .await;
     println!("wget 8.8.8.8 exit code: {code_blocked}");

@@ -99,7 +99,10 @@ impl std::fmt::Debug for SandboxState {
             .field("agent_id", &self.agent_id)
             .field("status", &self.status)
             .field("allowed_tools", &self.allowed_tools)
-            .field("actions_executed", &self.actions_executed.load(Ordering::Relaxed))
+            .field(
+                "actions_executed",
+                &self.actions_executed.load(Ordering::Relaxed),
+            )
             .field("created_at", &self.created_at)
             .finish()
     }
@@ -133,7 +136,11 @@ impl SandboxManager {
         let container_id = if !params.container_image.is_empty() {
             let memory_bytes = 512 * 1024 * 1024; // default 512MB
             let cpu_quota = 100_000; // default 1 CPU
-            let tier = if params.isolation_tier.is_empty() { "standard" } else { &params.isolation_tier };
+            let tier = if params.isolation_tier.is_empty() {
+                "standard"
+            } else {
+                &params.isolation_tier
+            };
             match self
                 .container_runtime
                 .start_container(
@@ -209,7 +216,11 @@ impl SandboxManager {
         };
 
         // Clean up egress rules before stopping the container
-        if let Err(e) = self.container_runtime.cleanup_egress_rules(sandbox_id).await {
+        if let Err(e) = self
+            .container_runtime
+            .cleanup_egress_rules(sandbox_id)
+            .await
+        {
             tracing::warn!(
                 error = %e,
                 sandbox_id = %sandbox_id,
@@ -336,7 +347,10 @@ mod tests {
     #[tokio::test]
     async fn create_and_destroy_sandbox() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-001", "agent-001")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-001", "agent-001"))
+            .await
+            .unwrap();
         assert_eq!(*state.status.lock().unwrap(), SandboxStatus::Running);
         assert_eq!(state.workspace_id, "ws-001");
         assert_eq!(state.agent_id, "agent-001");
@@ -358,7 +372,10 @@ mod tests {
     #[tokio::test]
     async fn sandbox_has_event_channel() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-002", "agent-002")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-002", "agent-002"))
+            .await
+            .unwrap();
 
         let mut rx = state.event_tx.subscribe();
         let _ = state.event_tx.send(SandboxEvent::Progress {
@@ -376,7 +393,10 @@ mod tests {
     #[tokio::test]
     async fn actions_executed_counter() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-003", "agent-003")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-003", "agent-003"))
+            .await
+            .unwrap();
 
         assert_eq!(state.actions_executed.load(Ordering::Relaxed), 0);
         state.actions_executed.fetch_add(1, Ordering::Relaxed);
@@ -386,7 +406,10 @@ mod tests {
     #[tokio::test]
     async fn update_guardrails_replaces_policy() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-005", "agent-005")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-005", "agent-005"))
+            .await
+            .unwrap();
 
         let policy_with_rule = serde_json::to_vec(&guardrails_eval::CompiledPolicy {
             rules: vec![guardrails_eval::CompiledRule {
@@ -426,7 +449,10 @@ mod tests {
     #[tokio::test]
     async fn update_guardrails_invalid_bytes() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-006", "agent-006")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-006", "agent-006"))
+            .await
+            .unwrap();
         let result = mgr.update_guardrails(&state.id, b"not valid json");
         assert!(result.is_err());
     }
@@ -434,10 +460,14 @@ mod tests {
     #[tokio::test]
     async fn update_guardrails_emits_lifecycle_event() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-007", "agent-007")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-007", "agent-007"))
+            .await
+            .unwrap();
 
         let mut rx = state.event_tx.subscribe();
-        mgr.update_guardrails(&state.id, &empty_policy_bytes()).unwrap();
+        mgr.update_guardrails(&state.id, &empty_policy_bytes())
+            .unwrap();
 
         let event = rx.try_recv().unwrap();
         match event {
@@ -449,7 +479,10 @@ mod tests {
     #[tokio::test]
     async fn destroy_sends_stopped_event() {
         let mgr = test_mgr();
-        let state = mgr.create(test_params("ws-004", "agent-004")).await.unwrap();
+        let state = mgr
+            .create(test_params("ws-004", "agent-004"))
+            .await
+            .unwrap();
 
         let mut rx = state.event_tx.subscribe();
         mgr.destroy(&state.id).await.unwrap();
@@ -481,7 +514,10 @@ mod tests {
         let state = mgr.create(params).await.unwrap();
 
         let container_id = state.container_id.lock().unwrap().clone();
-        assert!(container_id.is_some(), "container should be started for non-empty image");
+        assert!(
+            container_id.is_some(),
+            "container should be started for non-empty image"
+        );
         assert!(container_id.unwrap().starts_with("noop-"));
     }
 
@@ -490,10 +526,16 @@ mod tests {
         let mgr = test_mgr();
         assert_eq!(mgr.active_count(), 0);
 
-        let s1 = mgr.create(test_params("ws-100", "agent-100")).await.unwrap();
+        let s1 = mgr
+            .create(test_params("ws-100", "agent-100"))
+            .await
+            .unwrap();
         assert_eq!(mgr.active_count(), 1);
 
-        let s2 = mgr.create(test_params("ws-101", "agent-101")).await.unwrap();
+        let s2 = mgr
+            .create(test_params("ws-101", "agent-101"))
+            .await
+            .unwrap();
         assert_eq!(mgr.active_count(), 2);
 
         mgr.destroy(&s1.id).await.unwrap();

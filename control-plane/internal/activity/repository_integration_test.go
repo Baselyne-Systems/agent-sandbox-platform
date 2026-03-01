@@ -115,7 +115,7 @@ func TestInteg_InsertAction_NullableFields(t *testing.T) {
 		TaskID:              "", // empty → NULL
 		ToolName:            "bash",
 		Parameters:          json.RawMessage(`{}`), // NOT NULL column — use empty object
-		Result:              nil,                    // nullable column — test NULL round-trip
+		Result:              nil,                   // nullable column — test NULL round-trip
 		Outcome:             models.ActionOutcomeDenied,
 		GuardrailRuleID:     "",
 		DenialReason:        "",

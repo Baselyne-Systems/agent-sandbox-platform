@@ -32,9 +32,9 @@ type Agent struct {
 	OwnerID      string
 	Status       AgentStatus
 	Labels       map[string]string
-	Purpose      string           // what this agent does — input to guardrail scoping
-	TrustLevel   AgentTrustLevel  // affects guardrail strictness and isolation tier
-	Capabilities []string         // tools/systems this agent can use
+	Purpose      string          // what this agent does — input to guardrail scoping
+	TrustLevel   AgentTrustLevel // affects guardrail strictness and isolation tier
+	Capabilities []string        // tools/systems this agent can use
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
@@ -56,8 +56,8 @@ type IsolationTier string
 
 const (
 	IsolationTierStandard IsolationTier = "standard" // Docker container (cgroups + namespaces)
-	IsolationTierHardened IsolationTier = "hardened"  // Docker + seccomp + read-only rootfs + dropped caps
-	IsolationTierIsolated IsolationTier = "isolated"  // Docker + gVisor/Kata runtime
+	IsolationTierHardened IsolationTier = "hardened" // Docker + seccomp + read-only rootfs + dropped caps
+	IsolationTierIsolated IsolationTier = "isolated" // Docker + gVisor/Kata runtime
 )
 
 // ActionOutcome represents the result of a guardrail evaluation.
@@ -92,10 +92,10 @@ type ActionRecord struct {
 type RuleType string
 
 const (
-	RuleTypeToolFilter      RuleType = "tool_filter"
-	RuleTypeParameterCheck  RuleType = "parameter_check"
-	RuleTypeRateLimit       RuleType = "rate_limit"
-	RuleTypeBudgetLimit     RuleType = "budget_limit"
+	RuleTypeToolFilter     RuleType = "tool_filter"
+	RuleTypeParameterCheck RuleType = "parameter_check"
+	RuleTypeRateLimit      RuleType = "rate_limit"
+	RuleTypeBudgetLimit    RuleType = "budget_limit"
 )
 
 // RuleAction determines what happens when a guardrail rule matches.
@@ -187,14 +187,14 @@ const (
 
 // WorkspaceSpec defines the desired resource configuration for a workspace.
 type WorkspaceSpec struct {
-	MemoryMb          int64
-	CpuMillicores     int32
-	DiskMb            int64
-	MaxDurationSecs   int64
-	AllowedTools      []string
-	GuardrailPolicyID string
-	EnvVars           map[string]string
-	ContainerImage    string
+	MemoryMb           int64
+	CpuMillicores      int32
+	DiskMb             int64
+	MaxDurationSecs    int64
+	AllowedTools       []string
+	GuardrailPolicyID  string
+	EnvVars            map[string]string
+	ContainerImage     string
 	EgressAllowlist    []string
 	IsolationTier      IsolationTier
 	DataClassification string
@@ -202,20 +202,20 @@ type WorkspaceSpec struct {
 
 // Workspace represents an isolated execution environment for an agent.
 type Workspace struct {
-	ID        string
-	TenantID  string
-	AgentID   string
-	TaskID    string
-	Status    WorkspaceStatus
-	Spec      WorkspaceSpec
+	ID            string
+	TenantID      string
+	AgentID       string
+	TaskID        string
+	Status        WorkspaceStatus
+	Spec          WorkspaceSpec
 	HostID        string
 	HostAddress   string
 	SandboxID     string
 	SnapshotID    string
 	IsolationTier IsolationTier
-	CreatedAt time.Time
-	UpdatedAt time.Time
-	ExpiresAt *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	ExpiresAt     *time.Time
 }
 
 // WorkspaceSnapshot records metadata for a workspace snapshot.
@@ -392,12 +392,12 @@ const (
 
 // TaskWorkspaceConfig defines workspace requirements for a task.
 type TaskWorkspaceConfig struct {
-	IsolationTier string            `json:"isolation_tier,omitempty"`
-	Persistent    bool              `json:"persistent,omitempty"`
-	MemoryMb      int64             `json:"memory_mb,omitempty"`
-	CpuMillicores int32            `json:"cpu_millicores,omitempty"`
-	DiskMb        int64             `json:"disk_mb,omitempty"`
-	MaxDurationSecs int64          `json:"max_duration_secs,omitempty"`
+	IsolationTier   string            `json:"isolation_tier,omitempty"`
+	Persistent      bool              `json:"persistent,omitempty"`
+	MemoryMb        int64             `json:"memory_mb,omitempty"`
+	CpuMillicores   int32             `json:"cpu_millicores,omitempty"`
+	DiskMb          int64             `json:"disk_mb,omitempty"`
+	MaxDurationSecs int64             `json:"max_duration_secs,omitempty"`
 	AllowedTools    []string          `json:"allowed_tools,omitempty"`
 	EnvVars         map[string]string `json:"env_vars,omitempty"`
 	ContainerImage  string            `json:"container_image,omitempty"`
@@ -422,20 +422,20 @@ type TaskBudgetConfig struct {
 
 // Task represents a goal an agent pursues autonomously.
 type Task struct {
-	ID                          string
-	TenantID                    string
-	AgentID                     string
-	Goal                        string
-	Status                      TaskStatus
-	WorkspaceID                 string
-	GuardrailPolicyID           string
-	WorkspaceConfig             TaskWorkspaceConfig
-	HumanInteractionConfig      TaskHumanInteractionConfig
-	BudgetConfig                TaskBudgetConfig
+	ID                            string
+	TenantID                      string
+	AgentID                       string
+	Goal                          string
+	Status                        TaskStatus
+	WorkspaceID                   string
+	GuardrailPolicyID             string
+	WorkspaceConfig               TaskWorkspaceConfig
+	HumanInteractionConfig        TaskHumanInteractionConfig
+	BudgetConfig                  TaskBudgetConfig
 	MaxDurationWithoutCheckinSecs int64
-	Input                       map[string]string
-	Labels                      map[string]string
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
-	CompletedAt                 *time.Time
+	Input                         map[string]string
+	Labels                        map[string]string
+	CreatedAt                     time.Time
+	UpdatedAt                     time.Time
+	CompletedAt                   *time.Time
 }

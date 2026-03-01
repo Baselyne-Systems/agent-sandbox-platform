@@ -38,7 +38,7 @@ var validRuleActions = map[models.RuleAction]bool{
 
 // Service implements guardrails business logic on top of a Repository.
 type Service struct {
-	repo      Repository
+	repo       Repository
 	considered *ConsideredEvaluator
 }
 

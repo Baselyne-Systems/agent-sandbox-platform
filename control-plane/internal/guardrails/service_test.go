@@ -14,10 +14,10 @@ import (
 
 // mockRepo is a hand-written in-memory Repository for testing.
 type mockRepo struct {
-	rules  map[string]*models.GuardrailRule
-	sets   map[string]*models.GuardrailSet
+	rules      map[string]*models.GuardrailRule
+	sets       map[string]*models.GuardrailSet
 	setsByName map[string]string // name -> ID
-	nextID int
+	nextID     int
 }
 
 func newMockRepo() *mockRepo {

@@ -8,13 +8,13 @@ use tonic::{Request, Response, Status};
 use tracing::info;
 
 use proto_gen::platform::host_agent::v1::host_agent_service_server::HostAgentService;
+use proto_gen::platform::host_agent::v1::{ActionEvent, ActionVerdict, LifecycleEvent};
 use proto_gen::platform::host_agent::v1::{
     CreateSandboxRequest, CreateSandboxResponse, DestroySandboxRequest, DestroySandboxResponse,
     GetSandboxStatusRequest, GetSandboxStatusResponse, SandboxEvent as ProtoSandboxEvent,
-    SandboxState as ProtoSandboxState, StreamEventsRequest,
-    UpdateSandboxGuardrailsRequest, UpdateSandboxGuardrailsResponse,
+    SandboxState as ProtoSandboxState, StreamEventsRequest, UpdateSandboxGuardrailsRequest,
+    UpdateSandboxGuardrailsResponse,
 };
-use proto_gen::platform::host_agent::v1::{ActionEvent, ActionVerdict, LifecycleEvent};
 
 use crate::sandbox::{CreateSandboxParams, SandboxEvent, SandboxManager, SandboxStatus};
 
@@ -51,18 +51,36 @@ impl HostAgentService for HostAgentServiceImpl {
             "creating sandbox"
         );
 
-        let (allowed_tools, env_vars, container_image, egress_allowlist, isolation_tier, tool_definitions) = req
+        let (
+            allowed_tools,
+            env_vars,
+            container_image,
+            egress_allowlist,
+            isolation_tier,
+            tool_definitions,
+        ) = req
             .spec
             .as_ref()
-            .map(|s| (
-                s.allowed_tools.clone(),
-                s.env_vars.clone(),
-                s.container_image.clone(),
-                s.egress_allowlist.clone(),
-                s.isolation_tier.clone(),
-                s.tool_definitions.clone(),
-            ))
-            .unwrap_or_else(|| (vec![], HashMap::new(), String::new(), vec![], String::new(), vec![]));
+            .map(|s| {
+                (
+                    s.allowed_tools.clone(),
+                    s.env_vars.clone(),
+                    s.container_image.clone(),
+                    s.egress_allowlist.clone(),
+                    s.isolation_tier.clone(),
+                    s.tool_definitions.clone(),
+                )
+            })
+            .unwrap_or_else(|| {
+                (
+                    vec![],
+                    HashMap::new(),
+                    String::new(),
+                    vec![],
+                    String::new(),
+                    vec![],
+                )
+            });
 
         let params = CreateSandboxParams {
             workspace_id: req.workspace_id.clone(),
@@ -127,9 +145,10 @@ impl HostAgentService for HostAgentServiceImpl {
             .map_err(|e| Status::not_found(e.to_string()))?;
 
         let state = {
-            let status = sandbox.status.lock().map_err(|e| {
-                Status::internal(format!("lock poisoned: {e}"))
-            })?;
+            let status = sandbox
+                .status
+                .lock()
+                .map_err(|e| Status::internal(format!("lock poisoned: {e}")))?;
             match *status {
                 SandboxStatus::Starting => ProtoSandboxState::Starting,
                 SandboxStatus::Running => ProtoSandboxState::Running,

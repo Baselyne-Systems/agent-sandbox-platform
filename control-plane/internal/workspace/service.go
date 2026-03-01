@@ -63,29 +63,29 @@ type IdentityQuerier interface {
 
 // Service implements workspace business logic with Host Agent orchestration.
 type Service struct {
-	repo           Repository
-	compute        ComputePlacer
-	guardrails     PolicyCompiler
-	dialHostAgent    HostAgentDialer
-	snapshots      SnapshotStore
-	credentials    CredentialMinter
-	identity       IdentityQuerier
-	tierSelector   *TierSelector
-	logger         *zap.Logger
+	repo          Repository
+	compute       ComputePlacer
+	guardrails    PolicyCompiler
+	dialHostAgent HostAgentDialer
+	snapshots     SnapshotStore
+	credentials   CredentialMinter
+	identity      IdentityQuerier
+	tierSelector  *TierSelector
+	logger        *zap.Logger
 }
 
 // ServiceConfig holds optional dependencies for the workspace service.
 // If compute/guardrails/dialHostAgent are nil, the service operates in
 // "DB-only" mode (no Host Agent orchestration).
 type ServiceConfig struct {
-	Repo        Repository
-	Compute     ComputePlacer
-	Guardrails  PolicyCompiler
+	Repo          Repository
+	Compute       ComputePlacer
+	Guardrails    PolicyCompiler
 	DialHostAgent HostAgentDialer
-	Snapshots   SnapshotStore
-	Credentials CredentialMinter
-	Identity    IdentityQuerier
-	Logger      *zap.Logger
+	Snapshots     SnapshotStore
+	Credentials   CredentialMinter
+	Identity      IdentityQuerier
+	Logger        *zap.Logger
 }
 
 func NewService(cfg ServiceConfig) *Service {
@@ -94,15 +94,15 @@ func NewService(cfg ServiceConfig) *Service {
 		logger = zap.NewNop()
 	}
 	return &Service{
-		repo:         cfg.Repo,
-		compute:      cfg.Compute,
-		guardrails:   cfg.Guardrails,
+		repo:          cfg.Repo,
+		compute:       cfg.Compute,
+		guardrails:    cfg.Guardrails,
 		dialHostAgent: cfg.DialHostAgent,
-		snapshots:    cfg.Snapshots,
-		credentials:  cfg.Credentials,
-		identity:     cfg.Identity,
-		tierSelector: NewTierSelector(),
-		logger:       logger,
+		snapshots:     cfg.Snapshots,
+		credentials:   cfg.Credentials,
+		identity:      cfg.Identity,
+		tierSelector:  NewTierSelector(),
+		logger:        logger,
 	}
 }
 
@@ -258,11 +258,11 @@ func (s *Service) provisionSandbox(ctx context.Context, tenantID string, ws *mod
 		WorkspaceId: ws.ID,
 		AgentId:     ws.AgentID,
 		Spec: &hostagentpb.SandboxSpec{
-			MemoryMb:       ws.Spec.MemoryMb,
-			CpuMillicores:  ws.Spec.CpuMillicores,
-			DiskMb:         ws.Spec.DiskMb,
-			AllowedTools:   ws.Spec.AllowedTools,
-			EnvVars:        ws.Spec.EnvVars,
+			MemoryMb:        ws.Spec.MemoryMb,
+			CpuMillicores:   ws.Spec.CpuMillicores,
+			DiskMb:          ws.Spec.DiskMb,
+			AllowedTools:    ws.Spec.AllowedTools,
+			EnvVars:         ws.Spec.EnvVars,
 			ContainerImage:  ws.Spec.ContainerImage,
 			EgressAllowlist: ws.Spec.EgressAllowlist,
 			IsolationTier:   string(ws.Spec.IsolationTier),

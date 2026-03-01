@@ -19,20 +19,20 @@ const (
 
 // AlertEngine periodically evaluates alert conditions against recent activity.
 type AlertEngine struct {
-	activity  Repository
-	alerts    AlertRepository
-	interval  time.Duration
-	window    time.Duration
+	activity   Repository
+	alerts     AlertRepository
+	interval   time.Duration
+	window     time.Duration
 	httpClient *http.Client
 }
 
 // NewAlertEngine creates an alert engine that checks conditions at the given interval.
 func NewAlertEngine(activity Repository, alerts AlertRepository) *AlertEngine {
 	return &AlertEngine{
-		activity:  activity,
-		alerts:    alerts,
-		interval:  defaultAlertInterval,
-		window:    defaultAlertWindow,
+		activity:   activity,
+		alerts:     alerts,
+		interval:   defaultAlertInterval,
+		window:     defaultAlertWindow,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 	}
 }

@@ -9,16 +9,16 @@ import (
 )
 
 var (
-	ErrAgentNotFound      = errors.New("agent not found")
-	ErrCredentialNotFound = errors.New("credential not found")
-	ErrInvalidInput       = errors.New("invalid input")
+	ErrAgentNotFound           = errors.New("agent not found")
+	ErrCredentialNotFound      = errors.New("credential not found")
+	ErrInvalidInput            = errors.New("invalid input")
 	ErrAgentInactive           = errors.New("agent is not active")
 	ErrInvalidTrustLevel       = errors.New("invalid trust level")
 	ErrInvalidStatusTransition = errors.New("invalid status transition")
 )
 
 const (
-	maxCredTTL     = 24 * time.Hour
+	maxCredTTL      = 24 * time.Hour
 	defaultPageSize = 50
 	maxPageSize     = 100
 )

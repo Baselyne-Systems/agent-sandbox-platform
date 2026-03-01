@@ -40,10 +40,10 @@ func NewConsideredEvaluator(activity ActivityQuerier, interval, window time.Dura
 
 // Thresholds for anomaly detection.
 const (
-	thresholdDenialRate     = 0.5  // 50%+ denial rate is suspicious
-	thresholdErrorRate      = 0.3  // 30%+ error rate is suspicious
-	thresholdActionVelocity = 100  // 100+ actions per window is suspicious
-	thresholdStuckRepeat    = 5    // 5+ consecutive same-tool errors = stuck
+	thresholdDenialRate     = 0.5 // 50%+ denial rate is suspicious
+	thresholdErrorRate      = 0.3 // 30%+ error rate is suspicious
+	thresholdActionVelocity = 100 // 100+ actions per window is suspicious
+	thresholdStuckRepeat    = 5   // 5+ consecutive same-tool errors = stuck
 )
 
 // Run starts the background considered evaluation loop.

@@ -107,9 +107,8 @@ pub struct Evaluator {
 impl Evaluator {
     /// Deserialize a [`CompiledPolicy`] from bytes and return a ready evaluator.
     pub fn load(bytes: &[u8]) -> Result<Self, EvalError> {
-        let policy: CompiledPolicy = serde_json::from_slice(bytes).map_err(|e| {
-            EvalError::DeserializationError(e.to_string())
-        })?;
+        let policy: CompiledPolicy = serde_json::from_slice(bytes)
+            .map_err(|e| EvalError::DeserializationError(e.to_string()))?;
         debug!(rules_count = policy.rules.len(), "loaded compiled policy");
         Ok(Self { policy })
     }
@@ -120,9 +119,8 @@ impl Evaluator {
     /// The first matching enabled rule determines the verdict.
     /// If no rule matches, the default verdict is `Allow`.
     pub fn evaluate(&self, ctx: &EvalContext) -> Verdict {
-        let mut rules: Vec<&CompiledRule> = self.policy.rules.iter()
-            .filter(|r| r.enabled)
-            .collect();
+        let mut rules: Vec<&CompiledRule> =
+            self.policy.rules.iter().filter(|r| r.enabled).collect();
         rules.sort_by_key(|r| r.priority);
 
         for rule in rules {
@@ -140,9 +138,9 @@ impl Evaluator {
                 );
                 return match &rule.action {
                     RuleAction::Allow => Verdict::Allow,
-                    RuleAction::Deny => Verdict::Deny(format!(
-                        "denied by rule '{}' ({})", rule.name, rule.id
-                    )),
+                    RuleAction::Deny => {
+                        Verdict::Deny(format!("denied by rule '{}' ({})", rule.name, rule.id))
+                    }
                     RuleAction::Escalate => Verdict::Escalate(rule.id.clone()),
                     RuleAction::Log => {
                         debug!(
@@ -177,13 +175,17 @@ impl Evaluator {
         if !scope.tool_names.is_empty() && !scope.tool_names.contains(&ctx.tool_name) {
             return false;
         }
-        if !scope.trust_levels.is_empty() && !ctx.trust_level.is_empty()
+        if !scope.trust_levels.is_empty()
+            && !ctx.trust_level.is_empty()
             && !scope.trust_levels.contains(&ctx.trust_level)
         {
             return false;
         }
-        if !scope.data_classifications.is_empty() && !ctx.data_classification.is_empty()
-            && !scope.data_classifications.contains(&ctx.data_classification)
+        if !scope.data_classifications.is_empty()
+            && !ctx.data_classification.is_empty()
+            && !scope
+                .data_classifications
+                .contains(&ctx.data_classification)
         {
             return false;
         }

@@ -26,7 +26,7 @@ type pattern struct {
 
 // Service implements stateless data governance logic.
 type Service struct {
-	patterns         []pattern
+	patterns             []pattern
 	approvedDestinations map[string]bool
 }
 
@@ -40,9 +40,9 @@ func NewService() *Service {
 			{name: "phone", re: regexp.MustCompile(`\b\+?1?[-.\s]?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b`), classification: ClassificationInternal},
 		},
 		approvedDestinations: map[string]bool{
-			"internal-api":    true,
-			"secure-storage":  true,
-			"audit-log":       true,
+			"internal-api":   true,
+			"secure-storage": true,
+			"audit-log":      true,
 		},
 	}
 }

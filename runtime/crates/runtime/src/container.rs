@@ -49,7 +49,11 @@ async fn run_iptables(args: &[&str]) -> Result<()> {
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow::anyhow!("iptables {:?} failed: {}", args, stderr.trim()));
+        return Err(anyhow::anyhow!(
+            "iptables {:?} failed: {}",
+            args,
+            stderr.trim()
+        ));
     }
     Ok(())
 }
@@ -113,16 +117,22 @@ impl DockerRuntime {
         }
 
         // 2. Add jump rule on FORWARD chain for traffic from this container
-        if let Err(e) = run_iptables(&[
-            "-I", "FORWARD", "-s", container_ip, "-j", &chain,
-        ]).await {
+        if let Err(e) = run_iptables(&["-I", "FORWARD", "-s", container_ip, "-j", &chain]).await {
             warn!(error = %e, "failed to add FORWARD jump rule");
         }
 
         // 3. Allow established/related connections (return traffic)
         let _ = run_iptables(&[
-            "-A", &chain, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT",
-        ]).await;
+            "-A",
+            &chain,
+            "-m",
+            "conntrack",
+            "--ctstate",
+            "ESTABLISHED,RELATED",
+            "-j",
+            "ACCEPT",
+        ])
+        .await;
 
         // 4. Allow DNS (UDP and TCP port 53)
         let _ = run_iptables(&["-A", &chain, "-p", "udp", "--dport", "53", "-j", "ACCEPT"]).await;
@@ -133,7 +143,8 @@ impl DockerRuntime {
             let port = std::env::var("GRPC_PORT").unwrap_or_else(|_| "50052".to_string());
             let _ = run_iptables(&[
                 "-A", &chain, "-d", &advertise, "-p", "tcp", "--dport", &port, "-j", "ACCEPT",
-            ]).await;
+            ])
+            .await;
         }
 
         // 6. Add ACCEPT rules for each allowed destination
@@ -187,10 +198,7 @@ impl ContainerRuntime for DockerRuntime {
         }
 
         // 2. Build env vars list (KEY=VALUE format) with Bulkhead injections
-        let mut env: Vec<String> = env_vars
-            .iter()
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect();
+        let mut env: Vec<String> = env_vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
         // Inject Bulkhead SDK connection vars
         if let Ok(endpoint) = std::env::var("ADVERTISE_ADDRESS") {
             let port = std::env::var("GRPC_PORT").unwrap_or_else(|_| "50052".to_string());
@@ -234,7 +242,10 @@ impl ContainerRuntime for DockerRuntime {
 
         // 5. Apply egress allowlist rules if specified
         if !egress_allowlist.is_empty() {
-            if let Err(e) = self.apply_egress_rules(sandbox_id, &container_id, egress_allowlist).await {
+            if let Err(e) = self
+                .apply_egress_rules(sandbox_id, &container_id, egress_allowlist)
+                .await
+            {
                 warn!(
                     error = %e,
                     sandbox_id = %sandbox_id,
@@ -298,7 +309,11 @@ impl ContainerRuntime for DockerRuntime {
 /// - "standard": normal Docker (memory + cpu_quota only)
 /// - "hardened": adds seccomp default profile, read-only rootfs, no-new-privileges, drops caps
 /// - "isolated": uses gVisor/Kata runtime (ISOLATED_RUNTIME env var, default "runsc") + hardened opts
-fn build_host_config(isolation_tier: &str, memory_bytes: i64, cpu_quota: i64) -> bollard::models::HostConfig {
+fn build_host_config(
+    isolation_tier: &str,
+    memory_bytes: i64,
+    cpu_quota: i64,
+) -> bollard::models::HostConfig {
     match isolation_tier {
         "hardened" => bollard::models::HostConfig {
             memory: Some(memory_bytes),
@@ -318,9 +333,7 @@ fn build_host_config(isolation_tier: &str, memory_bytes: i64, cpu_quota: i64) ->
                 memory: Some(memory_bytes),
                 cpu_quota: Some(cpu_quota),
                 readonly_rootfs: Some(true),
-                security_opt: Some(vec![
-                    "no-new-privileges:true".to_string(),
-                ]),
+                security_opt: Some(vec!["no-new-privileges:true".to_string()]),
                 cap_drop: Some(vec!["ALL".to_string()]),
                 cap_add: Some(vec!["NET_BIND_SERVICE".to_string()]),
                 runtime: Some(runtime),
@@ -387,7 +400,15 @@ mod tests {
     async fn noop_runtime_start_stop() {
         let runtime = NoopContainerRuntime;
         let container_id = runtime
-            .start_container("sb-001", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &[], "standard")
+            .start_container(
+                "sb-001",
+                "python:3.12",
+                HashMap::new(),
+                512 * 1024 * 1024,
+                100_000,
+                &[],
+                "standard",
+            )
             .await
             .unwrap();
         assert!(container_id.contains("sb-001"));
@@ -399,7 +420,15 @@ mod tests {
         let runtime = NoopContainerRuntime;
         let allowlist = vec!["api.example.com".to_string(), "10.0.0.0/8".to_string()];
         let container_id = runtime
-            .start_container("sb-002", "python:3.12", HashMap::new(), 512 * 1024 * 1024, 100_000, &allowlist, "standard")
+            .start_container(
+                "sb-002",
+                "python:3.12",
+                HashMap::new(),
+                512 * 1024 * 1024,
+                100_000,
+                &allowlist,
+                "standard",
+            )
             .await
             .unwrap();
         assert!(container_id.contains("sb-002"));

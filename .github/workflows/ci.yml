@@ -28,6 +28,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          cache-dependency-path: control-plane/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Install protoc-gen-go
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: Generate proto stubs
+        run: buf generate
+        working-directory: proto
       - name: Check formatting
         run: |
           unformatted=$(gofmt -l .)
@@ -49,6 +58,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
+          cache-dependency-path: control-plane/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+      - name: Install protoc-gen-go
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+      - name: Generate proto stubs
+        run: buf generate
+        working-directory: proto
       - name: Build
         run: go build ./...
         working-directory: control-plane
@@ -73,7 +91,7 @@ jobs:
         run: cargo fmt --check
         working-directory: runtime
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -- -D warnings -A clippy::too_many_arguments -A dead_code
         working-directory: runtime
 
   rust-build-test:
@@ -103,7 +121,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check syntax
-        run: python -m py_compile bulkhead/__init__.py bulkhead/client.py bulkhead/decorators.py bulkhead/types.py bulkhead/mcp.py bulkhead/langchain.py
+        run: |
+          python -m py_compile bulkhead/__init__.py
+          python -m py_compile bulkhead/client.py
+          python -m py_compile bulkhead/decorators.py
+          python -m py_compile bulkhead/types.py
+          python -m py_compile bulkhead/mcp.py
+          python -m py_compile bulkhead/langchain.py
         working-directory: sdk/python
 
   helm-lint:

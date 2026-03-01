@@ -396,12 +396,12 @@ func TestCancelTask_NotFound(t *testing.T) {
 // --- Workspace orchestration tests ---
 
 type mockProvisioner struct {
-	provisionCalls   int
-	terminateCalls   int
-	provisionErr     error
-	terminateErr     error
-	returnWSID       string
-	lastTerminateID  string
+	provisionCalls      int
+	terminateCalls      int
+	provisionErr        error
+	terminateErr        error
+	returnWSID          string
+	lastTerminateID     string
 	lastTerminateReason string
 }
 

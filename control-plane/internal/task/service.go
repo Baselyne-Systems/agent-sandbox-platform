@@ -8,9 +8,9 @@ import (
 )
 
 var (
-	ErrTaskNotFound       = errors.New("task not found")
-	ErrInvalidInput       = errors.New("invalid input")
-	ErrInvalidTransition  = errors.New("invalid status transition")
+	ErrTaskNotFound      = errors.New("task not found")
+	ErrInvalidInput      = errors.New("invalid input")
+	ErrInvalidTransition = errors.New("invalid status transition")
 )
 
 // WorkspaceProvisioner provisions and terminates workspaces for tasks.

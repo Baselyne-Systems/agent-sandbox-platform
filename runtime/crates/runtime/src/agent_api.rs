@@ -15,16 +15,16 @@ use proto_gen::platform::economics::v1::economics_service_client::EconomicsServi
 use proto_gen::platform::economics::v1::{CheckBudgetRequest, RecordUsageRequest, UsageRecord};
 use proto_gen::platform::governance::v1::data_governance_service_client::DataGovernanceServiceClient;
 use proto_gen::platform::governance::v1::InspectEgressRequest;
-use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
-use proto_gen::platform::human::v1::{
-    CreateHumanRequestRequest, GetHumanRequestRequest, HumanRequestStatus,
-};
 use proto_gen::platform::host_agent::v1::host_agent_api_service_server::HostAgentApiService;
 use proto_gen::platform::host_agent::v1::{
     ActionVerdict, CheckHumanRequestRequest, CheckHumanRequestResponse, ExecuteToolRequest,
     ExecuteToolResponse, ListToolsRequest, ListToolsResponse, ReportActionResultRequest,
     ReportActionResultResponse, ReportProgressRequest, ReportProgressResponse,
     RequestHumanInputRequest, RequestHumanInputResponse,
+};
+use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
+use proto_gen::platform::human::v1::{
+    CreateHumanRequestRequest, GetHumanRequestRequest, HumanRequestStatus,
 };
 
 use crate::sandbox::{SandboxEvent, SandboxManager};
@@ -40,7 +40,8 @@ pub struct HostAgentApiServiceImpl {
     his_client: Option<TokioMutex<HumanInteractionServiceClient<tonic::transport::Channel>>>,
     activity_client: Option<Arc<TokioMutex<ActivityServiceClient<tonic::transport::Channel>>>>,
     economics_client: Option<Arc<TokioMutex<EconomicsServiceClient<tonic::transport::Channel>>>>,
-    governance_client: Option<Arc<TokioMutex<DataGovernanceServiceClient<tonic::transport::Channel>>>>,
+    governance_client:
+        Option<Arc<TokioMutex<DataGovernanceServiceClient<tonic::transport::Channel>>>>,
 }
 
 impl std::fmt::Debug for HostAgentApiServiceImpl {
@@ -104,8 +105,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
         let parameters = req
             .parameters
             .map(|s| {
-                let json_bytes = serde_json::to_vec(&proto_struct_to_value(&s))
-                    .unwrap_or_default();
+                let json_bytes = serde_json::to_vec(&proto_struct_to_value(&s)).unwrap_or_default();
                 serde_json::from_slice(&json_bytes).unwrap_or(serde_json::Value::Null)
             })
             .unwrap_or(serde_json::Value::Null);
@@ -177,7 +177,7 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
             tool_name: req.tool_name.clone(),
             parameters: parameters.clone(),
             agent_id: sandbox.agent_id.clone(),
-            trust_level: String::new(),         // TODO: populate from agent metadata
+            trust_level: String::new(), // TODO: populate from agent metadata
             data_classification: String::new(), // TODO: populate from governance
         };
 
@@ -196,23 +196,26 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
         let (action_verdict, denial_reason, escalation_id) = match &verdict {
             Verdict::Allow => (ActionVerdict::Allow, String::new(), String::new()),
             Verdict::Deny(reason) => (ActionVerdict::Deny, reason.clone(), String::new()),
-            Verdict::Escalate(rule_id) => {
-                (ActionVerdict::Escalate, String::new(), rule_id.clone())
-            }
+            Verdict::Escalate(rule_id) => (ActionVerdict::Escalate, String::new(), rule_id.clone()),
         };
 
         // 6b. DLP egress inspection — for allowed tool calls with destination/url parameters
-        let (action_verdict, denial_reason, escalation_id) = if matches!(action_verdict, ActionVerdict::Allow) {
+        let (action_verdict, denial_reason, escalation_id) = if matches!(
+            action_verdict,
+            ActionVerdict::Allow
+        ) {
             if let Some(governance_mutex) = &self.governance_client {
                 // Extract destination from parameters (check common field names).
-                let destination = parameters.get("destination")
+                let destination = parameters
+                    .get("destination")
                     .or_else(|| parameters.get("url"))
                     .or_else(|| parameters.get("endpoint"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
 
                 if !destination.is_empty() {
-                    let content = parameters.get("content")
+                    let content = parameters
+                        .get("content")
                         .or_else(|| parameters.get("body"))
                         .or_else(|| parameters.get("data"))
                         .map(|v| v.to_string())
@@ -220,12 +223,14 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
 
                     let inspect_result = {
                         let mut client = governance_mutex.lock().await;
-                        client.inspect_egress(InspectEgressRequest {
-                            agent_id: sandbox.agent_id.clone(),
-                            destination: destination.to_string(),
-                            content: content.into_bytes(),
-                            content_type: "application/json".to_string(),
-                        }).await
+                        client
+                            .inspect_egress(InspectEgressRequest {
+                                agent_id: sandbox.agent_id.clone(),
+                                destination: destination.to_string(),
+                                content: content.into_bytes(),
+                                content_type: "application/json".to_string(),
+                            })
+                            .await
                     };
 
                     match inspect_result {
@@ -239,7 +244,11 @@ impl HostAgentApiService for HostAgentApiServiceImpl {
                                     reason = %egress_resp.reason,
                                     "DLP egress inspection denied"
                                 );
-                                (ActionVerdict::Deny, format!("DLP denied: {}", egress_resp.reason), String::new())
+                                (
+                                    ActionVerdict::Deny,
+                                    format!("DLP denied: {}", egress_resp.reason),
+                                    String::new(),
+                                )
                             } else {
                                 (action_verdict, denial_reason, escalation_id)
                             }

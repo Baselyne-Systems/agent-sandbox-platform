@@ -92,11 +92,11 @@ func main() {
 	}
 
 	svc := workspace.NewService(workspace.ServiceConfig{
-		Repo:        repo,
-		Compute:     compute,
-		Guardrails:  guardrails,
+		Repo:          repo,
+		Compute:       compute,
+		Guardrails:    guardrails,
 		DialHostAgent: dialHostAgent,
-		Logger:      logger,
+		Logger:        logger,
 	})
 	handler := workspace.NewHandler(svc)
 

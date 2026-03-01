@@ -7,21 +7,21 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use anyhow::Result;
+use opentelemetry::trace::TracerProvider as _;
+use opentelemetry_otlp::WithExportConfig;
 use tonic::transport::Server;
 use tracing::info;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use opentelemetry::trace::TracerProvider as _;
-use opentelemetry_otlp::WithExportConfig;
 
 use proto_gen::platform::activity::v1::activity_service_client::ActivityServiceClient;
 use proto_gen::platform::compute::v1::compute_plane_service_client::ComputePlaneServiceClient;
 use proto_gen::platform::compute::v1::{HeartbeatRequest, HostResources, RegisterHostRequest};
 use proto_gen::platform::economics::v1::economics_service_client::EconomicsServiceClient;
 use proto_gen::platform::governance::v1::data_governance_service_client::DataGovernanceServiceClient;
-use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 use proto_gen::platform::host_agent::v1::host_agent_api_service_server::HostAgentApiServiceServer;
 use proto_gen::platform::host_agent::v1::host_agent_service_server::HostAgentServiceServer;
+use proto_gen::platform::human::v1::human_interaction_service_client::HumanInteractionServiceClient;
 
 use crate::agent_api::HostAgentApiServiceImpl;
 use crate::sandbox::SandboxManager;
@@ -29,7 +29,11 @@ use crate::server::HostAgentServiceImpl;
 
 /// Resolves a gRPC endpoint: individual env var takes priority,
 /// then CONTROL_PLANE + well-known port, then None.
-fn resolve_endpoint(env_key: &str, control_plane: &Option<String>, default_port: u16) -> Option<String> {
+fn resolve_endpoint(
+    env_key: &str,
+    control_plane: &Option<String>,
+    default_port: u16,
+) -> Option<String> {
     if let Ok(endpoint) = std::env::var(env_key) {
         return Some(endpoint);
     }
@@ -42,8 +46,7 @@ fn resolve_endpoint(env_key: &str, control_plane: &Option<String>, default_port:
 fn detect_resources() -> (i64, i32, i64) {
     let detected_memory_mb = {
         let sys = sysinfo::System::new_with_specifics(
-            sysinfo::RefreshKind::nothing()
-                .with_memory(sysinfo::MemoryRefreshKind::everything()),
+            sysinfo::RefreshKind::nothing().with_memory(sysinfo::MemoryRefreshKind::everything()),
         );
         (sys.total_memory() / (1024 * 1024)) as i64
     };
@@ -230,55 +233,69 @@ async fn main() -> Result<()> {
         total_memory_mb,
         total_cpu_millicores,
         total_disk_mb,
-        memory_source = if std::env::var("TOTAL_MEMORY_MB").is_ok() { "env" } else { "auto-detected" },
-        cpu_source = if std::env::var("TOTAL_CPU_MILLICORES").is_ok() { "env" } else { "auto-detected" },
-        disk_source = if std::env::var("TOTAL_DISK_MB").is_ok() { "env" } else { "auto-detected" },
+        memory_source = if std::env::var("TOTAL_MEMORY_MB").is_ok() {
+            "env"
+        } else {
+            "auto-detected"
+        },
+        cpu_source = if std::env::var("TOTAL_CPU_MILLICORES").is_ok() {
+            "env"
+        } else {
+            "auto-detected"
+        },
+        disk_source = if std::env::var("TOTAL_DISK_MB").is_ok() {
+            "env"
+        } else {
+            "auto-detected"
+        },
         "host resource configuration"
     );
 
     // Compute Plane for host self-registration and heartbeats.
-    let compute_registration: Option<(String, ComputePlaneServiceClient<tonic::transport::Channel>)> =
-        match resolve_endpoint("COMPUTE_ENDPOINT", &control_plane, 50067) {
-            Some(endpoint) => {
-                info!(endpoint = %endpoint, "connecting to Compute Plane");
-                match ComputePlaneServiceClient::connect(endpoint).await {
-                    Ok(mut client) => {
-                        let register_resp = client
-                            .register_host(RegisterHostRequest {
-                                address: advertise_endpoint.clone(),
-                                total_resources: Some(HostResources {
-                                    memory_mb: total_memory_mb,
-                                    cpu_millicores: total_cpu_millicores,
-                                    disk_mb: total_disk_mb,
-                                }),
-                                supported_tiers: supported_tiers.clone(),
-                            })
-                            .await;
+    let compute_registration: Option<(
+        String,
+        ComputePlaneServiceClient<tonic::transport::Channel>,
+    )> = match resolve_endpoint("COMPUTE_ENDPOINT", &control_plane, 50067) {
+        Some(endpoint) => {
+            info!(endpoint = %endpoint, "connecting to Compute Plane");
+            match ComputePlaneServiceClient::connect(endpoint).await {
+                Ok(mut client) => {
+                    let register_resp = client
+                        .register_host(RegisterHostRequest {
+                            address: advertise_endpoint.clone(),
+                            total_resources: Some(HostResources {
+                                memory_mb: total_memory_mb,
+                                cpu_millicores: total_cpu_millicores,
+                                disk_mb: total_disk_mb,
+                            }),
+                            supported_tiers: supported_tiers.clone(),
+                        })
+                        .await;
 
-                        match register_resp {
-                            Ok(resp) => {
-                                let host = resp.into_inner().host.expect("host in register response");
-                                let host_id = host.host_id.clone();
-                                info!(host_id = %host_id, "registered with Compute Plane");
-                                Some((host_id, client))
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "failed to register with Compute Plane — heartbeats disabled");
-                                None
-                            }
+                    match register_resp {
+                        Ok(resp) => {
+                            let host = resp.into_inner().host.expect("host in register response");
+                            let host_id = host.host_id.clone();
+                            info!(host_id = %host_id, "registered with Compute Plane");
+                            Some((host_id, client))
+                        }
+                        Err(e) => {
+                            tracing::error!(error = %e, "failed to register with Compute Plane — heartbeats disabled");
+                            None
                         }
                     }
-                    Err(e) => {
-                        tracing::error!(error = %e, "failed to connect to Compute Plane — heartbeats disabled");
-                        None
-                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to connect to Compute Plane — heartbeats disabled");
+                    None
                 }
             }
-            None => {
-                info!("Compute endpoint not configured — host registration and heartbeats disabled");
-                None
-            }
-        };
+        }
+        None => {
+            info!("Compute endpoint not configured — host registration and heartbeats disabled");
+            None
+        }
+    };
 
     // Initialize container runtime — DockerRuntime if ENABLE_DOCKER=true, otherwise Noop.
     let container_runtime: Arc<dyn container::ContainerRuntime> =
@@ -292,8 +309,13 @@ async fn main() -> Result<()> {
 
     let sandbox_manager = SandboxManager::new(container_runtime);
     let host_agent_service = HostAgentServiceImpl::new(sandbox_manager.clone(), advertise_endpoint);
-    let host_agent_api_service =
-        HostAgentApiServiceImpl::new(sandbox_manager.clone(), his_client, activity_client, economics_client, governance_client);
+    let host_agent_api_service = HostAgentApiServiceImpl::new(
+        sandbox_manager.clone(),
+        his_client,
+        activity_client,
+        economics_client,
+        governance_client,
+    );
 
     // Spawn periodic heartbeat loop if registered with Compute Plane.
     let heartbeat_handle = if let Some((host_id, client)) = compute_registration {
@@ -314,9 +336,12 @@ async fn main() -> Result<()> {
                 interval.tick().await;
 
                 let active_sandboxes = heartbeat_sandbox_manager.active_count() as i32;
-                let available_memory = (total_memory_mb - (active_sandboxes as i64 * per_sandbox_memory)).max(0);
-                let available_cpu = (total_cpu_millicores - (active_sandboxes * per_sandbox_cpu)).max(0);
-                let available_disk = (total_disk_mb - (active_sandboxes as i64 * per_sandbox_disk)).max(0);
+                let available_memory =
+                    (total_memory_mb - (active_sandboxes as i64 * per_sandbox_memory)).max(0);
+                let available_cpu =
+                    (total_cpu_millicores - (active_sandboxes * per_sandbox_cpu)).max(0);
+                let available_disk =
+                    (total_disk_mb - (active_sandboxes as i64 * per_sandbox_disk)).max(0);
 
                 let result = client
                     .heartbeat(HeartbeatRequest {

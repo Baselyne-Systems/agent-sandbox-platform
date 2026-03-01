@@ -124,8 +124,8 @@ func (s *Service) SetBudget(ctx context.Context, tenantID, agentID string, limit
 
 // CostReport holds the result of a cost report query.
 type CostReport struct {
-	TotalCost  float64
-	RecordCount int
+	TotalCost      float64
+	RecordCount    int
 	ByResourceType []ResourceCost
 }
 

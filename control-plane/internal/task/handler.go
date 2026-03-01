@@ -107,21 +107,21 @@ func (h *Handler) CancelTask(ctx context.Context, req *pb.CancelTaskRequest) (*p
 
 func taskToProto(t *models.Task) *pb.Task {
 	p := &pb.Task{
-		TaskId:                         t.ID,
-		TenantId:                       t.TenantID,
-		AgentId:                        t.AgentID,
-		Goal:                           t.Goal,
-		Status:                         modelTaskStatusToProto(t.Status),
-		WorkspaceId:                    t.WorkspaceID,
-		GuardrailPolicyId:              t.GuardrailPolicyID,
-		WorkspaceConfig:                modelWSConfigToProto(&t.WorkspaceConfig),
-		HumanInteraction:               modelHIConfigToProto(&t.HumanInteractionConfig),
-		Budget:                         modelBudgetConfigToProto(&t.BudgetConfig),
-		MaxDurationWithoutCheckinSecs:  t.MaxDurationWithoutCheckinSecs,
-		Input:                          t.Input,
-		Labels:                         t.Labels,
-		CreatedAt:                      timestamppb.New(t.CreatedAt),
-		UpdatedAt:                      timestamppb.New(t.UpdatedAt),
+		TaskId:                        t.ID,
+		TenantId:                      t.TenantID,
+		AgentId:                       t.AgentID,
+		Goal:                          t.Goal,
+		Status:                        modelTaskStatusToProto(t.Status),
+		WorkspaceId:                   t.WorkspaceID,
+		GuardrailPolicyId:             t.GuardrailPolicyID,
+		WorkspaceConfig:               modelWSConfigToProto(&t.WorkspaceConfig),
+		HumanInteraction:              modelHIConfigToProto(&t.HumanInteractionConfig),
+		Budget:                        modelBudgetConfigToProto(&t.BudgetConfig),
+		MaxDurationWithoutCheckinSecs: t.MaxDurationWithoutCheckinSecs,
+		Input:                         t.Input,
+		Labels:                        t.Labels,
+		CreatedAt:                     timestamppb.New(t.CreatedAt),
+		UpdatedAt:                     timestamppb.New(t.UpdatedAt),
 	}
 	if t.CompletedAt != nil {
 		p.CompletedAt = timestamppb.New(*t.CompletedAt)
@@ -169,11 +169,11 @@ func protoTaskStatusToModel(s pb.TaskStatus) models.TaskStatus {
 
 func modelWSConfigToProto(c *models.TaskWorkspaceConfig) *pb.TaskWorkspaceConfig {
 	return &pb.TaskWorkspaceConfig{
-		IsolationTier: c.IsolationTier,
-		Persistent:    c.Persistent,
-		MemoryMb:      c.MemoryMb,
-		CpuMillicores: c.CpuMillicores,
-		DiskMb:        c.DiskMb,
+		IsolationTier:   c.IsolationTier,
+		Persistent:      c.Persistent,
+		MemoryMb:        c.MemoryMb,
+		CpuMillicores:   c.CpuMillicores,
+		DiskMb:          c.DiskMb,
 		MaxDurationSecs: c.MaxDurationSecs,
 		AllowedTools:    c.AllowedTools,
 		EnvVars:         c.EnvVars,
