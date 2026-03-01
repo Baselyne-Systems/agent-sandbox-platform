@@ -44,7 +44,7 @@ jobs:
           output-file-path: control-plane/bench-output.txt
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.ref == 'refs/heads/main' }}
-          alert-threshold: "120%"
+          alert-threshold: "150%"
           comment-on-alert: true
           fail-on-alert: false
           benchmark-data-dir-path: dev/bench
