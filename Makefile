@@ -11,7 +11,7 @@ build-go:
 	cd control-plane && go build ./...
 
 build-bkctl:
-	cd control-plane && go build -ldflags "-X github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli.version=$$(git describe --tags --always 2>/dev/null || echo dev) -X github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli.date=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o bkctl ./cmd/bkctl
+	cd cmd/bkctl && go build -ldflags "-X github.com/Baselyne-Systems/bulkhead/cmd/bkctl/internal/cli.version=$$(git describe --tags --always 2>/dev/null || echo dev) -X github.com/Baselyne-Systems/bulkhead/cmd/bkctl/internal/cli.commit=$$(git rev-parse --short HEAD 2>/dev/null || echo unknown) -X github.com/Baselyne-Systems/bulkhead/cmd/bkctl/internal/cli.date=$$(date -u +%Y-%m-%dT%H:%M:%SZ)" -o ../../bkctl .
 
 build-rust:
 	cd runtime && cargo build

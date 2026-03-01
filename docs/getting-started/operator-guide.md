@@ -18,11 +18,11 @@ This guide walks you through deploying and operating the Bulkhead platform. You'
 ```bash
 # Build from source
 make build-bkctl
-# Binary is at control-plane/bkctl — move it to your PATH
-mv control-plane/bkctl /usr/local/bin/
+# Binary is at the repo root — move it to your PATH
+mv bkctl /usr/local/bin/
 
 # Or build directly with Go
-cd control-plane && go build -o bkctl ./cmd/bkctl
+cd cmd/bkctl && go build -o bkctl .
 ```
 
 By default, `bkctl` connects to `localhost` using well-known ports. Override with `--control-plane` or per-service endpoint flags. Run `bkctl --help` for all options.

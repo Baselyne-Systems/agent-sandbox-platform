@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/cmd/bkctl/internal/cli"
+	"github.com/Baselyne-Systems/bulkhead/cmd/bkctl/internal/cli"
 )
 
 func main() {

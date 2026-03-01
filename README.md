@@ -171,10 +171,11 @@ bulkhead/
 │       ├── governance/v1/          #   Data classification, DLP
 │       └── task/v1/                #   Task lifecycle
 │
+├── cmd/
+│   └── bkctl/                      # Operator CLI (bkctl)
+│
 ├── control-plane/                  # Go microservices (9 services)
-│   ├── cmd/
-│   │   ├── bkctl/                  #   Operator CLI (bkctl)
-│   │   └── .../                    #   Service entry points
+│   ├── cmd/                        #   Service entry points
 │   ├── internal/                   #   Business logic per service
 │   └── migrations/                 #   SQL schema migrations (13 files)
 │

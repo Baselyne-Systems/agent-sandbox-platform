@@ -1,6 +1,6 @@
 # Go
 control-plane/pkg/gen/
-control-plane/bkctl
+/bkctl
 control-plane/human
 control-plane/task
 control-plane/workspace
