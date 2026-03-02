@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/governance/v1"
+	pb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/governance/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

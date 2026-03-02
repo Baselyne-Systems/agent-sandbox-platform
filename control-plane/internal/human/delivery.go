@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 // Deliverer sends a human interaction request notification to an external endpoint.

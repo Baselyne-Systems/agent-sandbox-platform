@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 // ResourceCost holds aggregated cost data for a single resource type.

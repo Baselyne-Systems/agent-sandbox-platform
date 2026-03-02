@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 	"github.com/lib/pq"
 )
 

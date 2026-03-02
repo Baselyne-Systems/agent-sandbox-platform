@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	activitypb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/activity/v1"
+	activitypb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/activity/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

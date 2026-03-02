@@ -3,7 +3,7 @@ package activity
 import (
 	"context"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 // AlertRepository defines persistence operations for alert configs and alerts.

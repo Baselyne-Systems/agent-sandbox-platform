@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	pb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/compute/v1"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
+	pb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/compute/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

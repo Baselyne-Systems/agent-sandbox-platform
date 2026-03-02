@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	guardrailspb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/guardrails/v1"
+	guardrailspb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/guardrails/v1"
 )
 
 var guardrailCmd = &cobra.Command{

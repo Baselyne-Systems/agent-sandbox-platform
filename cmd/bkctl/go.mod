@@ -1,9 +1,9 @@
-module github.com/Baselyne-Systems/bulkhead/cmd/bkctl
+module github.com/achyuthnsamudrala/bulkhead/cmd/bkctl
 
 go 1.24.0
 
 require (
-	github.com/Baselyne-Systems/bulkhead/control-plane v0.0.0
+	github.com/achyuthnsamudrala/bulkhead/control-plane v0.0.0
 	github.com/spf13/cobra v1.10.2
 	google.golang.org/grpc v1.78.0
 	google.golang.org/protobuf v1.36.11
@@ -18,4 +18,4 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
 )
 
-replace github.com/Baselyne-Systems/bulkhead/control-plane => ../../control-plane
+replace github.com/achyuthnsamudrala/bulkhead/control-plane => ../../control-plane

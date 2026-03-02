@@ -3,7 +3,7 @@ package workspace
 import (
 	"testing"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 func TestTierSelector_DecisionMatrix(t *testing.T) {

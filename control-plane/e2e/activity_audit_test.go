@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/activity"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/activity"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 func TestActionRecordingAndQuery(t *testing.T) {

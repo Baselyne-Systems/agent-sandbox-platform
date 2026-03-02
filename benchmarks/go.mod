@@ -1,9 +1,9 @@
-module github.com/Baselyne-Systems/bulkhead/benchmarks
+module github.com/achyuthnsamudrala/bulkhead/benchmarks
 
 go 1.24.0
 
 require (
-	github.com/Baselyne-Systems/bulkhead/control-plane v0.0.0
+	github.com/achyuthnsamudrala/bulkhead/control-plane v0.0.0
 	google.golang.org/grpc v1.78.0
 )
 
@@ -15,4 +15,4 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 )
 
-replace github.com/Baselyne-Systems/bulkhead/control-plane => ../control-plane
+replace github.com/achyuthnsamudrala/bulkhead/control-plane => ../control-plane

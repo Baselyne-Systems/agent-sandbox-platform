@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	economicspb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/economics/v1"
+	economicspb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/economics/v1"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 

@@ -11,10 +11,10 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/activity"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/identity"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/workspace"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/activity"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/identity"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/workspace"
 )
 
 // ---------------------------------------------------------------------------

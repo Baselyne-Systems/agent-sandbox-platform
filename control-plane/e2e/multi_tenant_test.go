@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/guardrails"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/identity"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/task"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/guardrails"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/identity"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/task"
 )
 
 func TestCrossTenantIsolation(t *testing.T) {

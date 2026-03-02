@@ -1,6 +1,6 @@
 package workspace
 
-import "github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+import "github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 
 // TierSelector auto-selects an isolation tier based on agent trust level
 // and data classification. The decision matrix escalates isolation as

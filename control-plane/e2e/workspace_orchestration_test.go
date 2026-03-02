@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 func TestWorkspaceFullOrchestration(t *testing.T) {

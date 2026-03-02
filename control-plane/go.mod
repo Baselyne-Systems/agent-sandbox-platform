@@ -1,4 +1,4 @@
-module github.com/Baselyne-Systems/bulkhead/control-plane
+module github.com/achyuthnsamudrala/bulkhead/control-plane
 
 go 1.24.0
 

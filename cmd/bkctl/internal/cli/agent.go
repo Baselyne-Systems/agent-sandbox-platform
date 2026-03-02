@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	identitypb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/identity/v1"
+	identitypb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/identity/v1"
 )
 
 var agentCmd = &cobra.Command{

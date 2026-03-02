@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 // mockAlertRepo is a hand-written in-memory AlertRepository for testing.

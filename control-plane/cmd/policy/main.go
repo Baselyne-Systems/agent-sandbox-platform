@@ -4,11 +4,11 @@
 package main
 
 import (
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/boot"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/governance"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/guardrails"
-	governancepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/governance/v1"
-	guardrailspb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/guardrails/v1"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/boot"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/governance"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/guardrails"
+	governancepb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/governance/v1"
+	guardrailspb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/guardrails/v1"
 )
 
 func main() {

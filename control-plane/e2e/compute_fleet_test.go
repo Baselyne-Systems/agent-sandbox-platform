@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/compute"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/compute"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 func TestHostRegistrationAndHeartbeat(t *testing.T) {

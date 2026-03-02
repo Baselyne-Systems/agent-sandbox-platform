@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	workspacepb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/workspace/v1"
+	workspacepb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/workspace/v1"
 )
 
 var workspaceCmd = &cobra.Command{

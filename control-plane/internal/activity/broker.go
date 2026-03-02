@@ -3,7 +3,7 @@ package activity
 import (
 	"sync"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 const subscriberBufferSize = 256

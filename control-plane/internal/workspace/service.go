@@ -8,8 +8,8 @@ import (
 
 	"go.uber.org/zap"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	hostagentpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/host_agent/v1"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
+	hostagentpb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/host_agent/v1"
 )
 
 var (

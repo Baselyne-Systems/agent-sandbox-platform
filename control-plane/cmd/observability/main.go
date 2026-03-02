@@ -7,14 +7,14 @@ import (
 	"context"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/activity"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/adapters"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/boot"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/economics"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/human"
-	activitypb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/activity/v1"
-	economicspb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/economics/v1"
-	humanpb "github.com/Baselyne-Systems/bulkhead/control-plane/pkg/gen/human/v1"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/activity"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/adapters"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/boot"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/economics"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/human"
+	activitypb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/activity/v1"
+	economicspb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/economics/v1"
+	humanpb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/human/v1"
 )
 
 func main() {

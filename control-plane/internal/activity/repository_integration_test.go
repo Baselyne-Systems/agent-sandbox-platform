@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/testutil"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/testutil"
 )
 
 // wsUUID generates a deterministic valid UUID for workspace IDs in tests.

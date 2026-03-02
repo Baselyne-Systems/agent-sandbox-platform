@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/Baselyne-Systems/bulkhead/control-plane/internal/models"
+	"github.com/achyuthnsamudrala/bulkhead/control-plane/internal/models"
 )
 
 func BenchmarkRegisterHost(b *testing.B) {
