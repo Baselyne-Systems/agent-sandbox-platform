@@ -15,7 +15,7 @@
 | Docker Compose | v2+ | Service orchestration |
 | buf | latest | Proto generation (Go) |
 | protoc | 3.x | Protocol buffer compiler |
-| grpcurl | latest | Manual API testing (optional — `bkctl` covers most workflows) |
+| grpcurl | latest | Manual API testing (optional — `bkctl` covers all workflows) |
 
 ### Quick Start
 

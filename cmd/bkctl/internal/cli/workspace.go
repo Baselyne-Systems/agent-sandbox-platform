@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	workspacepb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/workspace/v1"
+	"github.com/spf13/cobra"
 )
 
 var workspaceCmd = &cobra.Command{

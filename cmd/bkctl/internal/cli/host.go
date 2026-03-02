@@ -17,6 +17,7 @@ func init() {
 	hostCmd.AddCommand(hostListCmd)
 	hostCmd.AddCommand(hostCapacityCmd)
 	hostCmd.AddCommand(hostConfigureWarmPoolCmd)
+	hostCmd.AddCommand(hostDeregisterCmd)
 }
 
 var hostHeaders = []string{"HOST ID", "ADDRESS", "STATUS", "MEMORY (AVAIL/TOTAL)", "CPU (AVAIL/TOTAL)", "SANDBOXES", "TIERS", "LAST HEARTBEAT"}
@@ -199,4 +200,38 @@ func init() {
 	hostConfigureWarmPoolCmd.Flags().Int64("memory", 512, "Memory per warm slot in MB")
 	hostConfigureWarmPoolCmd.Flags().Int32("cpu", 1000, "CPU per warm slot in millicores")
 	hostConfigureWarmPoolCmd.Flags().Int64("disk", 1024, "Disk per warm slot in MB")
+}
+
+// --- Deregister ---
+
+var hostDeregisterCmd = &cobra.Command{
+	Use:   "deregister [host-id]",
+	Short: "Deregister a host from the fleet",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := resolveID(cmd, args, "host-id")
+		if err != nil {
+			return err
+		}
+
+		conn, err := dialService(cmd, "compute")
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		client := computepb.NewComputePlaneServiceClient(conn)
+		_, err = client.DeregisterHost(cmd.Context(), &computepb.DeregisterHostRequest{
+			HostId: id,
+		})
+		if err != nil {
+			return grpcError(err)
+		}
+
+		fmt.Printf("Host %s deregistered.\n", id)
+		return nil
+	},
+}
+
+func init() {
+	hostDeregisterCmd.Flags().String("host-id", "", "Host ID")
 }

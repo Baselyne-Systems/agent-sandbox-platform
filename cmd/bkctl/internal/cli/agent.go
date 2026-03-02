@@ -2,9 +2,10 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/spf13/cobra"
 	identitypb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/identity/v1"
+	"github.com/spf13/cobra"
 )
 
 var agentCmd = &cobra.Command{
@@ -19,6 +20,7 @@ func init() {
 	agentCmd.AddCommand(agentSuspendCmd)
 	agentCmd.AddCommand(agentReactivateCmd)
 	agentCmd.AddCommand(agentUpdateTrustCmd)
+	agentCmd.AddCommand(agentMintCredentialCmd)
 }
 
 var agentHeaders = []string{"AGENT ID", "NAME", "STATUS", "TRUST LEVEL", "OWNER", "CREATED"}
@@ -308,4 +310,53 @@ func init() {
 	agentUpdateTrustCmd.Flags().String("agent-id", "", "Agent ID (required)")
 	agentUpdateTrustCmd.Flags().String("trust-level", "", "Trust level: new, established, trusted (required)")
 	agentUpdateTrustCmd.Flags().String("justification", "", "Justification for the change")
+}
+
+// --- Mint Credential ---
+
+var agentMintCredentialCmd = &cobra.Command{
+	Use:   "mint-credential",
+	Short: "Mint a scoped credential for an agent",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		agentID, _ := cmd.Flags().GetString("agent-id")
+		if agentID == "" {
+			return fmt.Errorf("--agent-id is required")
+		}
+
+		conn, err := dialService(cmd, "identity")
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		scopes, _ := cmd.Flags().GetStringSlice("scopes")
+		ttl, _ := cmd.Flags().GetInt64("ttl-seconds")
+
+		client := identitypb.NewIdentityServiceClient(conn)
+		resp, err := client.MintCredential(cmd.Context(), &identitypb.MintCredentialRequest{
+			AgentId:    agentID,
+			Scopes:     scopes,
+			TtlSeconds: ttl,
+		})
+		if err != nil {
+			return grpcError(err)
+		}
+
+		cred := resp.GetCredential()
+		credHeaders := []string{"CREDENTIAL ID", "AGENT ID", "SCOPES", "EXPIRES", "TOKEN"}
+		rows := [][]string{{
+			cred.GetCredentialId(),
+			cred.GetAgentId(),
+			strings.Join(cred.GetScopes(), ","),
+			formatTimestamp(cred.GetExpiresAt()),
+			resp.GetToken(),
+		}}
+		return outputResult(cmd, credHeaders, rows, resp)
+	},
+}
+
+func init() {
+	agentMintCredentialCmd.Flags().String("agent-id", "", "Agent ID (required)")
+	agentMintCredentialCmd.Flags().StringSlice("scopes", nil, "Credential scopes (e.g. workspace:create,tool:execute)")
+	agentMintCredentialCmd.Flags().Int64("ttl-seconds", 3600, "Token TTL in seconds (default 1 hour, max 24 hours)")
 }

@@ -17,6 +17,7 @@ func init() {
 	taskCmd.AddCommand(taskGetCmd)
 	taskCmd.AddCommand(taskListCmd)
 	taskCmd.AddCommand(taskCancelCmd)
+	taskCmd.AddCommand(taskUpdateStatusCmd)
 }
 
 var taskHeaders = []string{"TASK ID", "AGENT ID", "GOAL", "STATUS", "WORKSPACE ID", "CREATED"}
@@ -266,3 +267,45 @@ func init() {
 	taskCancelCmd.Flags().String("reason", "", "Cancellation reason")
 }
 
+// --- Update Status ---
+
+var taskUpdateStatusCmd = &cobra.Command{
+	Use:   "update-status [task-id]",
+	Short: "Update a task's status",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := resolveID(cmd, args, "task-id")
+		if err != nil {
+			return err
+		}
+		status, _ := cmd.Flags().GetString("status")
+		if status == "" {
+			return fmt.Errorf("--status is required")
+		}
+		reason, _ := cmd.Flags().GetString("reason")
+
+		conn, err := dialService(cmd, "task")
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		client := taskpb.NewTaskServiceClient(conn)
+		resp, err := client.UpdateTaskStatus(cmd.Context(), &taskpb.UpdateTaskStatusRequest{
+			TaskId: id,
+			Status: parseTaskStatus(status),
+			Reason: reason,
+		})
+		if err != nil {
+			return grpcError(err)
+		}
+
+		t := resp.GetTask()
+		return outputResult(cmd, taskHeaders, [][]string{taskRow(t)}, resp)
+	},
+}
+
+func init() {
+	taskUpdateStatusCmd.Flags().String("task-id", "", "Task ID")
+	taskUpdateStatusCmd.Flags().String("status", "", "New status: pending, running, waiting_on_human, completed, failed, cancelled (required)")
+	taskUpdateStatusCmd.Flags().String("reason", "", "Reason for the status change")
+}

@@ -3,9 +3,11 @@ package cli
 import (
 	"fmt"
 	"strings"
+	"time"
 
-	"github.com/spf13/cobra"
 	guardrailspb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/guardrails/v1"
+	"github.com/spf13/cobra"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var guardrailCmd = &cobra.Command{
@@ -23,6 +25,7 @@ func init() {
 	guardrailCmd.AddCommand(grSimulateCmd)
 	guardrailCmd.AddCommand(grCreateSetCmd)
 	guardrailCmd.AddCommand(grListSetsCmd)
+	guardrailCmd.AddCommand(grBehaviorReportCmd)
 }
 
 var ruleHeaders = []string{"RULE ID", "NAME", "TYPE", "ACTION", "PRIORITY", "ENABLED"}
@@ -474,4 +477,68 @@ func parseRuleIDsCSV(s string) []string {
 		return nil
 	}
 	return strings.Split(s, ",")
+}
+
+// --- Behavior Report ---
+
+var grBehaviorReportCmd = &cobra.Command{
+	Use:   "behavior-report",
+	Short: "Get a behavior analysis report for an agent",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		agentID, _ := cmd.Flags().GetString("agent-id")
+		if agentID == "" {
+			return fmt.Errorf("--agent-id is required")
+		}
+		windowStart, _ := cmd.Flags().GetString("window-start")
+		if windowStart == "" {
+			return fmt.Errorf("--window-start is required (RFC3339 format)")
+		}
+		windowEnd, _ := cmd.Flags().GetString("window-end")
+		if windowEnd == "" {
+			return fmt.Errorf("--window-end is required (RFC3339 format)")
+		}
+
+		startT, err := time.Parse(time.RFC3339, windowStart)
+		if err != nil {
+			return fmt.Errorf("invalid --window-start: %w", err)
+		}
+		endT, err := time.Parse(time.RFC3339, windowEnd)
+		if err != nil {
+			return fmt.Errorf("invalid --window-end: %w", err)
+		}
+
+		conn, err := dialService(cmd, "guardrails")
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+
+		client := guardrailspb.NewGuardrailsServiceClient(conn)
+		resp, err := client.GetBehaviorReport(cmd.Context(), &guardrailspb.GetBehaviorReportRequest{
+			AgentId:     agentID,
+			WindowStart: timestamppb.New(startT),
+			WindowEnd:   timestamppb.New(endT),
+		})
+		if err != nil {
+			return grpcError(err)
+		}
+
+		r := resp.GetReport()
+		brHeaders := []string{"AGENT ID", "ACTIONS", "DENIAL RATE", "ERROR RATE", "FLAGS", "RECOMMENDATION"}
+		rows := [][]string{{
+			r.GetAgentId(),
+			fmt.Sprintf("%d", r.GetActionCount()),
+			fmt.Sprintf("%.1f%%", r.GetDenialRate()*100),
+			fmt.Sprintf("%.1f%%", r.GetErrorRate()*100),
+			strings.Join(r.GetFlags(), ", "),
+			r.GetRecommendation(),
+		}}
+		return outputResult(cmd, brHeaders, rows, resp)
+	},
+}
+
+func init() {
+	grBehaviorReportCmd.Flags().String("agent-id", "", "Agent ID (required)")
+	grBehaviorReportCmd.Flags().String("window-start", "", "Window start (RFC3339, required)")
+	grBehaviorReportCmd.Flags().String("window-end", "", "Window end (RFC3339, required)")
 }

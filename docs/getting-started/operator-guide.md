@@ -116,15 +116,13 @@ For Kubernetes or ECS deployments where each service has its own DNS name, skip 
 
 ```bash
 # List all hosts in the fleet
-grpcurl -plaintext -d '{}' \
-  localhost:50060 platform.compute.v1.ComputePlaneService/ListHosts
+bkctl host list
 
 # List only hosts that are ready for placement
-grpcurl -plaintext -d '{"status": "HOST_STATUS_READY"}' \
-  localhost:50060 platform.compute.v1.ComputePlaneService/ListHosts
+bkctl host list --status ready
 ```
 
-Each host entry shows its `host_id`, `address`, `status`, `total_resources`, `available_resources`, `active_sandboxes`, `last_heartbeat`, and `supported_tiers`.
+Each host entry shows its `host_id`, `address`, `status`, memory/CPU (available and total), `active_sandboxes`, `supported_tiers`, and `last_heartbeat`.
 
 ### Host lifecycle
 
@@ -134,11 +132,10 @@ Each host entry shows its `host_id`, `address`, `status`, `total_resources`, `av
 | `DRAINING` | Set by operator — no new workspaces placed, existing ones continue |
 | `OFFLINE` | Automatically set after 3 minutes without a heartbeat |
 
-To drain a host for maintenance, use `DeregisterHost`:
+To drain a host for maintenance:
 
 ```bash
-grpcurl -plaintext -d '{"host_id": "<host_id>"}' \
-  localhost:50060 platform.compute.v1.ComputePlaneService/DeregisterHost
+bkctl host deregister <host_id>
 ```
 
 When the host comes back and its Host Agent restarts, it will re-register and return to `READY` status.
@@ -153,37 +150,30 @@ Warm pools pre-reserve sandbox slots on hosts so workspace placement can claim a
 
 ```bash
 # Pre-warm 5 hardened slots (512 MB, 1000 mCPU, 10 GB each)
-grpcurl -plaintext -d '{
-  "config": {
-    "isolation_tier": "hardened",
-    "target_count": 5,
-    "memory_mb": 512,
-    "cpu_millicores": 1000,
-    "disk_mb": 10240
-  }
-}' localhost:50060 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
+bkctl host configure-warm-pool \
+  --isolation-tier hardened \
+  --target-count 5 \
+  --memory 512 \
+  --cpu 1000 \
+  --disk 10240
 
 # Pre-warm 3 standard slots
-grpcurl -plaintext -d '{
-  "config": {
-    "isolation_tier": "standard",
-    "target_count": 3,
-    "memory_mb": 1024,
-    "cpu_millicores": 2000,
-    "disk_mb": 20480
-  }
-}' localhost:50060 platform.compute.v1.ComputePlaneService/ConfigureWarmPool
+bkctl host configure-warm-pool \
+  --isolation-tier standard \
+  --target-count 3 \
+  --memory 1024 \
+  --cpu 2000 \
+  --disk 20480
 ```
 
 ### Check fleet capacity
 
 ```bash
-grpcurl -plaintext -d '{}' \
-  localhost:50060 platform.compute.v1.ComputePlaneService/GetCapacity
-# Returns: tiers[] (with warm_slots_target/warm_slots_ready), total_hosts, ready_hosts
+bkctl host capacity
+# Returns: per-tier breakdown with warm_slots_target/warm_slots_ready, total_hosts, ready_hosts
 ```
 
-The warm pool worker runs every 30 seconds. After configuring targets, slots begin filling automatically. Use `GetCapacity` to monitor progress.
+The warm pool worker runs every 30 seconds. After configuring targets, slots begin filling automatically. Use `bkctl host capacity` to monitor progress.
 
 ---
 
@@ -205,12 +195,11 @@ bkctl agent list
 # Get details for a specific agent
 bkctl agent get <agent_id>
 
-# Mint a scoped credential (1 hour TTL) — not yet in bkctl, use grpcurl
-grpcurl -plaintext -d '{
-  "agent_id": "<agent_id from above>",
-  "scopes": ["workspace:create", "tool:execute"],
-  "ttl_seconds": 3600
-}' localhost:50060 platform.identity.v1.IdentityService/MintCredential
+# Mint a scoped credential (1 hour TTL)
+bkctl agent mint-credential \
+  --agent-id <agent_id> \
+  --scopes workspace:create,tool:execute \
+  --ttl-seconds 3600
 # Response includes a one-time "token" field — save it for authenticated calls
 ```
 
@@ -268,12 +257,11 @@ bkctl guardrail list-sets
 When creating a task, reference the set by name with the `set:` prefix instead of listing individual rule IDs:
 
 ```bash
-grpcurl -plaintext -d '{
-  "agent_id": "<agent_id>",
-  "goal": "Process invoices",
-  "guardrail_policy_id": "set:production-policy",
-  ...
-}' localhost:50060 platform.task.v1.TaskService/CreateTask
+bkctl task create \
+  --agent-id <agent_id> \
+  --goal "Process invoices" \
+  --guardrail-set-id "set:production-policy" \
+  --image myregistry/invoice-agent:latest
 ```
 
 The Guardrails Service resolves `"set:production-policy"` to the set's rule IDs at policy compilation time.
@@ -323,31 +311,22 @@ Creating a task and transitioning it to `RUNNING` triggers the full orchestratio
 4. **Sandbox Creation** — deploy a Docker container with the tier-specific security profile and egress rules applied
 
 ```bash
-grpcurl -plaintext -d '{
-  "agent_id": "<agent_id>",
-  "goal": "Process all pending invoices for Q4",
-  "workspace_config": {
-    "memory_mb": 1024,
-    "cpu_millicores": 500,
-    "disk_mb": 2048,
-    "max_duration_secs": 3600,
-    "allowed_tools": ["read_file", "write_file", "http_request"],
-    "container_image": "myregistry/invoice-agent:latest",
-    "egress_allowlist": ["api.internal.example.com", "10.0.0.0/8"]
-  },
-  "guardrail_policy_id": "<rule_id_1>,<rule_id_2>",
-  "budget_config": {
-    "max_cost": 50.00,
-    "currency": "USD",
-    "on_exceeded": "BUDGET_ON_EXCEEDED_HALT"
-  }
-}' localhost:50060 platform.task.v1.TaskService/CreateTask
+# Create the task
+bkctl task create \
+  --agent-id <agent_id> \
+  --goal "Process all pending invoices for Q4" \
+  --image myregistry/invoice-agent:latest \
+  --memory 1024 \
+  --cpu 500 \
+  --disk 2048 \
+  --allowed-tools read_file,write_file,http_request \
+  --egress-allowlist api.internal.example.com,10.0.0.0/8 \
+  --guardrail-set-id "<rule_id_1>,<rule_id_2>" \
+  --budget 50.00 \
+  --on-exceeded halt
 
 # Transition task to running (triggers workspace provisioning)
-grpcurl -plaintext -d '{
-  "task_id": "<task_id>",
-  "status": "TASK_STATUS_RUNNING"
-}' localhost:50060 platform.task.v1.TaskService/UpdateTaskStatus
+bkctl task update-status <task_id> --status running
 ```
 
 ### What happens under the hood
@@ -381,24 +360,22 @@ Inside a running sandbox, the agent calls the Agent API with its sandbox ID in m
 
 ```bash
 # Evaluate a tool call
-grpcurl -plaintext \
-  -H "x-sandbox-id: <sandbox_id>" \
-  -d '{
-    "tool_name": "read_file",
-    "parameters": {"path": "/data/invoices/inv-001.json"},
-    "justification": "Reading invoice for processing"
-  }' localhost:50052 platform.host_agent.v1.HostAgentAPIService/ExecuteTool
+bkctl sandbox evaluate-tool \
+  --sandbox-id <sandbox_id> \
+  --tool-name read_file \
+  --parameters '{"path": "/data/invoices/inv-001.json"}' \
+  --justification "Reading invoice for processing"
 # Returns: verdict (ALLOW/DENY/ESCALATE), action_id
 
 # After executing the tool locally, report the result
-grpcurl -plaintext \
-  -H "x-sandbox-id: <sandbox_id>" \
-  -d '{
-    "action_id": "<action_id from above>",
-    "success": true,
-    "result": {"content": "...invoice data..."}
-  }' localhost:50052 platform.host_agent.v1.HostAgentAPIService/ReportActionResult
+bkctl sandbox report-result \
+  --sandbox-id <sandbox_id> \
+  --action-id <action_id> \
+  --success \
+  --result '{"content": "...invoice data..."}'
 ```
+
+> **Note:** In production, agents call these APIs automatically via the [Python SDK](agent-guide.md). The `bkctl sandbox` commands are useful for debugging and testing policy evaluation.
 
 ---
 
@@ -406,29 +383,25 @@ grpcurl -plaintext \
 
 ```bash
 # Agent requests human input (non-blocking)
-grpcurl -plaintext \
-  -H "x-sandbox-id: <sandbox_id>" \
-  -d '{
-    "question": "Invoice #INV-2024-789 is for $50,000. Approve payment?",
-    "options": ["approve", "reject", "flag for review"],
-    "context": "Vendor: Acme Corp, Amount: $50,000, Due: 2024-03-15",
-    "timeout_seconds": 300
-  }' localhost:50052 platform.host_agent.v1.HostAgentAPIService/RequestHumanInput
+bkctl sandbox request-human-input \
+  --sandbox-id <sandbox_id> \
+  --question "Invoice #INV-2024-789 is for $50,000. Approve payment?" \
+  --options approve,reject,"flag for review" \
+  --context "Vendor: Acme Corp, Amount: $50,000, Due: 2024-03-15" \
+  --timeout-seconds 300
 # Returns: request_id (agent can continue working)
 
-# Agent polls for response
-grpcurl -plaintext -d '{
-  "request_id": "<request_id>"
-}' localhost:50052 platform.host_agent.v1.HostAgentAPIService/CheckHumanRequest
+# Check the request status
+bkctl sandbox check-human-request <request_id>
 # Returns: status (pending/responded/expired), response, responder_id
 
 # Human responds (via operator API)
-grpcurl -plaintext -d '{
-  "request_id": "<request_id>",
-  "response": "approve",
-  "responder_id": "user-jane"
-}' localhost:50065 platform.human.v1.HumanInteractionService/RespondToRequest
+bkctl human respond <request_id> \
+  --response approve \
+  --responder-id user-jane
 ```
+
+> **Note:** In production, agents create human interaction requests via the [Python SDK](agent-guide.md). The `bkctl sandbox` and `bkctl human` commands let operators respond and debug the flow.
 
 ---
 
@@ -457,10 +430,8 @@ bkctl activity export \
   --format json \
   --output-file actions.json
 
-# Get sandbox status (not in bkctl — use grpcurl)
-grpcurl -plaintext -d '{
-  "sandbox_id": "<sandbox_id>"
-}' localhost:50052 platform.host_agent.v1.HostAgentService/GetSandboxStatus
+# Get sandbox status
+bkctl sandbox status <sandbox_id>
 ```
 
 ---
@@ -508,11 +479,10 @@ bkctl activity resolve-alert <alert_id>
 The considered evaluation tier analyzes agent behavior over time windows:
 
 ```bash
-grpcurl -plaintext -d '{
-  "agent_id": "<agent_id>",
-  "window_start": "2026-02-28T00:00:00Z",
-  "window_end": "2026-02-28T12:00:00Z"
-}' localhost:50062 platform.guardrails.v1.GuardrailsService/GetBehaviorReport
+bkctl guardrail behavior-report \
+  --agent-id <agent_id> \
+  --window-start 2026-02-28T00:00:00Z \
+  --window-end 2026-02-28T12:00:00Z
 # Returns: action_count, denial_rate, error_rate, flags[], recommendation
 ```
 
@@ -529,12 +499,10 @@ grpcurl -plaintext -d '{
 Set up webhook delivery for human interaction requests:
 
 ```bash
-grpcurl -plaintext -d '{
-  "user_id": "user-jane",
-  "channel_type": "webhook",
-  "endpoint": "https://hooks.example.com/bulkhead-his",
-  "enabled": true
-}' localhost:50065 platform.human.v1.HumanInteractionService/ConfigureDeliveryChannel
+bkctl human configure-delivery \
+  --user-id user-jane \
+  --channel-type webhook \
+  --endpoint https://hooks.example.com/bulkhead-his
 ```
 
 When an agent creates a human interaction request, enabled channels receive a webhook POST with a standard JSON payload:
@@ -561,10 +529,8 @@ Community adapters can bridge this webhook to Slack, email, Teams, PagerDuty, et
 # Terminate a workspace directly
 bkctl workspace terminate <workspace_id> --reason "Task complete"
 
-# Cancel the task (terminates workspace + sandbox) — task service not yet in bkctl
-grpcurl -plaintext -d '{
-  "task_id": "<task_id>"
-}' localhost:50060 platform.task.v1.TaskService/CancelTask
+# Cancel the task (terminates workspace + sandbox)
+bkctl task cancel <task_id> --reason "Task complete"
 
 # Stop the stack
 docker compose -f deploy/docker-compose.yml down

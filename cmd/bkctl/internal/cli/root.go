@@ -21,6 +21,7 @@ var defaultPorts = map[string]string{
 	"economics":  "50065",
 	"compute":    "50060",
 	"task":       "50060",
+	"host-agent": "50052",
 }
 
 var rootCmd = &cobra.Command{
@@ -52,6 +53,7 @@ func init() {
 	rootCmd.AddCommand(hostCmd)
 	rootCmd.AddCommand(activityCmd)
 	rootCmd.AddCommand(budgetCmd)
+	rootCmd.AddCommand(sandboxCmd)
 	rootCmd.AddCommand(versionCmd)
 }
 
@@ -121,6 +123,8 @@ func envKey(service string) string {
 		return "COMPUTE"
 	case "task":
 		return "TASK"
+	case "host-agent":
+		return "HOST_AGENT"
 	default:
 		return service
 	}

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/cobra"
 	economicspb "github.com/achyuthnsamudrala/bulkhead/control-plane/pkg/gen/economics/v1"
+	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
