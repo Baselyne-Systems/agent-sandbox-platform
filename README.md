@@ -118,23 +118,41 @@ Auto-selection matrix:
 
 ## Quick Start
 
+### Write an agent
+
+```python
+from bulkhead import BulkheadAgent, Verdict, tool
+
+@tool("read_invoice", description="Read a JSON invoice from disk")
+def read_invoice(path: str) -> dict:
+    with open(path) as f:
+        return json.load(f)
+
+@tool("validate_total", description="Validate invoice line items sum to total")
+def validate_total(invoice: dict) -> dict:
+    line_total = sum(item["amount"] for item in invoice.get("line_items", []))
+    return {"valid": abs(line_total - invoice.get("total", 0)) < 0.01}
+
+with BulkheadAgent(tools=[read_invoice, validate_total]) as agent:
+    result = agent.execute_tool("read_invoice", {"path": "/workspace/inv-001.json"})
+
+    if result.verdict == Verdict.DENY:
+        print(f"Blocked: {result.denial_reason}")  # guardrail fired
+    elif result.verdict == Verdict.ESCALATE:
+        print(f"Needs human approval: {result.escalation_id}")
+    else:
+        validation = agent.execute_tool("validate_total", {"invoice": result.result})
+```
+
+Every `execute_tool` call passes through guardrails, budget checks, and DLP before the tool runs. Denied calls never execute.
+
+### Run the platform
+
 ```bash
-# Build everything
-make build
-
-# Build the operator CLI
-make build-bkctl
-
-# Run all unit tests
-make test
-
-# Start the full stack (3 Go + 1 Rust + PostgreSQL)
+# Start the full stack (control plane + host agent + PostgreSQL)
 docker compose -f deploy/docker-compose.yml up --build
 
-# Verify services are healthy
-docker compose -f deploy/docker-compose.yml ps
-
-# Use bkctl to manage the platform
+# Manage agents and policies
 bkctl agent list
 bkctl guardrail list-rules
 bkctl budget get <agent-id> -o json
