@@ -1,281 +1,295 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1, user-scalable=yes" />
-    <style>
-      html {
-        font-family: BlinkMacSystemFont,-apple-system,"Segoe UI",Roboto,Oxygen,Ubuntu,Cantarell,"Fira Sans","Droid Sans","Helvetica Neue",Helvetica,Arial,sans-serif;
-        -webkit-font-smoothing: antialiased;
-        background-color: #fff;
-        font-size: 16px;
-      }
-      body {
-        color: #4a4a4a;
-        margin: 8px;
-        font-size: 1em;
-        font-weight: 400;
-      }
-      header {
-        margin-bottom: 8px;
-        display: flex;
-        flex-direction: column;
-      }
-      main {
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-      a {
-        color: #3273dc;
-        cursor: pointer;
-        text-decoration: none;
-      }
-      a:hover {
-        color: #000;
-      }
-      button {
-        color: #fff;
-        background-color: #3298dc;
-        border-color: transparent;
-        cursor: pointer;
-        text-align: center;
-      }
-      button:hover {
-        background-color: #2793da;
-        flex: none;
-      }
-      .spacer {
-        flex: auto;
-      }
-      .small {
-        font-size: 0.75rem;
-      }
-      footer {
-        margin-top: 16px;
-        display: flex;
-        align-items: center;
-      }
-      .header-label {
-        margin-right: 4px;
-      }
-      .benchmark-set {
-        margin: 8px 0;
-        width: 100%;
-        display: flex;
-        flex-direction: column;
-      }
-      .benchmark-title {
-        font-size: 3rem;
-        font-weight: 600;
-        word-break: break-word;
-        text-align: center;
-      }
-      .benchmark-graphs {
-        display: flex;
-        flex-direction: row;
-        justify-content: space-around;
-        align-items: center;
-        flex-wrap: wrap;
-        width: 100%;
-      }
-      .benchmark-chart {
-        max-width: 1000px;
-      }
-    </style>
-    <title>Benchmarks</title>
-  </head>
-
-  <body>
-    <header id="header">
-      <div class="header-item">
-        <strong class="header-label">Last Update:</strong>
-        <span id="last-update"></span>
-      </div>
-      <div class="header-item">
-        <strong class="header-label">Repository:</strong>
-        <a id="repository-link" rel="noopener"></a>
-      </div>
-    </header>
-    <main id="main"></main>
-    <footer>
-      <button id="dl-button">Download data as JSON</button>
-      <div class="spacer"></div>
-      <div class="small">Powered by <a rel="noopener" href="https://github.com/marketplace/actions/continuous-benchmark">github-action-benchmark</a></div>
-    </footer>
-
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@2.9.2/dist/Chart.min.js"></script>
-    <script src="data.js"></script>
-    <script id="main-script">
-      'use strict';
-      (function() {
-        // Colors from https://github.com/github/linguist/blob/master/lib/linguist/languages.yml
-        const toolColors = {
-          cargo: '#dea584',
-          go: '#00add8',
-          benchmarkjs: '#f1e05a',
-          benchmarkluau: '#000080',
-          pytest: '#3572a5',
-          googlecpp: '#f34b7d',
-          catch2: '#f34b7d',
-          julia: '#a270ba',
-          jmh: '#b07219',
-          benchmarkdotnet: '#178600',
-          customBiggerIsBetter: '#38ff38',
-          customSmallerIsBetter: '#ff3838',
-          _: '#333333'
-        };
-
-        function init() {
-          function collectBenchesPerTestCase(entries) {
-            const map = new Map();
-            for (const entry of entries) {
-              const {commit, date, tool, benches} = entry;
-              for (const bench of benches) {
-                const result = { commit, date, tool, bench };
-                const arr = map.get(bench.name);
-                if (arr === undefined) {
-                  map.set(bench.name, [result]);
-                } else {
-                  arr.push(result);
-                }
-              }
-            }
-            return map;
-          }
-
-          const data = window.BENCHMARK_DATA;
-
-          // Render header
-          document.getElementById('last-update').textContent = new Date(data.lastUpdate).toString();
-          const repoLink = document.getElementById('repository-link');
-          repoLink.href = data.repoUrl;
-          repoLink.textContent = data.repoUrl;
-
-          // Render footer
-          document.getElementById('dl-button').onclick = () => {
-            const dataUrl = 'data:,' + JSON.stringify(data, null, 2);
-            const a = document.createElement('a');
-            a.href = dataUrl;
-            a.download = 'benchmark_data.json';
-            a.click();
-          };
-
-          // Prepare data points for charts
-          return Object.keys(data.entries).map(name => ({
-            name,
-            dataSet: collectBenchesPerTestCase(data.entries[name]),
-          }));
-        }
-
-        function renderAllChars(dataSets) {
-
-          function renderGraph(parent, name, dataset) {
-            const canvas = document.createElement('canvas');
-            canvas.className = 'benchmark-chart';
-            parent.appendChild(canvas);
-
-            const color = toolColors[dataset.length > 0 ? dataset[0].tool : '_'];
-            const data = {
-              labels: dataset.map(d => d.commit.id.slice(0, 7)),
-              datasets: [
-                {
-                  label: name,
-                  data: dataset.map(d => d.bench.value),
-                  borderColor: color,
-                  backgroundColor: color + '60', // Add alpha for #rrggbbaa
-                }
-              ],
-            };
-            const options = {
-              scales: {
-                xAxes: [
-                  {
-                    scaleLabel: {
-                      display: true,
-                      labelString: 'commit',
-                    },
-                  }
-                ],
-                yAxes: [
-                  {
-                    scaleLabel: {
-                      display: true,
-                      labelString: dataset.length > 0 ? dataset[0].bench.unit : '',
-                    },
-                    ticks: {
-                      beginAtZero: true,
-                    }
-                  }
-                ],
-              },
-              tooltips: {
-                callbacks: {
-                  afterTitle: items => {
-                    const {index} = items[0];
-                    const data = dataset[index];
-                    return '\n' + data.commit.message + '\n\n' + data.commit.timestamp + ' committed by @' + data.commit.committer.username + '\n';
-                  },
-                  label: item => {
-                    let label = item.value;
-                    const { range, unit } = dataset[item.index].bench;
-                    label += ' ' + unit;
-                    if (range) {
-                      label += ' (' + range + ')';
-                    }
-                    return label;
-                  },
-                  afterLabel: item => {
-                    const { extra } = dataset[item.index].bench;
-                    return extra ? '\n' + extra : '';
-                  }
-                }
-              },
-              onClick: (_mouseEvent, activeElems) => {
-                if (activeElems.length === 0) {
-                  return;
-                }
-                // XXX: Undocumented. How can we know the index?
-                const index = activeElems[0]._index;
-                const url = dataset[index].commit.url;
-                window.open(url, '_blank');
-              },
-            };
-
-            new Chart(canvas, {
-              type: 'line',
-              data,
-              options,
-            });
-          }
-
-          function renderBenchSet(name, benchSet, main) {
-            const setElem = document.createElement('div');
-            setElem.className = 'benchmark-set';
-            main.appendChild(setElem);
-
-            const nameElem = document.createElement('h1');
-            nameElem.className = 'benchmark-title';
-            nameElem.textContent = name;
-            setElem.appendChild(nameElem);
-
-            const graphsElem = document.createElement('div');
-            graphsElem.className = 'benchmark-graphs';
-            setElem.appendChild(graphsElem);
-
-            for (const [benchName, benches] of benchSet.entries()) {
-              renderGraph(graphsElem, benchName, benches)
-            }
-          }
-
-          const main = document.getElementById('main');
-          for (const {name, dataSet} of dataSets) {
-            renderBenchSet(name, dataSet, main);
-          }
-        }
-
-        renderAllChars(init()); // Start
-      })();
-    </script>
-  </body>
-</html>
+<html><head><meta charset='utf-8'><title>Bulkhead Benchmarks</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:1200px;margin:0 auto;padding:20px;background:#0d1117;color:#c9d1d9}
+h1{color:#58a6ff} h2{color:#79c0ff;margin-top:2em;border-bottom:1px solid #30363d;padding-bottom:8px}
+table{border-collapse:collapse;width:100%;margin:12px 0}
+th,td{border:1px solid #30363d;padding:6px 12px;text-align:left}
+th{background:#161b22;color:#58a6ff;font-weight:600}
+tr:nth-child(even){background:#161b22} tr:hover{background:#1c2333}
+td:nth-child(2),td:nth-child(3),td:nth-child(4),td:nth-child(5){text-align:right;font-family:'SF Mono',Monaco,monospace;font-size:0.9em}
+.meta{color:#8b949e;font-size:0.85em}
+</style></head><body>
+<h1>Bulkhead Benchmark Results</h1>
+<p class='meta'>Updated: 2026-03-02 05:18 UTC &mdash; 242 benchmarks across 9 packages</p>
+<h2>Packages</h2><ul>
+<li><a href='#activity'>activity</a> (36)</li>
+<li><a href='#compute'>compute</a> (28)</li>
+<li><a href='#economics'>economics</a> (19)</li>
+<li><a href='#governance'>governance</a> (34)</li>
+<li><a href='#guardrails'>guardrails</a> (34)</li>
+<li><a href='#human'>human</a> (25)</li>
+<li><a href='#identity'>identity</a> (25)</li>
+<li><a href='#task'>task</a> (22)</li>
+<li><a href='#workspace'>workspace</a> (19)</li>
+</ul>
+<h2 id='activity'>activity</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkRecordAction</td><td>746066</td><td>1669</td><td>658</td><td>5</td></tr>
+<tr><td>BenchmarkRecordAction_LargePayload</td><td>710245</td><td>1672</td><td>614</td><td>4</td></tr>
+<tr><td>BenchmarkGetAction</td><td>4097173</td><td>257.5</td><td>240</td><td>1</td></tr>
+<tr><td>BenchmarkQueryActions_Scaling/n=100</td><td>254608</td><td>5329</td><td>8200</td><td>8</td></tr>
+<tr><td>BenchmarkQueryActions_Scaling/n=1000</td><td>20101</td><td>57644</td><td>65544</td><td>11</td></tr>
+<tr><td>BenchmarkQueryActions_Scaling/n=10000</td><td>982</td><td>1030869</td><td>786448</td><td>15</td></tr>
+<tr><td>BenchmarkQueryActions_MultiFilter</td><td>43898</td><td>27013</td><td>16392</td><td>9</td></tr>
+<tr><td>BenchmarkRecordAction_Parallel</td><td>1000000</td><td>1729</td><td>679</td><td>5</td></tr>
+<tr><td>BenchmarkGetAction_Parallel</td><td>8042574</td><td>142.9</td><td>240</td><td>1</td></tr>
+<tr><td>BenchmarkRecordAction_VaryingPayloadSizes/100B</td><td>1000000</td><td>1146</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_VaryingPayloadSizes/1KB</td><td>1000000</td><td>1257</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_VaryingPayloadSizes/4KB</td><td>1000000</td><td>1203</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_VaryingPayloadSizes/16KB</td><td>1000000</td><td>1163</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_VaryingPayloadSizes/64KB</td><td>1000000</td><td>1270</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_AllOutcomes/Allowed</td><td>1000000</td><td>1263</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_AllOutcomes/Denied</td><td>1000000</td><td>1243</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_AllOutcomes/Escalated</td><td>1000000</td><td>1226</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_AllOutcomes/Error</td><td>1000000</td><td>1186</td><td>647</td><td>4</td></tr>
+<tr><td>BenchmarkRecordAction_WithLatencies</td><td>1000000</td><td>1315</td><td>687</td><td>6</td></tr>
+<tr><td>BenchmarkQueryActions_ScalingExtended/n=100</td><td>223328</td><td>4756</td><td>8200</td><td>8</td></tr>
+<tr><td>BenchmarkQueryActions_ScalingExtended/n=1000</td><td>20877</td><td>57262</td><td>65544</td><td>11</td></tr>
+<tr><td>BenchmarkQueryActions_ScalingExtended/n=10000</td><td>954</td><td>1200186</td><td>786449</td><td>15</td></tr>
+<tr><td>BenchmarkQueryActions_ScalingExtended/n=50000</td><td>145</td><td>8201386</td><td>4964371</td><td>20</td></tr>
+<tr><td>BenchmarkQueryActions_AllFilters</td><td>5858</td><td>204158</td><td>65545</td><td>11</td></tr>
+<tr><td>BenchmarkQueryActions_TimeRange</td><td>170</td><td>6966681</td><td>4964410</td><td>22</td></tr>
+<tr><td>BenchmarkConfigureAlert_AllConditions/DenialRate</td><td>1000000</td><td>1099</td><td>447</td><td>5</td></tr>
+<tr><td>BenchmarkConfigureAlert_AllConditions/ErrorRate</td><td>1000000</td><td>1077</td><td>447</td><td>5</td></tr>
+<tr><td>BenchmarkConfigureAlert_AllConditions/ActionVelocity</td><td>1000000</td><td>1097</td><td>455</td><td>5</td></tr>
+<tr><td>BenchmarkConfigureAlert_AllConditions/BudgetBreach</td><td>1000000</td><td>1149</td><td>455</td><td>5</td></tr>
+<tr><td>BenchmarkConfigureAlert_AllConditions/StuckAgent</td><td>1000000</td><td>1095</td><td>447</td><td>5</td></tr>
+<tr><td>BenchmarkAlertLifecycle_ConfigResolve</td><td>14553</td><td>118244</td><td>918</td><td>10</td></tr>
+<tr><td>BenchmarkExportActions_JSON</td><td>460</td><td>2570901</td><td>2189320</td><td>2064</td></tr>
+<tr><td>BenchmarkExportActions_CSV</td><td>676</td><td>1790071</td><td>1825443</td><td>3053</td></tr>
+<tr><td>BenchmarkMultiTenantActionIsolation</td><td>2535</td><td>481214</td><td>262157</td><td>13</td></tr>
+<tr><td>BenchmarkRecordAction_HighThroughput</td><td>865501</td><td>1625</td><td>650</td><td>7</td></tr>
+<tr><td>BenchmarkQueryActions_PaginationWalk</td><td>7</td><td>150175162</td><td>115288109</td><td>920</td></tr>
+</tbody></table>
+<h2 id='compute'>compute</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkRegisterHost</td><td>1000000</td><td>1151</td><td>503</td><td>5</td></tr>
+<tr><td>BenchmarkPlaceWorkspace</td><td>4813240</td><td>245.1</td><td>192</td><td>3</td></tr>
+<tr><td>BenchmarkListHosts_Scaling/n=10</td><td>493141</td><td>2441</td><td>5320</td><td>8</td></tr>
+<tr><td>BenchmarkListHosts_Scaling/n=100</td><td>45426</td><td>26653</td><td>43336</td><td>11</td></tr>
+<tr><td>BenchmarkListHosts_Scaling/n=1000</td><td>3405</td><td>461016</td><td>346447</td><td>14</td></tr>
+<tr><td>BenchmarkDeregisterHost</td><td>3086553</td><td>392.8</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_LargeFleet</td><td>44794</td><td>26740</td><td>17744</td><td>14</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_Parallel</td><td>258242</td><td>4222</td><td>2384</td><td>11</td></tr>
+<tr><td>BenchmarkRegisterHost_Parallel</td><td>1000000</td><td>1606</td><td>527</td><td>7</td></tr>
+<tr><td>BenchmarkHeartbeat_Parallel</td><td>6226105</td><td>190.7</td><td>160</td><td>1</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_MinResources</td><td>4892710</td><td>243.8</td><td>192</td><td>3</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_MaxResources</td><td>4891728</td><td>244.0</td><td>192</td><td>3</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_TierFiltered/standard</td><td>371626</td><td>3045</td><td>1232</td><td>10</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_TierFiltered/hardened</td><td>371572</td><td>2966</td><td>1232</td><td>10</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_TierFiltered/isolated</td><td>481846</td><td>2455</td><td>464</td><td>8</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_NearCapacity</td><td>87285</td><td>13169</td><td>125</td><td>0</td></tr>
+<tr><td>BenchmarkConfigureWarmPool</td><td>13443606</td><td>88.07</td><td>96</td><td>2</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_WarmPoolHit</td><td>665748</td><td>1756</td><td>256</td><td>2</td></tr>
+<tr><td>BenchmarkListHosts_LargeFleet/n=100</td><td>44287</td><td>26902</td><td>43336</td><td>11</td></tr>
+<tr><td>BenchmarkListHosts_LargeFleet/n=500</td><td>7623</td><td>158609</td><td>190794</td><td>13</td></tr>
+<tr><td>BenchmarkListHosts_LargeFleet/n=2000</td><td>1239</td><td>979990</td><td>895323</td><td>16</td></tr>
+<tr><td>BenchmarkListHosts_LargeFleet/n=5000</td><td>283</td><td>4224203</td><td>3631480</td><td>22</td></tr>
+<tr><td>BenchmarkGetCapacity_LargeFleet/n=100</td><td>289106</td><td>4090</td><td>728</td><td>9</td></tr>
+<tr><td>BenchmarkGetCapacity_LargeFleet/n=500</td><td>61262</td><td>19699</td><td>728</td><td>9</td></tr>
+<tr><td>BenchmarkGetCapacity_LargeFleet/n=2000</td><td>13477</td><td>89054</td><td>728</td><td>9</td></tr>
+<tr><td>BenchmarkMixedHeartbeatAndPlacement</td><td>564570</td><td>1841</td><td>1063</td><td>3</td></tr>
+<tr><td>BenchmarkPlaceWorkspace_HighContention</td><td>1295811</td><td>902.0</td><td>464</td><td>8</td></tr>
+<tr><td>BenchmarkHostLifecycle_RegisterDeregister</td><td>1517136</td><td>791.5</td><td>944</td><td>11</td></tr>
+</tbody></table>
+<h2 id='economics'>economics</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkRecordUsage</td><td>2032371</td><td>529.4</td><td>387</td><td>3</td></tr>
+<tr><td>BenchmarkGetBudget</td><td>16058812</td><td>70.41</td><td>160</td><td>1</td></tr>
+<tr><td>BenchmarkSetBudget</td><td>2510914</td><td>478.1</td><td>536</td><td>5</td></tr>
+<tr><td>BenchmarkCheckBudget</td><td>10392655</td><td>110.3</td><td>208</td><td>2</td></tr>
+<tr><td>BenchmarkRecordUsage_WithBudgetUpdate</td><td>2194276</td><td>618.3</td><td>384</td><td>3</td></tr>
+<tr><td>BenchmarkRecordUsage_Parallel</td><td>1714590</td><td>731.6</td><td>385</td><td>3</td></tr>
+<tr><td>BenchmarkCheckBudget_Parallel</td><td>9346219</td><td>131.4</td><td>208</td><td>2</td></tr>
+<tr><td>BenchmarkCheckBudget_NearLimit</td><td>10401318</td><td>115.6</td><td>208</td><td>2</td></tr>
+<tr><td>BenchmarkCheckBudget_OverLimit_Halt</td><td>10195069</td><td>117.9</td><td>208</td><td>2</td></tr>
+<tr><td>BenchmarkCheckBudget_OverLimit_Warn</td><td>10454353</td><td>117.7</td><td>208</td><td>2</td></tr>
+<tr><td>BenchmarkCheckBudget_NoBudget</td><td>31371541</td><td>38.35</td><td>48</td><td>1</td></tr>
+<tr><td>BenchmarkSetBudget_Upsert</td><td>2374426</td><td>512.9</td><td>536</td><td>5</td></tr>
+<tr><td>BenchmarkRecordUsage_WithBudgetUpdate_Parallel</td><td>1797884</td><td>721.7</td><td>393</td><td>3</td></tr>
+<tr><td>BenchmarkGetCostReport_ManyResourceTypes</td><td>46513</td><td>25740</td><td>1816</td><td>19</td></tr>
+<tr><td>BenchmarkGetCostReport_LargeDataset</td><td>6630</td><td>184897</td><td>368</td><td>7</td></tr>
+<tr><td>BenchmarkBudgetLifecycle_SetCheckRecord</td><td>1000000</td><td>1232</td><td>1448</td><td>15</td></tr>
+<tr><td>BenchmarkMultiTenantBudgetIsolation</td><td>9137857</td><td>133.1</td><td>208</td><td>2</td></tr>
+<tr><td>BenchmarkRecordUsage_HighFrequency</td><td>1395136</td><td>850.4</td><td>392</td><td>4</td></tr>
+<tr><td>BenchmarkCheckBudget_WarningThreshold</td><td>10292432</td><td>116.7</td><td>208</td><td>2</td></tr>
+</tbody></table>
+<h2 id='governance'>governance</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkClassifyData_SmallPayload</td><td>435894</td><td>2762</td><td>32</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_LargePayload</td><td>156</td><td>7674196</td><td>49214</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_NoMatch</td><td>6074</td><td>197367</td><td>1420</td><td>1</td></tr>
+<tr><td>BenchmarkCheckPolicy</td><td>51614892</td><td>23.75</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkClassifyData_Parallel</td><td>127180</td><td>9543</td><td>128</td><td>3</td></tr>
+<tr><td>BenchmarkClassifyData_PayloadScaling/10B</td><td>237842</td><td>5039</td><td>48</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_PayloadScaling/100B</td><td>73963</td><td>16135</td><td>128</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_PayloadScaling/1KB</td><td>8054</td><td>181401</td><td>1040</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_PayloadScaling/10KB</td><td>772</td><td>1550532</td><td>10372</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_PayloadScaling/100KB</td><td>72</td><td>16234040</td><td>106524</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_PayloadScaling/1MB</td><td>7</td><td>165747505</td><td>1049664</td><td>7</td></tr>
+<tr><td>BenchmarkClassifyData_AllPatterns/phone</td><td>8666</td><td>138290</td><td>1044</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_AllPatterns/ssn</td><td>7924</td><td>151275</td><td>1044</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_AllPatterns/credit_card</td><td>7884</td><td>152732</td><td>1040</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_AllPatterns/aws_key</td><td>7945</td><td>150001</td><td>1049</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_AllPatterns/email</td><td>8460</td><td>141319</td><td>1040</td><td>2</td></tr>
+<tr><td>BenchmarkClassifyData_MultiplePatterns</td><td>97202</td><td>12351</td><td>272</td><td>4</td></tr>
+<tr><td>BenchmarkClassifyData_NoPatterns</td><td>7411</td><td>161000</td><td>1029</td><td>1</td></tr>
+<tr><td>BenchmarkClassifyData_DensePatterns</td><td>5034</td><td>233965</td><td>11036</td><td>4</td></tr>
+<tr><td>BenchmarkCheckPolicy_AllClassifications/Public</td><td>73305936</td><td>15.48</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_AllClassifications/Internal</td><td>77290344</td><td>15.43</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_AllClassifications/Confidential</td><td>50585107</td><td>23.51</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_AllClassifications/Restricted</td><td>81711685</td><td>15.15</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_ApprovedDestinations/internal-api</td><td>49589040</td><td>24.34</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_ApprovedDestinations/secure-storage</td><td>44873935</td><td>26.37</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_ApprovedDestinations/audit-log</td><td>50604903</td><td>22.96</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_DeniedDestinations/external-api</td><td>45082172</td><td>26.78</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_DeniedDestinations/public-bucket</td><td>44097402</td><td>27.44</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_DeniedDestinations/unknown-service</td><td>40521157</td><td>28.89</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCheckPolicy_Parallel</td><td>50842399</td><td>23.29</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkInspectEgress_Parallel</td><td>209266</td><td>5956</td><td>96</td><td>3</td></tr>
+<tr><td>BenchmarkInspectEgress_LargePayload</td><td>72</td><td>16226322</td><td>106613</td><td>2</td></tr>
+<tr><td>BenchmarkInspectEgress_CleanPayload</td><td>1830</td><td>644115</td><td>4116</td><td>1</td></tr>
+<tr><td>BenchmarkInspectEgress_DirtyPayload</td><td>4458</td><td>265557</td><td>2736</td><td>3</td></tr>
+</tbody></table>
+<h2 id='guardrails'>guardrails</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkCreateRule</td><td>1000000</td><td>1727</td><td>1079</td><td>6</td></tr>
+<tr><td>BenchmarkGetRule</td><td>7235936</td><td>163.4</td><td>336</td><td>2</td></tr>
+<tr><td>BenchmarkListRules_Scaling/n=100</td><td>28231</td><td>42280</td><td>84105</td><td>111</td></tr>
+<tr><td>BenchmarkListRules_Scaling/n=1000</td><td>1676</td><td>705658</td><td>1020248</td><td>1015</td></tr>
+<tr><td>BenchmarkListRules_Scaling/n=10000</td><td>52</td><td>20625804</td><td>14993702</td><td>10026</td></tr>
+<tr><td>BenchmarkCompilePolicy</td><td>37465</td><td>32142</td><td>40785</td><td>109</td></tr>
+<tr><td>BenchmarkCreateRule_Parallel</td><td>779563</td><td>1694</td><td>823</td><td>8</td></tr>
+<tr><td>BenchmarkGetRule_Parallel</td><td>4915207</td><td>232.1</td><td>336</td><td>2</td></tr>
+<tr><td>BenchmarkCompilePolicy_Scaling/rules=1</td><td>1524772</td><td>787.0</td><td>664</td><td>5</td></tr>
+<tr><td>BenchmarkCompilePolicy_Scaling/rules=10</td><td>185280</td><td>6490</td><td>8604</td><td>27</td></tr>
+<tr><td>BenchmarkCompilePolicy_Scaling/rules=50</td><td>38458</td><td>31199</td><td>42136</td><td>109</td></tr>
+<tr><td>BenchmarkCompilePolicy_Scaling/rules=100</td><td>19167</td><td>62557</td><td>84648</td><td>210</td></tr>
+<tr><td>BenchmarkCompilePolicy_Scaling/rules=500</td><td>3518</td><td>334107</td><td>407062</td><td>1014</td></tr>
+<tr><td>BenchmarkCompilePolicy_ComplexScopes</td><td>15427</td><td>77917</td><td>73861</td><td>209</td></tr>
+<tr><td>BenchmarkSimulatePolicy_SingleRule</td><td>2509057</td><td>482.2</td><td>776</td><td>7</td></tr>
+<tr><td>BenchmarkSimulatePolicy_ManyRules/rules=10</td><td>228577</td><td>5010</td><td>13152</td><td>40</td></tr>
+<tr><td>BenchmarkSimulatePolicy_ManyRules/rules=50</td><td>56925</td><td>21168</td><td>56032</td><td>162</td></tr>
+<tr><td>BenchmarkSimulatePolicy_ManyRules/rules=100</td><td>26088</td><td>45024</td><td>114593</td><td>313</td></tr>
+<tr><td>BenchmarkSimulatePolicy_ManyRules/rules=500</td><td>4887</td><td>249041</td><td>501161</td><td>1515</td></tr>
+<tr><td>BenchmarkSimulatePolicy_ParameterCheck</td><td>2498126</td><td>479.2</td><td>776</td><td>7</td></tr>
+<tr><td>BenchmarkCreateRule_AllTypes/tool_filter</td><td>1000000</td><td>1574</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllTypes/parameter_check</td><td>1000000</td><td>1632</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllTypes/rate_limit</td><td>1000000</td><td>1528</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllTypes/budget_limit</td><td>1000000</td><td>1418</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllActions/allow</td><td>1000000</td><td>1412</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllActions/deny</td><td>1000000</td><td>1477</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllActions/escalate</td><td>1000000</td><td>1451</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkCreateRule_AllActions/log</td><td>1000000</td><td>1440</td><td>839</td><td>6</td></tr>
+<tr><td>BenchmarkListRules_WithTypeFilter</td><td>8439</td><td>141803</td><td>173226</td><td>262</td></tr>
+<tr><td>BenchmarkListRules_EnabledOnlyFilter</td><td>4188</td><td>282960</td><td>349069</td><td>513</td></tr>
+<tr><td>BenchmarkCreateGuardrailSet</td><td>753813</td><td>2567</td><td>1410</td><td>9</td></tr>
+<tr><td>BenchmarkMultiTenantRuleAccess</td><td>5384199</td><td>223.5</td><td>336</td><td>2</td></tr>
+<tr><td>BenchmarkUpdateRule_Parallel</td><td>2456628</td><td>481.9</td><td>624</td><td>3</td></tr>
+<tr><td>BenchmarkDeleteRule_Throughput</td><td>830174</td><td>1446</td><td>0</td><td>0</td></tr>
+</tbody></table>
+<h2 id='human'>human</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkCreateRequest</td><td>855896</td><td>1886</td><td>1082</td><td>10</td></tr>
+<tr><td>BenchmarkRespondToRequest</td><td>484688</td><td>2503</td><td>976</td><td>7</td></tr>
+<tr><td>BenchmarkListRequests_Scaling/n=100</td><td>32293</td><td>36116</td><td>78921</td><td>11</td></tr>
+<tr><td>BenchmarkListRequests_Scaling/n=1000</td><td>1905</td><td>748113</td><td>922713</td><td>15</td></tr>
+<tr><td>BenchmarkListRequests_Scaling/n=10000</td><td>52</td><td>22127889</td><td>13341865</td><td>27</td></tr>
+<tr><td>BenchmarkCreateRequest_Parallel</td><td>604708</td><td>2373</td><td>1116</td><td>11</td></tr>
+<tr><td>BenchmarkGetRequest_Parallel</td><td>5023244</td><td>241.6</td><td>280</td><td>2</td></tr>
+<tr><td>BenchmarkRespondToRequest_Throughput</td><td>460257</td><td>2543</td><td>1008</td><td>8</td></tr>
+<tr><td>BenchmarkCreateRequest_AllUrgencies/low</td><td>702502</td><td>2010</td><td>1095</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_AllUrgencies/normal</td><td>780751</td><td>1911</td><td>1087</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_AllUrgencies/high</td><td>765954</td><td>1984</td><td>1089</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_AllUrgencies/critical</td><td>770965</td><td>1997</td><td>1088</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_AllTypes/approval</td><td>768826</td><td>2093</td><td>1088</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_AllTypes/question</td><td>763054</td><td>1842</td><td>1089</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_AllTypes/escalation</td><td>750058</td><td>2066</td><td>1090</td><td>10</td></tr>
+<tr><td>BenchmarkCreateRequest_LargeOptions</td><td>634267</td><td>2442</td><td>1360</td><td>9</td></tr>
+<tr><td>BenchmarkCreateRequest_LargeContext</td><td>743800</td><td>2039</td><td>1091</td><td>10</td></tr>
+<tr><td>BenchmarkListRequests_50K</td><td>9</td><td>124576166</td><td>75633853</td><td>34</td></tr>
+<tr><td>BenchmarkListRequests_WithWorkspaceFilter</td><td>5475</td><td>196913</td><td>78921</td><td>11</td></tr>
+<tr><td>BenchmarkListRequests_WithStatusFilter</td><td>387</td><td>3173318</td><td>2102379</td><td>18</td></tr>
+<tr><td>BenchmarkRequestLifecycle_CreateRespondGet</td><td>627366</td><td>1911</td><td>2784</td><td>27</td></tr>
+<tr><td>BenchmarkConfigureDeliveryChannel</td><td>6416054</td><td>184.8</td><td>160</td><td>2</td></tr>
+<tr><td>BenchmarkSetTimeoutPolicy</td><td>5337202</td><td>225.3</td><td>208</td><td>3</td></tr>
+<tr><td>BenchmarkMultiTenantRequestIsolation</td><td>4375202</td><td>281.9</td><td>280</td><td>2</td></tr>
+<tr><td>BenchmarkMixedRequestWorkload</td><td>1273342</td><td>964.1</td><td>491</td><td>5</td></tr>
+</tbody></table>
+<h2 id='identity'>identity</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkGenerateToken</td><td>2663380</td><td>448.9</td><td>320</td><td>5</td></tr>
+<tr><td>BenchmarkHashToken</td><td>4949162</td><td>243.0</td><td>192</td><td>3</td></tr>
+<tr><td>BenchmarkRegisterAgent</td><td>1000000</td><td>1316</td><td>631</td><td>5</td></tr>
+<tr><td>BenchmarkGetAgent</td><td>8513995</td><td>179.2</td><td>256</td><td>2</td></tr>
+<tr><td>BenchmarkMintCredential</td><td>796365</td><td>1956</td><td>1038</td><td>12</td></tr>
+<tr><td>BenchmarkListAgents_Scaling/n=100</td><td>37839</td><td>30928</td><td>54664</td><td>11</td></tr>
+<tr><td>BenchmarkListAgents_Scaling/n=1000</td><td>2071</td><td>594056</td><td>693653</td><td>15</td></tr>
+<tr><td>BenchmarkListAgents_Scaling/n=10000</td><td>64</td><td>17780192</td><td>10556889</td><td>26</td></tr>
+<tr><td>BenchmarkDeactivateAgent</td><td>828464</td><td>1460</td><td>48</td><td>1</td></tr>
+<tr><td>BenchmarkRegisterAgent_Parallel</td><td>647683</td><td>2160</td><td>998</td><td>11</td></tr>
+<tr><td>BenchmarkGetAgent_Parallel</td><td>4803402</td><td>252.4</td><td>256</td><td>2</td></tr>
+<tr><td>BenchmarkMintCredential_Parallel</td><td>596136</td><td>2204</td><td>1061</td><td>12</td></tr>
+<tr><td>BenchmarkMixedReadWrite</td><td>1855150</td><td>672.5</td><td>377</td><td>3</td></tr>
+<tr><td>BenchmarkRegisterAgent_MaxLabels</td><td>1000000</td><td>1388</td><td>631</td><td>5</td></tr>
+<tr><td>BenchmarkRegisterAgent_MaxCapabilities</td><td>466929</td><td>2828</td><td>2461</td><td>7</td></tr>
+<tr><td>BenchmarkRegisterAgent_LongStrings</td><td>1000000</td><td>1424</td><td>679</td><td>6</td></tr>
+<tr><td>BenchmarkMultiTenantConcurrentReads</td><td>4452240</td><td>274.4</td><td>256</td><td>2</td></tr>
+<tr><td>BenchmarkMultiTenantListIsolation</td><td>4508</td><td>260466</td><td>226702</td><td>13</td></tr>
+<tr><td>BenchmarkAgentLifecycle_FullCycle</td><td>149401</td><td>8116</td><td>2992</td><td>31</td></tr>
+<tr><td>BenchmarkCredentialChurn</td><td>634305</td><td>2242</td><td>1136</td><td>14</td></tr>
+<tr><td>BenchmarkGenerateToken_Parallel</td><td>3248982</td><td>371.2</td><td>320</td><td>5</td></tr>
+<tr><td>BenchmarkHashToken_Parallel</td><td>6196492</td><td>197.6</td><td>192</td><td>3</td></tr>
+<tr><td>BenchmarkDeactivateAgent_ConcurrentCredentialAccess</td><td>448306</td><td>2708</td><td>48</td><td>1</td></tr>
+<tr><td>BenchmarkListAgents_100K</td><td>7</td><td>169334366</td><td>121304552</td><td>37</td></tr>
+<tr><td>BenchmarkGetAgent_HighCardinalityTenants</td><td>4094962</td><td>294.9</td><td>256</td><td>2</td></tr>
+</tbody></table>
+<h2 id='task'>task</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkCreateTask_Parallel</td><td>671072</td><td>1965</td><td>1251</td><td>10</td></tr>
+<tr><td>BenchmarkGetTask_Parallel</td><td>3251944</td><td>366.7</td><td>544</td><td>3</td></tr>
+<tr><td>BenchmarkCreateTask_WithFullConfig</td><td>592608</td><td>2615</td><td>1718</td><td>8</td></tr>
+<tr><td>BenchmarkCreateTask_LargeInput</td><td>233606</td><td>5595</td><td>3543</td><td>10</td></tr>
+<tr><td>BenchmarkCreateTask_LargeLabels</td><td>214449</td><td>5460</td><td>3506</td><td>10</td></tr>
+<tr><td>BenchmarkListTasks_Scaling/n=100</td><td>20220</td><td>58641</td><td>140233</td><td>211</td></tr>
+<tr><td>BenchmarkListTasks_Scaling/n=1000</td><td>982</td><td>1578348</td><td>1619309</td><td>2016</td></tr>
+<tr><td>BenchmarkListTasks_Scaling/n=10000</td><td>42</td><td>24965842</td><td>23241888</td><td>20026</td></tr>
+<tr><td>BenchmarkListTasks_Scaling/n=50000</td><td>9</td><td>121411206</td><td>131398824</td><td>100034</td></tr>
+<tr><td>BenchmarkListTasks_WithAgentFilter</td><td>11018</td><td>108642</td><td>140234</td><td>211</td></tr>
+<tr><td>BenchmarkListTasks_WithStatusFilter</td><td>2988</td><td>430140</td><td>547731</td><td>681</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/Pending_Running</td><td>524983</td><td>2296</td><td>1088</td><td>6</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/Running_Completed</td><td>487083</td><td>2437</td><td>1136</td><td>8</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/Running_Failed</td><td>492222</td><td>2447</td><td>1136</td><td>8</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/Running_WaitingOnHuman</td><td>578216</td><td>2054</td><td>1088</td><td>6</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/WaitingOnHuman_Running</td><td>566121</td><td>2139</td><td>1088</td><td>6</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/Pending_Cancelled</td><td>552091</td><td>2014</td><td>568</td><td>4</td></tr>
+<tr><td>BenchmarkStatusTransition_AllPaths/Running_Cancelled</td><td>588942</td><td>1990</td><td>568</td><td>4</td></tr>
+<tr><td>BenchmarkTaskLifecycle_HappyPath</td><td>196236</td><td>6010</td><td>3568</td><td>22</td></tr>
+<tr><td>BenchmarkCancelTask_Parallel</td><td>1000000</td><td>1246</td><td>568</td><td>4</td></tr>
+<tr><td>BenchmarkMultiTenantTaskIsolation</td><td>2875521</td><td>428.8</td><td>544</td><td>3</td></tr>
+<tr><td>BenchmarkMixedTaskWorkload</td><td>1000000</td><td>1026</td><td>845</td><td>5</td></tr>
+</tbody></table>
+<h2 id='workspace'>workspace</h2>
+<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>
+<tr><td>BenchmarkCreateWorkspace</td><td>1000000</td><td>1647</td><td>1079</td><td>8</td></tr>
+<tr><td>BenchmarkGetWorkspace</td><td>5474220</td><td>214.1</td><td>456</td><td>3</td></tr>
+<tr><td>BenchmarkListWorkspaces_Scaling/n=100</td><td>25862</td><td>46146</td><td>103177</td><td>111</td></tr>
+<tr><td>BenchmarkListWorkspaces_Scaling/n=1000</td><td>1452</td><td>830945</td><td>1235936</td><td>1016</td></tr>
+<tr><td>BenchmarkListWorkspaces_Scaling/n=10000</td><td>57</td><td>27502972</td><td>18535335</td><td>10026</td></tr>
+<tr><td>BenchmarkTerminateWorkspace</td><td>2034644</td><td>594.3</td><td>0</td><td>0</td></tr>
+<tr><td>BenchmarkCreateWorkspace_WithSpec</td><td>764544</td><td>2283</td><td>1329</td><td>9</td></tr>
+<tr><td>BenchmarkCreateWorkspace_Parallel</td><td>606858</td><td>2231</td><td>1108</td><td>12</td></tr>
+<tr><td>BenchmarkGetWorkspace_Parallel</td><td>3603822</td><td>328.6</td><td>456</td><td>3</td></tr>
+<tr><td>BenchmarkCreateWorkspace_FullSpec</td><td>607885</td><td>2627</td><td>1443</td><td>10</td></tr>
+<tr><td>BenchmarkCreateWorkspace_LargeEnvVars</td><td>238044</td><td>5678</td><td>3372</td><td>10</td></tr>
+<tr><td>BenchmarkCreateWorkspace_LargeEgressAllowlist</td><td>348972</td><td>3300</td><td>2840</td><td>9</td></tr>
+<tr><td>BenchmarkCreateWorkspace_LargeAllowedTools</td><td>479170</td><td>2708</td><td>1974</td><td>9</td></tr>
+<tr><td>BenchmarkListWorkspaces_50K</td><td>10</td><td>107167502</td><td>105398184</td><td>50034</td></tr>
+<tr><td>BenchmarkListWorkspaces_WithAgentFilter</td><td>14247</td><td>84695</td><td>103177</td><td>111</td></tr>
+<tr><td>BenchmarkListWorkspaces_WithStatusFilter</td><td>2198</td><td>508263</td><td>744756</td><td>680</td></tr>
+<tr><td>BenchmarkWorkspaceLifecycle_CreateTerminate</td><td>326982</td><td>3677</td><td>1168</td><td>8</td></tr>
+<tr><td>BenchmarkMultiTenantWorkspaceIsolation</td><td>3344691</td><td>354.1</td><td>456</td><td>3</td></tr>
+<tr><td>BenchmarkMixedWorkspaceWorkload</td><td>1612065</td><td>861.4</td><td>514</td><td>3</td></tr>
+</tbody></table>
+</body></html>
