@@ -138,11 +138,11 @@ bkctl agent register \
 bkctl guardrail create-rule \
   --name deny-shell \
   --type tool_filter \
-  --tool-pattern "shell*" \
+  --condition 'tool_name matches "shell*"' \
   --action deny
 
 # Set a $100 budget
-bkctl budget set <agent-id> --limit 100.00 --on-exceeded halt
+bkctl budget set --agent-id <agent-id> --max-cost 100.00 --on-exceeded halt
 ```
 
 **3. Create a task — the platform provisions everything**

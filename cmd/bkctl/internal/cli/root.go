@@ -45,8 +45,11 @@ func init() {
 	}
 
 	rootCmd.AddCommand(agentCmd)
+	rootCmd.AddCommand(taskCmd)
 	rootCmd.AddCommand(workspaceCmd)
 	rootCmd.AddCommand(guardrailCmd)
+	rootCmd.AddCommand(humanCmd)
+	rootCmd.AddCommand(hostCmd)
 	rootCmd.AddCommand(activityCmd)
 	rootCmd.AddCommand(budgetCmd)
 	rootCmd.AddCommand(versionCmd)
