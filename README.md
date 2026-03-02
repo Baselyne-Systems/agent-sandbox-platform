@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/achyuthnsamudrala/bulkhead/actions/workflows/ci.yml/badge.svg)](https://github.com/achyuthnsamudrala/bulkhead/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/achyuthnsamudrala/f31293e684419d918138980929f0288c/raw/bulkhead-coverage.json)](https://github.com/achyuthnsamudrala/bulkhead/actions/workflows/ci.yml)
-[![Benchmarks](https://github.com/achyuthnsamudrala/bulkhead/actions/workflows/benchmarks.yml/badge.svg)](https://achyuthnsamudrala.github.io/bulkhead/dev/bench/)
 
 **Bulkhead is an enterprise platform for running autonomous AI agents in production with enforced policy controls.**
 

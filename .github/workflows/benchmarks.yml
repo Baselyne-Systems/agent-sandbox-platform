@@ -36,7 +36,7 @@ jobs:
       - name: Run benchmarks
         run: go test -bench=. -benchmem -run='^$' -count=1 -timeout=10m ./internal/... | tee bench-output.txt
         working-directory: control-plane
-      - name: Store benchmark data
+      - name: Check for regressions
         uses: benchmark-action/github-action-benchmark@v1
         with:
           name: Go Benchmarks
@@ -47,86 +47,6 @@ jobs:
           alert-threshold: "150%"
           comment-on-alert: true
           fail-on-alert: false
-          benchmark-data-dir-path: dev/bench
-      - name: Publish benchmark table to gh-pages
-        if: github.ref == 'refs/heads/main'
-        shell: python3 {0}
-        run: |
-          import re, datetime, subprocess, os
-
-          with open("control-plane/bench-output.txt") as f:
-              lines = f.readlines()
-
-          services = {}
-          current = None
-          for line in lines:
-              m = re.match(r"^pkg:\s+.*/internal/(\S+)", line)
-              if m:
-                  current = m.group(1)
-                  if current not in services:
-                      services[current] = []
-                  continue
-              m = re.match(r"^(Benchmark\S+)-\d+\s+(\d+)\s+([\d.]+)\s+ns/op(?:\s+(\d+)\s+B/op)?(?:\s+(\d+)\s+allocs/op)?", line)
-              if m and current:
-                  services[current].append({
-                      "name": m.group(1),
-                      "iters": m.group(2),
-                      "nsop": m.group(3),
-                      "bop": m.group(4) or "\u2014",
-                      "aop": m.group(5) or "\u2014",
-                  })
-
-          ts = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-          total = sum(len(v) for v in services.values())
-
-          html = []
-          html.append("<!DOCTYPE html>")
-          html.append("<html><head><meta charset='utf-8'><title>Bulkhead Benchmarks</title>")
-          html.append("<style>")
-          html.append("body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:1200px;margin:0 auto;padding:20px;background:#0d1117;color:#c9d1d9}")
-          html.append("h1{color:#58a6ff} h2{color:#79c0ff;margin-top:2em;border-bottom:1px solid #30363d;padding-bottom:8px}")
-          html.append("table{border-collapse:collapse;width:100%;margin:12px 0}")
-          html.append("th,td{border:1px solid #30363d;padding:6px 12px;text-align:left}")
-          html.append("th{background:#161b22;color:#58a6ff;font-weight:600}")
-          html.append("tr:nth-child(even){background:#161b22} tr:hover{background:#1c2333}")
-          html.append("td:nth-child(2),td:nth-child(3),td:nth-child(4),td:nth-child(5){text-align:right;font-family:'SF Mono',Monaco,monospace;font-size:0.9em}")
-          html.append(".meta{color:#8b949e;font-size:0.85em}")
-          html.append("</style></head><body>")
-          html.append(f"<h1>Bulkhead Benchmark Results</h1>")
-          html.append(f"<p class='meta'>Updated: {ts} &mdash; {total} benchmarks across {len(services)} packages</p>")
-
-          html.append("<h2>Packages</h2><ul>")
-          for svc in services:
-              html.append(f"<li><a href='#{svc}'>{svc}</a> ({len(services[svc])})</li>")
-          html.append("</ul>")
-
-          for svc, benchmarks in services.items():
-              html.append(f"<h2 id='{svc}'>{svc}</h2>")
-              html.append("<table><thead><tr><th>Benchmark</th><th>Iterations</th><th>ns/op</th><th>B/op</th><th>allocs/op</th></tr></thead><tbody>")
-              for b in benchmarks:
-                  html.append(f"<tr><td>{b['name']}</td><td>{b['iters']}</td><td>{b['nsop']}</td><td>{b['bop']}</td><td>{b['aop']}</td></tr>")
-              html.append("</tbody></table>")
-
-          html.append("</body></html>")
-          table_html = "\n".join(html)
-
-          subprocess.run(["git", "config", "user.name", "github-actions[bot]"], check=True)
-          subprocess.run(["git", "config", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
-          subprocess.run(["git", "fetch", "origin", "gh-pages"], check=True)
-          subprocess.run(["git", "checkout", "-B", "gh-pages", "origin/gh-pages"], check=True)
-
-          # Write table as the main page at dev/bench/index.html
-          os.makedirs("dev/bench", exist_ok=True)
-          with open("dev/bench/index.html", "w") as f:
-              f.write(table_html)
-
-          subprocess.run(["git", "add", "dev/bench/index.html"], check=True)
-          diff = subprocess.run(["git", "diff", "--cached", "--quiet"])
-          if diff.returncode != 0:
-              subprocess.run(["git", "commit", "-m", "Update benchmark table"], check=True)
-              subprocess.run(["git", "push", "origin", "gh-pages", "--force-with-lease"], check=True)
-
-          print(f"Published table: {total} benchmarks across {len(services)} packages")
       - name: Upload benchmark output
         uses: actions/upload-artifact@v4
         if: always()
