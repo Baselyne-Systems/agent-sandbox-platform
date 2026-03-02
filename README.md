@@ -145,20 +145,10 @@ bkctl guardrail create-rule \
 bkctl budget set --agent-id <agent-id> --max-cost 100.00 --on-exceeded halt
 ```
 
-**3. Create a task — the platform provisions everything**
-
-```bash
-bkctl task create \
-  --agent-id <agent-id> \
-  --goal "Validate Q4 invoices" \
-  --memory 512 --cpu 1000
-```
-
-This triggers the full orchestration: host placement, policy compilation, credential injection, sandbox creation. The agent starts running inside an isolated container.
-
-**4. Inside the sandbox, the agent code uses the SDK**
+**3. Write your agent code**
 
 ```python
+# agent.py
 from bulkhead import BulkheadAgent, Verdict, tool
 
 @tool("read_invoice", description="Read a JSON invoice from disk")
@@ -179,7 +169,33 @@ with BulkheadAgent(tools=[read_invoice]) as agent:
 
 Every `execute_tool` call passes through guardrails, budget checks, and DLP before the tool runs. Denied calls never execute.
 
-**5. Monitor the audit trail**
+**4. Package it into a container image**
+
+```dockerfile
+FROM python:3.12-slim
+RUN pip install bulkhead-sdk
+COPY agent.py /app/agent.py
+CMD ["python", "/app/agent.py"]
+```
+
+```bash
+docker build -t ghcr.io/org-acme/invoice-processor:latest .
+docker push ghcr.io/org-acme/invoice-processor:latest
+```
+
+**5. Create a task — the platform provisions everything**
+
+```bash
+bkctl task create \
+  --agent-id <agent-id> \
+  --goal "Validate Q4 invoices" \
+  --image ghcr.io/org-acme/invoice-processor:latest \
+  --memory 512 --cpu 1000
+```
+
+This triggers the full orchestration: host placement, policy compilation, credential injection, sandbox creation. The platform pulls the image, starts the container with `BULKHEAD_ENDPOINT` and `BULKHEAD_SANDBOX_ID` injected automatically, and the agent begins executing.
+
+**6. Monitor the audit trail**
 
 ```bash
 bkctl activity query --agent-id <agent-id> -o json
