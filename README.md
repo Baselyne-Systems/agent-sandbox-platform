@@ -118,7 +118,45 @@ Auto-selection matrix:
 
 ## Quick Start
 
-### Write an agent
+**1. Start the platform**
+
+```bash
+docker compose -f deploy/docker-compose.yml up --build
+```
+
+**2. Register an agent and set its guardrails**
+
+```bash
+# Register the agent — returns an agent ID and credential token
+bkctl agent register \
+  --name invoice-processor \
+  --owner-id org-acme \
+  --purpose "Automate invoice validation" \
+  --trust-level new
+
+# Block shell access
+bkctl guardrail create-rule \
+  --name deny-shell \
+  --type tool_filter \
+  --tool-pattern "shell*" \
+  --action deny
+
+# Set a $100 budget
+bkctl budget set <agent-id> --limit 100.00 --on-exceeded halt
+```
+
+**3. Create a task — the platform provisions everything**
+
+```bash
+bkctl task create \
+  --agent-id <agent-id> \
+  --goal "Validate Q4 invoices" \
+  --memory 512 --cpu 1000
+```
+
+This triggers the full orchestration: host placement, policy compilation, credential injection, sandbox creation. The agent starts running inside an isolated container.
+
+**4. Inside the sandbox, the agent code uses the SDK**
 
 ```python
 from bulkhead import BulkheadAgent, Verdict, tool
@@ -128,34 +166,23 @@ def read_invoice(path: str) -> dict:
     with open(path) as f:
         return json.load(f)
 
-@tool("validate_total", description="Validate invoice line items sum to total")
-def validate_total(invoice: dict) -> dict:
-    line_total = sum(item["amount"] for item in invoice.get("line_items", []))
-    return {"valid": abs(line_total - invoice.get("total", 0)) < 0.01}
-
-with BulkheadAgent(tools=[read_invoice, validate_total]) as agent:
-    result = agent.execute_tool("read_invoice", {"path": "/workspace/inv-001.json"})
+with BulkheadAgent(tools=[read_invoice]) as agent:
+    result = agent.execute_tool("read_invoice", {"path": "/data/inv-001.json"})
 
     if result.verdict == Verdict.DENY:
-        print(f"Blocked: {result.denial_reason}")  # guardrail fired
+        print(f"Blocked: {result.denial_reason}")   # guardrail fired
     elif result.verdict == Verdict.ESCALATE:
-        print(f"Needs human approval: {result.escalation_id}")
+        print(f"Needs approval: {result.escalation_id}")
     else:
-        validation = agent.execute_tool("validate_total", {"invoice": result.result})
+        print(result.result)                         # tool executed
 ```
 
 Every `execute_tool` call passes through guardrails, budget checks, and DLP before the tool runs. Denied calls never execute.
 
-### Run the platform
+**5. Monitor the audit trail**
 
 ```bash
-# Start the full stack (control plane + host agent + PostgreSQL)
-docker compose -f deploy/docker-compose.yml up --build
-
-# Manage agents and policies
-bkctl agent list
-bkctl guardrail list-rules
-bkctl budget get <agent-id> -o json
+bkctl activity query --agent-id <agent-id> -o json
 ```
 
 ## Choose Your Guide
