@@ -3,9 +3,10 @@
 // Docker integration tests — require Docker daemon and ENABLE_DOCKER=true.
 //
 // Run with:
-//   RUNTIME_BINARY=../runtime/target/release/host-agent \
-//   ENABLE_DOCKER=true \
-//   go test -v -tags docker_integration -run TestDocker ./e2e/
+//
+//	RUNTIME_BINARY=../runtime/target/release/host-agent \
+//	ENABLE_DOCKER=true \
+//	go test -v -tags docker_integration -run TestDocker ./e2e/
 package e2e
 
 import (
